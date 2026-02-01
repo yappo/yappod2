@@ -40,6 +40,7 @@ sample.gz というサンプルを置いたので参考にしてください。
   好きな場所にインデックス格納場所用のディレクトリを作成して下さい。
   例えば /tmp/yappoindex とか
   作成したディレクトリの中には、位置情報ファイルを格納するためのディレクトリposも作成してください。
+  ※pos が無い場合、yappo_makeindex はエラーで終了します。
 
   $ mkdir /tmp/yappoindex
   $ mkdir /tmp/yappoindex/pos

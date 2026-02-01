@@ -777,10 +777,21 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  stat(yappo_db_files.base_dir, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (stat(yappo_db_files.base_dir, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
     printf("Plase dir\n");
     exit(-1);
+  }
+
+  /* pos ディレクトリが無いと落ちやすいので事前にチェック */
+  {
+    char *pos_dir = (char *) YAP_malloc(strlen(yappo_db_files.base_dir) + 5);
+    sprintf(pos_dir, "%s/pos", yappo_db_files.base_dir);
+    if (stat(pos_dir, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
+      fprintf(stderr, "Missing pos dir: %s (mkdir -p %s)\n", pos_dir, pos_dir);
+      free(pos_dir);
+      exit(-1);
+    }
+    free(pos_dir);
   }
 
 
