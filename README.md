@@ -58,21 +58,34 @@ sample.gz というサンプルを置いたので参考にしてください。
 - Homebrew で berkeley-db / zlib / cmake を導入済み
 
 設定とビルド:
-  $ cmake -S . -B build_cmake \
+  $ cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DBDB_INCLUDE_DIR="$(brew --prefix berkeley-db)/include" \
       -DBDB_LIB="$(brew --prefix berkeley-db)/lib/libdb.dylib"
-  $ cmake --build build_cmake -j
+  $ cmake --build build -j
+
+インストール（デフォルト先へ）:
+  $ cmake --install build
+
+インストール先を指定する場合:
+  $ cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="$HOME/yappod" \
+      -DBDB_INCLUDE_DIR="$(brew --prefix berkeley-db)/include" \
+      -DBDB_LIB="$(brew --prefix berkeley-db)/lib/libdb.dylib"
+  $ cmake --build build -j
+  $ cmake --install build
 
 生成物:
-  build_cmake/search
-  build_cmake/yappo_makeindex
-  build_cmake/yappo_margepos
-  build_cmake/yappod_core
-  build_cmake/yappod_front
+  build/search
+  build/yappo_makeindex
+  build/yappo_margepos
+  build/yappod_core
+  build/yappod_front
 
 備考:
 - インデックス用ディレクトリに pos/ が無い場合、yappo_makeindex はエラー終了します。
+- Homebrew を使わない場合は BDB_INCLUDE_DIR / BDB_LIB を手動指定してください。
 
 
 -------------------------------------------------------------------------------
