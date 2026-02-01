@@ -50,6 +50,30 @@ sample.gz というサンプルを置いたので参考にしてください。
   上記の様なコマンドでインデックスが作成されます。
   今回の例だと $ yappo_makeindex -f sample.gz -d /tmp/yappoindex などです。
   
+-------------------------------------------------------------------------------
+ビルド（CMake / macOS向け）
+
+前提:
+- Command Line Tools
+- Homebrew で berkeley-db / zlib / cmake を導入済み
+
+設定とビルド:
+  $ cmake -S . -B build_cmake \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBDB_INCLUDE_DIR="$(brew --prefix berkeley-db)/include" \
+      -DBDB_LIB="$(brew --prefix berkeley-db)/lib/libdb.dylib"
+  $ cmake --build build_cmake -j
+
+生成物:
+  build_cmake/search
+  build_cmake/yappo_makeindex
+  build_cmake/yappo_margepos
+  build_cmake/yappod_core
+  build_cmake/yappod_front
+
+備考:
+- インデックス用ディレクトリに pos/ が無い場合、yappo_makeindex はエラー終了します。
+
 
 -------------------------------------------------------------------------------
 検索のしかた
