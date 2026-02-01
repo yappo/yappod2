@@ -22,6 +22,7 @@
 
 #define BUF_SIZE 1024
 #define PORT 10086
+#define MAX_SOCKET_BUF (1024 * 1024)
 
 /*
  *スレッド毎の構造
@@ -242,7 +243,9 @@ void thread_server (void *ip)
     while (1) {
       /*永遠と処理を続ける*/
       buf_size = 0;
-      fread(&buf_size, sizeof(int), 1, socket);
+      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+        break;
+      }
       if (buf_size == 0) {
 	/*このクライアントとの接続を解除する*/
 	break;
@@ -253,22 +256,66 @@ void thread_server (void *ip)
       
       /*クライアントからリクエストを受け取る*/
       buf_size = 0;
-      fread(&buf_size, sizeof(int), 1, socket);
+      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+        break;
+      }
       printf("SIZE[%d]: %d\n", p->id, buf_size);
+      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
+        fprintf(stderr, "invalid dict size: %d\n", buf_size);
+        break;
+      }
       dict = (char *) YAP_malloc(buf_size + 1);
-      fread(dict, sizeof(char), buf_size, socket);
+      if (fread(dict, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+        free(dict);
+        break;
+      }
+      dict[buf_size] = '\0';
       
       buf_size = 0;
-      fread(&buf_size, sizeof(int), 1, socket);
+      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+        free(dict);
+        break;
+      }
+      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
+        fprintf(stderr, "invalid op size: %d\n", buf_size);
+        free(dict);
+        break;
+      }
       op = (char *) YAP_malloc(buf_size + 1);
-      fread(op, sizeof(char), buf_size, socket);
+      if (fread(op, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+        free(dict);
+        free(op);
+        break;
+      }
+      op[buf_size] = '\0';
       
       buf_size = 0;
-      fread(&buf_size, sizeof(int), 1, socket);
+      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+        free(dict);
+        free(op);
+        break;
+      }
+      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
+        fprintf(stderr, "invalid keyword size: %d\n", buf_size);
+        free(dict);
+        free(op);
+        break;
+      }
       keyword = (char *) YAP_malloc(buf_size + 1);
-      fread(keyword, sizeof(char), buf_size, socket);
+      if (fread(keyword, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+        free(dict);
+        free(op);
+        free(keyword);
+        break;
+      }
+      keyword[buf_size] = '\0';
       
-      fread(&max_size, sizeof(int), 1, socket);
+      if (fread(&max_size, sizeof(int), 1, socket) != 1) {
+        free(dict);
+        free(op);
+        free(keyword);
+        break;
+      }
       
       printf("ok:%d: %s/%d/%s/%s\n", p->id, dict, max_size, op, keyword);
 
