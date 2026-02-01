@@ -102,7 +102,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   filedata->other_len = *((int *) bufp);
   bufp += sizeof(int);
   if (filedata->other_len > 0) {
-    filedata->other = (char *) YAP_malloc(filedata->other_len + 1);
+    filedata->other = (unsigned char *) YAP_malloc(filedata->other_len + 1);
     memcpy(filedata->other, bufp, filedata->other_len);
     bufp += filedata->other_len;
   } else {
@@ -121,7 +121,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
 {
   int filedata_index;
   int seek;
-  unsigned char *buf, *bufp;
+  char *buf, *bufp;
   int buf_len = 0;
 
   if (ydfp->mode == YAPPO_DB_READ) {
@@ -152,7 +152,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     buf_len += filedata->other_len;
   }
 
-  buf = (unsigned char *) YAP_malloc(buf_len);
+  buf = (char *) YAP_malloc(buf_len);
   bufp = buf;
 
   if (filedata->url != NULL) {
@@ -195,7 +195,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   *((int *) bufp) = filedata->other_len;
   bufp += sizeof(int);
   if ( filedata->other != NULL) {
-    strcpy(bufp, filedata->other);
+    strcpy(bufp, (const char *) filedata->other);
   }
 
   /*登録*/

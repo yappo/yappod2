@@ -161,7 +161,7 @@ int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned
     memset(&value, 0,sizeof(DBT));
     
     key.data = keyword;
-    key.size = strlen(keyword);
+    key.size = strlen((const char *) keyword);
     
     value.data = keyword_id;
     value.size = sizeof(long);
@@ -177,7 +177,7 @@ int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned
 
     /* 文字列を数値化する */
     index = 0;
-    key_len = strlen(keyword);
+    key_len = strlen((const char *) keyword);
     byte = 1;
     for (i = key_len - 1; i >= 0; i--) {
       c = *(keyword + i) - 160;
@@ -227,7 +227,7 @@ int YAP_Index_put_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned
     memset(&value, 0,sizeof(DBT));
     
     key.data = keyword;
-    key.size = strlen(keyword);
+    key.size = strlen((const char *) keyword);
     
     value.data = keyword_id;
     value.size = sizeof(long);
@@ -240,7 +240,7 @@ int YAP_Index_put_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned
 
     /* 文字列を数値化する */
     index = 0;
-    key_len = strlen(keyword);
+    key_len = strlen((const char *) keyword);
     byte = 1;
     for (i = key_len - 1; i >= 0; i--) {
       c = *(keyword + i) - 160;

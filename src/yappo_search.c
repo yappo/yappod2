@@ -646,16 +646,16 @@ SEARCH_RESULT *YAP_Search_phrase (YAPPO_DB_FILES *ydfp, NGRAM_SEARCH_LIST *ngram
     return result;
   }
   last_pos = ngram_list[0].pos;
-  printf("phrease %s %d\n", ngram_list[0].keyword, time(NULL));
+  printf("phrease %s %ld\n", ngram_list[0].keyword, (long) time(NULL));
 
   for (i = 1; i < ngram_list_len; i++) {
     left = result;
     /* 右を検索 */
     right =  YAP_Search_gram(ydfp, ngram_list[i].keyword);
-    printf("phrease %s %d\n", ngram_list[i].keyword, time(NULL));
+    printf("phrease %s %ld\n", ngram_list[i].keyword, (long) time(NULL));
     /* 出現位置を指定してANDマージ */
     result = YAP_Search_op_and(left, right, ngram_list[i].pos - last_pos);
-    printf("phrease and %d\n", time(NULL));
+    printf("phrease and %ld\n", (long) time(NULL));
 
     /* メモリ解放 */
     YAP_Search_result_free(left);
@@ -677,7 +677,7 @@ SEARCH_RESULT *YAP_Search_phrase (YAPPO_DB_FILES *ydfp, NGRAM_SEARCH_LIST *ngram
 /*
  *キーワードIDに対応する位置リストを返す
  */
-SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, char *key, int keyword_id, int total_num, int docs_num, int *ret_docs_num)
+SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *key, int keyword_id, int total_num, int docs_num, int *ret_docs_num)
 {
   int ret, i, df;
   unsigned char *posbuf, *posbuf_tmp;
@@ -690,7 +690,7 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, char *key, int k
   /* 全文書中の対象文書の出現率を求める */
   base_idf = log( ydfp->total_filenum / docs_num) + 1.0;
 
-  printf("get %s/%d pos start: %d\n", key, keyword_id, time(NULL));
+  printf("get %s/%d pos start: %ld\n", key, keyword_id, (long) time(NULL));
 
   /*
    *ポジションリストを取得
@@ -723,12 +723,12 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, char *key, int k
       }
     }
   }
-  printf("get pos decode start: %d\n", time(NULL));
+  printf("get pos decode start: %ld\n", (long) time(NULL));
   pos = YAP_Index_8bit_decode(posbuf_tmp, &pos_len, posbuf_len_tmp);
   free(posbuf_tmp);
 
 
-  printf("get pos end: %d\n", time(NULL));
+  printf("get pos end: %ld\n", (long) time(NULL));
 
   if (pos_len > 0) { 
     int ret;
@@ -847,7 +847,7 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, char *key, int k
 
     free(pos);
 
-    printf("RETURN get pos end end: %d %d\n", time(NULL), df);
+    printf("RETURN get pos end end: %ld %d\n", (long) time(NULL), df);
 
     *ret_docs_num = df;/* 本来の文書数を返す */
     return docs_list;

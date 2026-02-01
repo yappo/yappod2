@@ -221,7 +221,7 @@ void thread_server (void *ip)
 
   while (1) {
     SEARCH_RESULT *result;
-    int sockaddr_len = sizeof(yap_sin);
+    socklen_t sockaddr_len = sizeof(yap_sin);
     int accept_socket;
     char *line, *line_buf;
     FILE *socket;
@@ -248,7 +248,7 @@ void thread_server (void *ip)
 	break;
       }
 
-      printf("OK: %d/%d\n", p->id, socket);
+      printf("OK: %d/%p\n", p->id, (void *) socket);
       
       
       /*クライアントからリクエストを受け取る*/
@@ -428,4 +428,3 @@ int main(int argc, char *argv[])
 
   YAP_Db_cache_destroy(&yappod_core_cache); 
 }
-

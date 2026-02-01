@@ -41,7 +41,7 @@ NGRAM_LIST *__YAP_Ngram_List_search(NGRAM_LIST *list, unsigned char *keyword)
     if (next == NULL) {
       return NULL;
     }
-    if (! strcmp(next->keyword, keyword)) {
+    if (! strcmp((const char *) next->keyword, (const char *) keyword)) {
       /* 一致 */
       return next;
     }
@@ -62,8 +62,8 @@ void __YAP_Ngram_List_add(NGRAM_LIST *list, unsigned char *keyword, int index)
   if (add == NULL) {
     /* 新規 */
     p = __YAP_Ngram_List_init();
-    p->keyword = (unsigned char *) YAP_malloc(strlen(keyword) + 1);
-    strcpy(p->keyword, keyword);
+    p->keyword = (unsigned char *) YAP_malloc(strlen((const char *) keyword) + 1);
+    strcpy((char *) p->keyword, (const char *) keyword);
     p->index = (int *) YAP_malloc(sizeof(int));
     p->index[p->index_count] = index;
     p->index_count++;
@@ -122,8 +122,8 @@ NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num)
   unsigned char *tokp, *tokp_start, *tokp_next, *gram;
   NGRAM_LIST *ngram_item_list = __YAP_Ngram_List_init();
 
-  tokp = body;
-  tokp_start = body;
+  tokp = (unsigned char *) body;
+  tokp_start = (unsigned char *) body;
 
 
 
@@ -145,7 +145,7 @@ NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num)
 	 */
 	gram = YAP_Ngram_get_1byte(tokp);
 
-	tokp_next = tokp + strlen(gram);
+	tokp_next = tokp + strlen((const char *) gram);
       } else {
 	/* 記号ならスキップ */
 	tokp_next = tokp + 1;
@@ -185,7 +185,7 @@ NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num)
 /*
  *1byte文字の場合は、1byte文字(記号を除く)が続く限り切り出す。
  */
-char *YAP_Ngram_get_1byte(unsigned char *tokp)
+unsigned char *YAP_Ngram_get_1byte(unsigned char *tokp)
 {
   unsigned char *ret, *p, *a, *b;
   p = tokp;
@@ -199,7 +199,7 @@ char *YAP_Ngram_get_1byte(unsigned char *tokp)
   }
 
   /* 小文字に変換しつつコピー */
-  ret = YAP_malloc((p - tokp) +1);
+  ret = (unsigned char *) YAP_malloc((p - tokp) + 1);
   a = ret;
   b = tokp;
   while (b < p) {
@@ -214,7 +214,7 @@ char *YAP_Ngram_get_1byte(unsigned char *tokp)
 /*
  *2byte文字のN-gramを切り出す
  */
-char *YAP_Ngram_get_2byte(unsigned char *tokp)
+unsigned char *YAP_Ngram_get_2byte(unsigned char *tokp)
 {
   unsigned char *ret, *p;
   p = tokp;
@@ -227,8 +227,9 @@ char *YAP_Ngram_get_2byte(unsigned char *tokp)
     }
   }
 
-  ret = YAP_malloc((p-tokp)+1);
-  strncpy(ret, tokp, (p-tokp));
+  ret = (unsigned char *) YAP_malloc((p - tokp) + 1);
+  memcpy(ret, tokp, (size_t) (p - tokp));
+  ret[p - tokp] = '\0';
 
   return ret;
 }
@@ -243,8 +244,8 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
   unsigned char *tokp, *tokp_start, *tokp_next, *gram;
   NGRAM_SEARCH_LIST *list = NULL;
 
-  tokp = body;
-  tokp_start = body;
+  tokp = (unsigned char *) body;
+  tokp_start = (unsigned char *) body;
 
   while (*tokp) {
     gram = NULL;
@@ -264,7 +265,7 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
 	 */
 	gram = YAP_Ngram_get_1byte(tokp);
 	
-	tokp_next = tokp + strlen(gram);
+	tokp_next = tokp + strlen((const char *) gram);
       } else {
 	/* 記号ならスキップ */
 	tokp_next = tokp + 1;
@@ -295,8 +296,8 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
       /* リストに追加 */
       list = (NGRAM_SEARCH_LIST *) YAP_realloc(list, sizeof(NGRAM_SEARCH_LIST) * (*keyword_num + 1));
 
-      list[*keyword_num].keyword = (char *) YAP_malloc(strlen(gram) + 1);
-      strcpy(list[*keyword_num].keyword, gram);
+      list[*keyword_num].keyword = (unsigned char *) YAP_malloc(strlen((const char *) gram) + 1);
+      strcpy((char *) list[*keyword_num].keyword, (const char *) gram);
       list[*keyword_num].pos = (tokp - tokp_start);
       (*keyword_num)++;
       free(gram);

@@ -1029,7 +1029,7 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* 各URLのキーワード数ファイルキャッシュ */
     pthread_mutex_lock(&(p->filekeywordnum_mutex));
-    p->filekeywordnum = (int *) YAP_realloc(p->filekeywordnum, sizeof(int) * ydfp->total_filenum);
+    p->filekeywordnum = (unsigned int *) YAP_realloc(p->filekeywordnum, sizeof(int) * ydfp->total_filenum);
     fseek(ydfp->filekeywordnum_file, 0L, SEEK_SET);
     p->filekeywordnum_num = fread(p->filekeywordnum, sizeof(int), ydfp->total_filenum, ydfp->filekeywordnum_file);
     pthread_mutex_unlock(&(p->filekeywordnum_mutex));
@@ -1044,7 +1044,7 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* 削除URLファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
-    p->deletefile = (char *) YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
+    p->deletefile = (unsigned char *) YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
     fseek(ydfp->deletefile_file, 0L, SEEK_SET);
     p->deletefile_num = fread(p->deletefile, 1, (ydfp->total_filenum / 8) + 1, ydfp->deletefile_file);
     pthread_mutex_unlock(&(p->domainid_mutex));

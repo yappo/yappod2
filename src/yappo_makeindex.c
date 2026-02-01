@@ -36,7 +36,7 @@ typedef struct{
   int keyword_total_num;
   int keyword_docs_num;
   int data_len;
-  char *data;/*エンコードされた出現位置情報*/
+  unsigned char *data;/*エンコードされた出現位置情報*/
 }BTREE_DATA;
 
 
@@ -75,6 +75,7 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
     fwrite(&len, sizeof(int), 1, ydfp->urllen_file);
   }
 
+  return 0;
 }
 
 
@@ -279,8 +280,11 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
 	btree_add = NULL;
 	btree_add = YAP_Minibtree_init();
 	btree_add->id = btree_id;
-	btree_add->key = (char *) YAP_malloc(strlen(this->keyword) + 1);
-	strcpy( btree_add->key, this->keyword);
+        {
+          size_t key_len = strlen((const char *) this->keyword);
+	  btree_add->key = (unsigned char *) YAP_malloc(key_len + 1);
+	  memcpy(btree_add->key, this->keyword, key_len + 1);
+        }
 
 	/*データの登録*/
 	btree_add->data = (BTREE_DATA *) YAP_malloc(sizeof(BTREE_DATA));
@@ -347,6 +351,7 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
 
   printf("add_dict end\n");
 
+  return 0;
 }
 
 

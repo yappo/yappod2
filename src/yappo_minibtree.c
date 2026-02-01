@@ -45,7 +45,7 @@ MINIBTREE *YAP_Minibtree_search( MINIBTREE *root, unsigned char *key)
   while (1) {
     int cmp = 0;
 
-    cmp = strcmp( this->key, key);
+    cmp = strcmp((const char *) this->key, (const char *) key);
 
     if (cmp == 0) {
       /*一致*/
@@ -91,7 +91,7 @@ int YAP_Minibtree_add( MINIBTREE *root, MINIBTREE *add)
   while (1) {
     int cmp = 0;
 
-    cmp = strcmp( this->key, add->key);
+    cmp = strcmp((const char *) this->key, (const char *) add->key);
 
     if (cmp == 0) {
       /*一致してしまったら登録できない*/

@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
   if(0){
     int *list, list_len;
     /*    YAP_Index_get_keyword2( keyword_list[0], &list, &list_len);*/
-    printf("address %d = %d = %d\n", list, list_len, list[0]);
+    printf("address %p = %d = %d\n", (void *) list, list_len, list[0]);
     exit(-1);
   }
 

@@ -81,7 +81,7 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
 	if (title == NULL) {
 	  title = filedata.url;
 	}
-	fprintf(socket, "%s\t%s\t%d\t%d\t%.2f\n", filedata.url, title, filedata.size, filedata.lastmod, p->docs_list[i].score);	
+        fprintf(socket, "%s\t%s\t%d\t%ld\t%.2f\n", filedata.url, title, filedata.size, (long) filedata.lastmod, p->docs_list[i].score); 
 	fflush(socket);
 
 	YAP_Index_Filedata_free(&filedata);
@@ -546,4 +546,3 @@ int main(int argc, char *argv[])
   start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
 
 }
-
