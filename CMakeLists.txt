@@ -85,3 +85,7 @@ if(M_LIB)
     target_link_libraries(${tgt} PRIVATE ${M_LIB})
   endforeach()
 endif()
+
+install(TARGETS ${ALL_TARGETS}
+  RUNTIME DESTINATION bin
+)
