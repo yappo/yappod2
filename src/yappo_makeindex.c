@@ -368,9 +368,15 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
 
   gz_in = (char *) YAP_malloc(GZ_BUF_SIZE);
   line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+  line_buf[0] = '\0';
 
   /*gzファイルを開く*/
   gz_file = gzopen(gz_filepath, "r"); 
+  if (gz_file == NULL) {
+    free(gz_in);
+    free(line_buf);
+    return -1;
+  }
   while (! gzeof(gz_file)) { 
     memset(gz_in, 0, GZ_BUF_SIZE);/*ゼロクリア*/
 
