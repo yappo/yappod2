@@ -82,6 +82,9 @@ Ninja でビルドする場合:
   - ビルドは同じく `cmake --build build`
   - 事前に `brew install ninja` が必要です。
 
+テスト:
+  $ ctest --test-dir build --output-on-failure
+
 生成物:
   build/search
   build/yappo_makeindex

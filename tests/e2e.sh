@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="${ROOT_DIR}/build"
+FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
+INDEX_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "${INDEX_DIR}"
+}
+trap cleanup EXIT
+
+mkdir -p "${INDEX_DIR}/pos"
+
+"${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR}" >/dev/null
+
+run_search() {
+  "${BUILD_DIR}/search" -l "${INDEX_DIR}" "$1"
+}
+
+expect_hit() {
+  local query="$1"
+  local expect="$2"
+  run_search "${query}" | grep -q "${expect}"
+}
+
+expect_no_hit() {
+  local query="$1"
+  run_search "${query}" | grep -q "Hit num: 0\\|not found" || {
+    echo "Expected no hit for query: ${query}" >&2
+    exit 1
+  }
+}
+
+expect_hit "テスト" "http://example.com/doc1"
+expect_hit "テスト" "http://example.com/doc2"
+expect_hit "OpenAI2025" "http://example.com/doc1"
+expect_hit "openai2025" "http://example.com/doc1"
+expect_hit "example.com/doc3" "http://example.com/doc3"
+expect_no_hit "削除対象"
+expect_no_hit "短い"

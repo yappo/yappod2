@@ -5,6 +5,8 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+enable_testing()
+
 if(APPLE)
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -89,3 +91,5 @@ endif()
 install(TARGETS ${ALL_TARGETS}
   RUNTIME DESTINATION bin
 )
+
+add_test(NAME e2e COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.sh)
