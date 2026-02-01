@@ -76,6 +76,12 @@ sample.gz というサンプルを置いたので参考にしてください。
   $ cmake --build build -j
   $ cmake --install build
 
+Ninja でビルドする場合:
+  - 上記の CMake 設定コマンドに `-G Ninja` を追加してください。
+    例: `cmake -S . -B build -G Ninja ...`
+  - ビルドは同じく `cmake --build build`
+  - 事前に `brew install ninja` が必要です。
+
 生成物:
   build/search
   build/yappo_makeindex
