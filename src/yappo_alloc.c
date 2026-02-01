@@ -3,6 +3,7 @@
  */
 
 #include "yappo_alloc.h"
+#include <string.h>
 
 /*
  *mallocのラッパ
@@ -37,4 +38,3 @@ void *__YAP_realloc(char *filename, int line, void *inp, size_t size)
 
   return p;
 }
-

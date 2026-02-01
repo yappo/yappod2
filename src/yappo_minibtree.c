@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "yappo_minibtree.h"
+#include <string.h>
 #include "yappo_alloc.h"
 
 
@@ -122,4 +123,3 @@ int YAP_Minibtree_add( MINIBTREE *root, MINIBTREE *add)
 
   return 0;
 }
-

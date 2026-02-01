@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
+#include <ctype.h>
+#include <string.h>
 
 
 #include "yappo_index.h"
@@ -866,7 +868,8 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
 
-  if (! isalnum(key[0]) && strlen(key) < Ngram_N && 0) { 
+#if 0
+  if (! isalnum(key[0]) && strlen(key) < Ngram_N) { 
     /*
      *Ngram_Nバイト以下の2バイト文字
      *あまりにも処理量が多いので一時休止
@@ -955,6 +958,7 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
     }
     return NULL;
   }
+#endif
 
   docs_num = keyword_total_num = keyword_docs_num = keyword_id = 0;
   result = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));

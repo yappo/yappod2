@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <string.h>
 
 #include "yappo_db.h"
 #include "yappo_index.h"

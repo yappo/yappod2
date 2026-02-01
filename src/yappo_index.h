@@ -39,6 +39,14 @@ typedef struct{
 int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id);
 int YAP_Index_put_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id);
 
+int YAP_Index_get_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id);
+int YAP_Index_put_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id);
+int YAP_Index_del_domainindex(YAPPO_DB_FILES *ydfp, char *domain);
+
+int YAP_Index_get_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id);
+int YAP_Index_put_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id);
+int YAP_Index_del_fileindex(YAPPO_DB_FILES *ydfp, char *url);
+
 
 unsigned char *YAP_Index_8bit_encode(int *list, int list_len, int *ret_len);
 int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len);

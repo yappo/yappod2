@@ -2,6 +2,7 @@
  *キーワード出現位置データを取扱う
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "yappo_index_pos.h"
 #include "yappo_index.h"
@@ -53,7 +54,7 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
   ret = fread(*postings_buf, 1, pos_size, ydfp->pos_file);
   if (ret != pos_size) {
     free(*postings_buf);
-    *postings_buf == NULL;
+    *postings_buf = NULL;
     return -1;
   }
   *postings_buf_len = pos_size;
@@ -224,4 +225,5 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
 
   printf("End YAP_Index_Pos_gc\n");
 
+  return 0;
 }

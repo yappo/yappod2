@@ -4,6 +4,7 @@
 
 #include "yappo_index_filedata.h"
 #include "yappo_alloc.h"
+#include <string.h>
 
 /*
  *fileindexをキーに検索をしてFILEDATAを取得
@@ -48,7 +49,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   ret = fread(buf, 1, filedata_size, ydfp->filedata_file);
   if (ret != filedata_size) {
     free(buf);
-    buf == NULL;
+    buf = NULL;
     return -1;
   }
 
@@ -270,6 +271,8 @@ int YAP_Index_Filedata_free (FILEDATA *p)
   p->size = 0;
   p->keyword_num = 0;
   p->other_len = 0;
+
+  return 0;
 }
 
 
@@ -365,4 +368,5 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
 
   printf("End YAP_Index_Filedata_gc\n");
 
+  return 0;
 }

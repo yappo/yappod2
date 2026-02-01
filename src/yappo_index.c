@@ -4,6 +4,8 @@
 #include "yappo_index.h"
 #include "yappo_db.h"
 #include "yappo_alloc.h"
+#include <ctype.h>
+#include <string.h>
 
 
 /*

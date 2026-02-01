@@ -205,4 +205,8 @@ void YAP_Db_linklist_close (YAPPO_DB_FILES *p);
 int YAP_Db_pos_open (YAPPO_DB_FILES *p, int id);
 void YAP_Db_pos_close (YAPPO_DB_FILES *p);
 
+void YAP_Db_cache_init (YAPPO_CACHE *p);
+void YAP_Db_cache_destroy (YAPPO_CACHE *p);
+void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p);
+
 #endif

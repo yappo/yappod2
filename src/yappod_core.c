@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -427,5 +428,4 @@ int main(int argc, char *argv[])
 
   YAP_Db_cache_destroy(&yappod_core_cache); 
 }
-
 

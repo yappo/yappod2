@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#include <string.h>
 
 #include "yappo_db.h"
 #include "yappo_index.h"
@@ -15,6 +16,7 @@
 #include "yappo_alloc.h"
 #include "yappo_ngram.h"
 #include "yappo_search.h"
+#include "yappo_linklist.h"
 
 YAPPO_CACHE yappod_core_cache;
 

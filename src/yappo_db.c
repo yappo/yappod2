@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <string.h>
 
 #include "yappo_db.h"
 #include "yappo_index.h"

@@ -174,7 +174,7 @@ char *readline (FILE *socket)
 /*
  *サーバの本体
  */
-void thread_server (void *ip) 
+void *thread_server (void *ip) 
 {
  struct sockaddr_in *yap_sin;
  YAPPO_DB_FILES yappo_db_files;
@@ -390,6 +390,7 @@ void thread_server (void *ip)
     close(p->server_fd[i]);
   }
 
+  return NULL;
 }
 
 void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_socket, char **server_addr) 
@@ -545,5 +546,4 @@ int main(int argc, char *argv[])
   start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
 
 }
-
 

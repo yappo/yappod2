@@ -4,6 +4,9 @@
  *入力可能な文字コードはEUCのみ
  */
 #include "yappo_ngram.h"
+#include <ctype.h>
+#include <string.h>
+#include <wctype.h>
 #include "yappo_alloc.h"
 
 

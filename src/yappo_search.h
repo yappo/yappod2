@@ -31,6 +31,8 @@ typedef struct{
 }SEARCH_RESULT;
 
 void YAP_Search_result_free (SEARCH_RESULT *p);
+void YAP_Search_result_sort_pos (SEARCH_DOCUMENT *p);
+void YAP_Search_result_sort_score (SEARCH_RESULT *p);
 SEARCH_RESULT *YAP_Search_result_delete (YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p);
 
 SEARCH_RESULT *YAP_Search_op_and (SEARCH_RESULT *left, SEARCH_RESULT *right, int order);
