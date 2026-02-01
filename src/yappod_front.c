@@ -244,11 +244,20 @@ void *thread_server (void *ip)
       line = readline(socket);
       
       /* バッファの初期化 */
-      dict = (char *) YAP_malloc(strlen(line));
-      op = (char *) YAP_malloc(strlen(line));
-      keyword = (char *) YAP_malloc(strlen(line));
-      
-      if (sscanf(line, "GET / %[a-zA-Z]/%d/%[a-zA-Z]/%d-%d?%s HTTP/1.0", dict, &max_size, op, &start, &end, keyword)) {
+      dict = (char *) YAP_malloc(BUF_SIZE);
+      op = (char *) YAP_malloc(BUF_SIZE);
+      keyword = (char *) YAP_malloc(BUF_SIZE);
+      dict[0] = '\0';
+      op[0] = '\0';
+      keyword[0] = '\0';
+
+      {
+        char fmt[128];
+        int w = BUF_SIZE - 1;
+        snprintf(fmt, sizeof(fmt),
+                 "GET / %%%d[a-zA-Z]/%%d/%%%d[a-zA-Z]/%%d-%%d?%%%ds HTTP/1.0",
+                 w, w, w);
+        if (sscanf(line, fmt, dict, &max_size, op, &start, &end, keyword) == 6) {
 	printf("ok:%d: %s/%d/%s/%s (%d-%d)\n", p->id, dict, max_size, op, keyword, start, end);
 
 	if (strlen(dict) == 0 || max_size == 0 || strlen(op) == 0 || strlen(keyword) == 0) {
