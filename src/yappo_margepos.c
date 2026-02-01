@@ -149,6 +149,12 @@ int main(int argc, char *argv[])
   output->data_fp = fopen(output->data, "w");
   output->index_fp = fopen(output->index, "w");
   output->size_fp = fopen(output->size, "w");
+  if (output->data_fp == NULL ||
+      output->index_fp == NULL ||
+      output->size_fp == NULL) {
+    fprintf(stderr, "fopen error: output files\n");
+    exit(-1);
+  }
 
   for (i = 0;i < num;i++) {
     inputs[i]->data_fp = fopen(inputs[i]->data, "r");
@@ -169,6 +175,10 @@ int main(int argc, char *argv[])
   delete_file = (char *) YAP_malloc(strlen(input_dir) + 16);
   sprintf(delete_file, "%s/deletefile", input_dir);
   delete_fp = fopen(delete_file, "r");
+  if (delete_fp == NULL) {
+    fprintf(stderr, "fopen error: %s\n", delete_file);
+    exit(-1);
+  }
 
   /*
    * キーワード数を求める
@@ -176,7 +186,14 @@ int main(int argc, char *argv[])
   key_num_file = (char *) YAP_malloc(strlen(input_dir) + 16);
   sprintf(key_num_file, "%s/keywordnum", input_dir);
   key_num_fp = fopen(key_num_file, "r");
-  fread(&key_num, sizeof(int), 1, key_num_fp);
+  if (key_num_fp == NULL) {
+    fprintf(stderr, "fopen error: %s\n", key_num_file);
+    exit(-1);
+  }
+  if (fread(&key_num, sizeof(int), 1, key_num_fp) != 1) {
+    fprintf(stderr, "fread error: %s\n", key_num_file);
+    exit(-1);
+  }
   fclose(key_num_fp);
 
   printf("KEYWORD NUM: %d\n-------------------\n", key_num);

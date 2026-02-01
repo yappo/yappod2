@@ -454,12 +454,20 @@ int main(int argc, char *argv[])
   fclose(stdout);
   fclose(stderr);
   stdout = fopen("./core.log", "a");
+  if (stdout == NULL) {
+    stdout = fopen("/dev/null", "a");
+  }
   stderr = fopen("./core.error", "a");
+  if (stderr == NULL) {
+    stderr = fopen("/dev/null", "a");
+  }
   pid = fork();
   if (pid) {
     FILE *pidf = fopen("./core.pid", "w");
-    fprintf(pidf, "%d", pid);
-    fclose(pidf);
+    if (pidf != NULL) {
+      fprintf(pidf, "%d", pid);
+      fclose(pidf);
+    }
     exit(0);
   }
 

@@ -221,9 +221,15 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
       fclose(p->deletefile_file);
     }
     p->deletefile_file = fopen(deletefile, "r+");
+    if (p->deletefile_file == NULL) {
+      YAP_Error("fopen error");
+    }
   } else {
     /* 読み込み時 */
     p->deletefile_file = fopen(deletefile, "r");
+    if (p->deletefile_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
 
@@ -252,11 +258,17 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     p->filedata_file = fopen(filedata, "r+");
     p->filedata_size_file = fopen(filedata_size, "r+");
     p->filedata_index_file = fopen(filedata_index, "r+");
+    if (p->filedata_file == NULL || p->filedata_size_file == NULL || p->filedata_index_file == NULL) {
+      YAP_Error("fopen error");
+    }
   } else {
     /* 読み込み時 */
     p->filedata_file = fopen(filedata, "r");
     p->filedata_size_file = fopen(filedata_size, "r");
     p->filedata_index_file = fopen(filedata_index, "r");
+    if (p->filedata_file == NULL || p->filedata_size_file == NULL || p->filedata_index_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* 辞書ファイル 1byte */
@@ -275,6 +287,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   } else {
     /* 読み込み */
     p->filenum_file = fopen(p->filenum, "r");
+    if (p->filenum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fread(&(p->total_filenum), sizeof(int), 1, p->filenum_file);
     fclose(p->filenum_file);
   }
@@ -289,6 +304,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   } else {
     /* 読み込み */
     p->domainnum_file = fopen(p->domainnum, "r");
+    if (p->domainnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fread(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file);
     fclose(p->domainnum_file);
   }
@@ -302,6 +320,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   } else {
     /* 読み込み */
     p->keywordnum_file = fopen(p->keywordnum, "r");
+    if (p->keywordnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fread(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file);
     fclose(p->keywordnum_file);
   }
@@ -315,14 +336,23 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->size_file = fopen(p->size, "w");
+    if (p->size_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->size_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->size_file = fopen(p->size, "r+");
+    if (p->size_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fseek(p->size_file, sizeof(int) * p->total_filenum, SEEK_SET);
   } else {
     p->size_file = fopen(p->size, "r");
+    if (p->size_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* 各URLのDOMAIN ID */
@@ -330,14 +360,23 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->domainid_file = fopen(p->domainid, "w");
+    if (p->domainid_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->domainid_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->domainid_file = fopen(p->domainid, "r+");
+    if (p->domainid_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fseek(p->domainid_file, sizeof(int) * p->total_domainnum, SEEK_SET);
   } else {
     p->domainid_file = fopen(p->domainid, "r");
+    if (p->domainid_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* 各URLのスコア */
@@ -345,14 +384,23 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->score_file = fopen(p->score, "w");
+    if (p->score_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->score_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->score_file = fopen(p->score, "r+");
+    if (p->score_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fseek(p->score_file, sizeof(double) * p->total_filenum, SEEK_SET);
   } else {
     p->score_file = fopen(p->score, "r");
+    if (p->score_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
 
@@ -361,14 +409,23 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->filekeywordnum_file = fopen(p->filekeywordnum, "w");
+    if (p->filekeywordnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->filekeywordnum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->filekeywordnum_file = fopen(p->filekeywordnum, "r+");
+    if (p->filekeywordnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fseek(p->filekeywordnum_file, sizeof(int) * p->total_filenum, SEEK_SET);
   } else {
     p->filekeywordnum_file = fopen(p->filekeywordnum, "r");
+    if (p->filekeywordnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* URLの長さ */
@@ -376,14 +433,23 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->urllen_file = fopen(p->urllen, "w");
+    if (p->urllen_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->urllen_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->urllen_file = fopen(p->urllen, "r+");
+    if (p->urllen_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fseek(p->urllen_file, sizeof(int) * p->total_filenum, SEEK_SET);
   } else {
     p->urllen_file = fopen(p->urllen, "r");
+    if (p->urllen_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* キーワードの総出現数 */
@@ -391,13 +457,22 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->keyword_totalnum_file = fopen(p->keyword_totalnum, "w");
+    if (p->keyword_totalnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->keyword_totalnum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->keyword_totalnum_file = fopen(p->keyword_totalnum, "r+");
+    if (p->keyword_totalnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
   } else {
     p->keyword_totalnum_file = fopen(p->keyword_totalnum, "r");
+    if (p->keyword_totalnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* キーワードの総出現URL数 */
@@ -405,13 +480,22 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   if (! S_ISREG(f_stats.st_mode)) {
     /* 新規作成 */
     p->keyword_docsnum_file = fopen(p->keyword_docsnum, "w");
+    if (p->keyword_docsnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
     fclose(p->keyword_docsnum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->keyword_docsnum_file = fopen(p->keyword_docsnum, "r+");
+    if (p->keyword_docsnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
   } else {
     p->keyword_docsnum_file = fopen(p->keyword_docsnum, "r");
+    if (p->keyword_docsnum_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 }
 
@@ -543,8 +627,12 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書きこみモード */
     p->filenum_file = fopen(p->filenum, "w"); 
-    fwrite(&(p->total_filenum), sizeof(int), 1, p->filenum_file);
-    fclose(p->filenum_file);
+    if (p->filenum_file == NULL) {
+      YAP_Error("fopen error");
+    } else {
+      fwrite(&(p->total_filenum), sizeof(int), 1, p->filenum_file);
+      fclose(p->filenum_file);
+    }
   }
   free(p->filenum);
   p->filenum = NULL;
@@ -553,8 +641,12 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書きこみモード */
     p->domainnum_file = fopen(p->domainnum, "w"); 
-    fwrite(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file);
-    fclose(p->domainnum_file);
+    if (p->domainnum_file == NULL) {
+      YAP_Error("fopen error");
+    } else {
+      fwrite(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file);
+      fclose(p->domainnum_file);
+    }
   }
   free(p->domainnum);
   p->domainnum = NULL;
@@ -563,8 +655,12 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書きこみモード */
     p->keywordnum_file = fopen(p->keywordnum, "w");
-    fwrite(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file);
-    fclose(p->keywordnum_file);
+    if (p->keywordnum_file == NULL) {
+      YAP_Error("fopen error");
+    } else {
+      fwrite(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file);
+      fclose(p->keywordnum_file);
+    }
   }
   free(p->keywordnum);
   p->keywordnum = NULL;
@@ -626,6 +722,11 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
   p->linklist_file = fopen(p->linklist, "r");
+  if (p->linklist_file == NULL) {
+    free(p->linklist);
+    p->linklist = NULL;
+    return;
+  }
 
   p->linklist_size = (char *) YAP_malloc(base_len + strlen(LINKLIST_SIZE_NAME) + 2);
   sprintf(p->linklist_size, "%s/%s", base, LINKLIST_SIZE_NAME);
@@ -641,6 +742,14 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
   p->linklist_size_file = fopen(p->linklist_size, "r");
+  if (p->linklist_size_file == NULL) {
+    free(p->linklist);
+    p->linklist = NULL;
+    free(p->linklist_size);
+    p->linklist_size = NULL;
+    fclose(p->linklist_file);
+    return;
+  }
 
   p->linklist_index = (char *) YAP_malloc(base_len + strlen(LINKLIST_INDEX_NAME) + 2);
   sprintf(p->linklist_index, "%s/%s", base, LINKLIST_INDEX_NAME);
@@ -659,6 +768,17 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
   p->linklist_index_file = fopen(p->linklist_index, "r");
+  if (p->linklist_index_file == NULL) {
+    free(p->linklist);
+    p->linklist = NULL;
+    free(p->linklist_size);
+    p->linklist_size = NULL;
+    free(p->linklist_index);
+    p->linklist_index = NULL;
+    fclose(p->linklist_file);
+    fclose(p->linklist_size_file);
+    return;
+  }
 
   ret = fread(&(p->linklist_num), sizeof(int), 1, p->linklist_file);
   if (ret == 0) {
@@ -774,32 +894,49 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
       int i = 0;
       long l = 0;
       p->pos_file = fopen(pos, "w");
-      fwrite(&l, sizeof(long), 1, p->pos_file);
-      fwrite(&i, sizeof(int), 1, p->pos_file);
-      fwrite(&i, sizeof(int), 1, p->pos_file);
+      if (p->pos_file == NULL) {
+        YAP_Error("fopen error");
+      }
+      if (fwrite(&l, sizeof(long), 1, p->pos_file) != 1 ||
+          fwrite(&i, sizeof(int), 1, p->pos_file) != 1 ||
+          fwrite(&i, sizeof(int), 1, p->pos_file) != 1) {
+        YAP_Error("fwrite error");
+      }
       fclose(p->pos_file);
     }
     memset(&f_stats, 0, sizeof(struct stat));
     stat(pos_size, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->pos_size_file = fopen(pos_size, "w");
+      if (p->pos_size_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->pos_size_file);
     }
     memset(&f_stats, 0, sizeof(struct stat));
     stat(pos_index, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->pos_index_file = fopen(pos_index, "w");
+      if (p->pos_index_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->pos_index_file);
     }
     
     p->pos_file = fopen(pos, "r+");
     p->pos_size_file = fopen(pos_size, "r+");
     p->pos_index_file = fopen(pos_index, "r+");
+    if (p->pos_file == NULL || p->pos_size_file == NULL || p->pos_index_file == NULL) {
+      YAP_Error("fopen error");
+    }
   } else {
     /* 読み込み時 */
     p->pos_file = fopen(pos, "r");
     p->pos_size_file = fopen(pos_size, "r");
     p->pos_index_file = fopen(pos_index, "r");
+    if (p->pos_file == NULL || p->pos_size_file == NULL || p->pos_index_file == NULL) {
+      YAP_Error("fopen error");
+    }
   }
 
   /* 各種情報を読みこむ */

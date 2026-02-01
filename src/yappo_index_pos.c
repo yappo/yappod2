@@ -151,6 +151,21 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   pos_index_file = fopen(pos_index, "r");
   pos_tmp_file = fopen(pos_tmp, "w");
   pos_index_tmp_file = fopen(pos_index_tmp, "w");
+  if (pos_file == NULL ||
+      pos_size_file == NULL ||
+      pos_index_file == NULL ||
+      pos_tmp_file == NULL ||
+      pos_index_tmp_file == NULL) {
+    fprintf(stderr, "fopen error: pos files\n");
+    if (pos_file != NULL) fclose(pos_file);
+    if (pos_size_file != NULL) fclose(pos_size_file);
+    if (pos_index_file != NULL) fclose(pos_index_file);
+    if (pos_tmp_file != NULL) fclose(pos_tmp_file);
+    if (pos_index_tmp_file != NULL) fclose(pos_index_tmp_file);
+    free(pos_tmp);
+    free(pos_index_tmp);
+    return -1;
+  }
 
 
   /*基本情報をコピーする*/

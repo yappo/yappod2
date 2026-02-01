@@ -304,6 +304,21 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   filedata_index_file = fopen(filedata_index, "r");
   filedata_tmp_file = fopen(filedata_tmp, "w");
   filedata_index_tmp_file = fopen(filedata_index_tmp, "w");
+  if (filedata_file == NULL ||
+      filedata_size_file == NULL ||
+      filedata_index_file == NULL ||
+      filedata_tmp_file == NULL ||
+      filedata_index_tmp_file == NULL) {
+    fprintf(stderr, "fopen error: filedata files\n");
+    if (filedata_file != NULL) fclose(filedata_file);
+    if (filedata_size_file != NULL) fclose(filedata_size_file);
+    if (filedata_index_file != NULL) fclose(filedata_index_file);
+    if (filedata_tmp_file != NULL) fclose(filedata_tmp_file);
+    if (filedata_index_tmp_file != NULL) fclose(filedata_index_tmp_file);
+    free(filedata_tmp);
+    free(filedata_index_tmp);
+    return -1;
+  }
 
 
   fseek(filedata_size_file, sizeof(int), SEEK_SET);
