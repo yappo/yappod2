@@ -20,7 +20,6 @@
 #define KEYWORD_TOTALNUM_NAME "keyword_totalnum"
 #define KEYWORD_DOCSNUM_NAME "keyword_docsnum"
 
-#define KEYWORD_2BYTE_NAME "keyword_2byte"
 #define KEYWORD_1BYTE_NAME "keyword_1byte.db"
 
 

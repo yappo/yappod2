@@ -73,14 +73,6 @@ void YAP_Db_filename_set (YAPPO_DB_FILES *p)
   sprintf( tmp, "%s/%s_tmp", base, FILEDATA_INDEX_NAME);
   p->filedata_index_tmp = tmp;
 
-  /* 辞書ファイル */
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_2BYTE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, KEYWORD_2BYTE_NAME);
-  p->key2byte = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_2BYTE_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, KEYWORD_2BYTE_NAME);
-  p->key2byte_tmp = tmp;
-
   tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_1BYTE_NAME) + 1);
   sprintf( tmp, "%s/%s", base, KEYWORD_1BYTE_NAME);
   p->key1byte = tmp;
@@ -174,7 +166,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 {
   struct stat f_stats;
   u_int32_t mode = DB_RDONLY;
-  char *fileindex, *domainindex, *deletefile, *key2byte, *key1byte;
+  char *fileindex, *domainindex, *deletefile, *key1byte;
   char *filedata, *filedata_size, *filedata_index;
 
   if (p->mode == YAPPO_DB_WRITE) {
@@ -188,7 +180,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     _tmp_copy(p->filedata, p->filedata_tmp);
     _tmp_copy(p->filedata_size, p->filedata_size_tmp);
     _tmp_copy(p->filedata_index, p->filedata_index_tmp);
-    _tmp_copy(p->key2byte, p->key2byte_tmp);
     _tmp_copy(p->key1byte, p->key1byte_tmp);
 
     /* ファイル名の設定 */
@@ -198,7 +189,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     filedata = p->filedata_tmp;
     filedata_size = p->filedata_size_tmp;
     filedata_index = p->filedata_index_tmp;
-    key2byte = p->key2byte_tmp;
     key1byte = p->key1byte_tmp;
   } else {
     /* ファイル名の設定 */
@@ -208,7 +198,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     filedata = p->filedata;
     filedata_size = p->filedata_size;
     filedata_index = p->filedata_index;
-    key2byte = p->key2byte;
     key1byte = p->key1byte;
   }
 
@@ -268,26 +257,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     p->filedata_file = fopen(filedata, "r");
     p->filedata_size_file = fopen(filedata_size, "r");
     p->filedata_index_file = fopen(filedata_index, "r");
-  }
-
-  /* 辞書ファイル 2byte */
-  if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみ時 */
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(key2byte, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
-      char c = 0;
-      p->key2byte_file = fopen(key2byte, "w");
-      /*
-	fseek(p->key2byte_file, sizeof(long) * (1 << (7 * Ngram_N)), SEEK_SET);
-	fwrite(&c, 1, 1, p->key2byte_file);
-      */
-      fclose(p->key2byte_file);
-    }
-    p->key2byte_file = fopen(key2byte, "r+");
-  } else {
-    /* 読み込み時 */
-    p->key2byte_file = fopen(key2byte, "r");
   }
 
   /* 辞書ファイル 1byte */
@@ -496,13 +465,6 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
   p->filedata_index = NULL;
   free(p->filedata_index_tmp);
   p->filedata_index_tmp = NULL;
-
-  /* 辞書ファイル */
-  fclose(p->key2byte_file);
-  free(p->key2byte);
-  p->key2byte = NULL;
-  free(p->key2byte_tmp);
-  p->key2byte_tmp = NULL;
 
   p->key1byte_db->close(p->key1byte_db, 0);
   free(p->key1byte);

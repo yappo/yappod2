@@ -73,7 +73,6 @@ typedef struct{
 
   char *base_dir;/* dbの基本ディレクトリ */
 
-  char *keyword_2byte_name, *postings_2byte_name;
   char *keyword_1byte_name, *postings_1byte_name;
   char *filedata_name;
 
@@ -86,11 +85,6 @@ typedef struct{
   char *domainindex;
   char *domainindex_tmp;
   DB *domainindex_db;
-
-  /* 辞書ファイル(2byte) */
-  char *key2byte;
-  char *key2byte_tmp;
-  FILE *key2byte_file;
 
   /* 辞書ファイル(1byte) */
   char *key1byte;

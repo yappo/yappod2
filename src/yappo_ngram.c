@@ -1,7 +1,7 @@
 /*
  *N-gramに関する処理
  *
- *入力可能な文字コードはEUCのみ
+ *入力可能な文字コードはUTF-8のみ
  */
 #include "yappo_ngram.h"
 #include <ctype.h>
@@ -9,6 +9,24 @@
 #include <wctype.h>
 #include "yappo_alloc.h"
 
+
+/* UTF-8 1文字のバイト長を返す（不正時は1） */
+static int YAP_Utf8_char_len(unsigned char c)
+{
+  if (c < 0x80) {
+    return 1;
+  }
+  if ((c & 0xE0) == 0xC0) {
+    return 2;
+  }
+  if ((c & 0xF0) == 0xE0) {
+    return 3;
+  }
+  if ((c & 0xF8) == 0xF0) {
+    return 4;
+  }
+  return 1;
+}
 
 /*
  *出現位置リストの初期化
@@ -119,20 +137,20 @@ void YAP_Ngram_List_free(NGRAM_LIST *list)
  */
 NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num)
 {
-  unsigned char *tokp, *tokp_start, *tokp_next, *gram;
+  unsigned char *tokp, *tokp_next, *gram;
+  int pos = 0;
   NGRAM_LIST *ngram_item_list = __YAP_Ngram_List_init();
 
   tokp = (unsigned char *) body;
-  tokp_start = (unsigned char *) body;
-
-
 
   while (*tokp) {
+    int pos_before = pos;
     gram = NULL;
 
     if (*tokp <= 0x20) {
       /* エスケープ文字は無視する */
       tokp++;
+      pos++;
       continue;
     } else if (*tokp < 0x80) {
       /* 1byte文字 */
@@ -144,32 +162,23 @@ NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num)
 	 *1byte文字のN-gram取得
 	 */
 	gram = YAP_Ngram_get_1byte(tokp);
-
 	tokp_next = tokp + strlen((const char *) gram);
+	pos += (int) strlen((const char *) gram);
       } else {
 	/* 記号ならスキップ */
 	tokp_next = tokp + 1;
+	pos++;
       }
     } else {
-      /* EUCコード */
-
-      /* 2byte文字のN-gram取得 */
+      /* UTF-8 非ASCII */
       gram = YAP_Ngram_get_2byte(tokp);
-
-      if (*(tokp + Ngram_N) < 0x80) {
-	/*
-	 *Ngram_Nバイト先が1byte文字なら、次のN-gramが少ない文字数になってしまうので
-	 *Ngram_Nバイト分移動する
-	 */
-	tokp_next = tokp + Ngram_N;
-      } else {
-	tokp_next = tokp + 2;
-      }
+      tokp_next = tokp + YAP_Utf8_char_len(*tokp);
+      pos++;
     }
 
     if (gram != NULL) {
       /* ngramリストに追加 */
-      __YAP_Ngram_List_add(ngram_item_list, gram, (tokp - tokp_start));
+      __YAP_Ngram_List_add(ngram_item_list, gram, pos_before);
       (*keyword_num)++;
       free(gram);
     }
@@ -203,7 +212,7 @@ unsigned char *YAP_Ngram_get_1byte(unsigned char *tokp)
   a = ret;
   b = tokp;
   while (b < p) {
-    *a = towlower(*b);
+    *a = (unsigned char) tolower(*b);
     a++;
     b++;
   }
@@ -212,24 +221,26 @@ unsigned char *YAP_Ngram_get_1byte(unsigned char *tokp)
 
 
 /*
- *2byte文字のN-gramを切り出す
+ *UTF-8のN-gramを切り出す（非ASCIIは2文字=バイグラム）
  */
 unsigned char *YAP_Ngram_get_2byte(unsigned char *tokp)
 {
-  unsigned char *ret, *p;
-  p = tokp;
+  unsigned char *ret;
+  int len1, len2, total;
 
-  while (*p && (p - tokp) < Ngram_N) {
-    if (*p >= 0x80) {
-      p++;
-    } else {
-      break;
-    }
+  len1 = YAP_Utf8_char_len(*tokp);
+  len2 = 0;
+  if (*(tokp + len1)) {
+    len2 = YAP_Utf8_char_len(*(tokp + len1));
+  }
+  if (len2 == 0) {
+    return NULL;
   }
 
-  ret = (unsigned char *) YAP_malloc((p - tokp) + 1);
-  memcpy(ret, tokp, (size_t) (p - tokp));
-  ret[p - tokp] = '\0';
+  total = len1 + len2;
+  ret = (unsigned char *) YAP_malloc((size_t) total + 1);
+  memcpy(ret, tokp, (size_t) total);
+  ret[total] = '\0';
 
   return ret;
 }
@@ -241,18 +252,20 @@ unsigned char *YAP_Ngram_get_2byte(unsigned char *tokp)
  */
 NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
 {
-  unsigned char *tokp, *tokp_start, *tokp_next, *gram;
+  unsigned char *tokp, *tokp_next, *gram;
   NGRAM_SEARCH_LIST *list = NULL;
+  int pos = 0;
 
   tokp = (unsigned char *) body;
-  tokp_start = (unsigned char *) body;
 
   while (*tokp) {
+    int pos_before = pos;
     gram = NULL;
 
     if (*tokp <= 0x20) {
       /* エスケープ文字は無視する */
       tokp++;
+      pos++;
       continue;
     } else if (*tokp < 0x80) {
       /* 1byte文字 */
@@ -266,30 +279,17 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
 	gram = YAP_Ngram_get_1byte(tokp);
 	
 	tokp_next = tokp + strlen((const char *) gram);
+	pos += (int) strlen((const char *) gram);
       } else {
 	/* 記号ならスキップ */
 	tokp_next = tokp + 1;
+	pos++;
       }
     } else {
-      /* EUCコード */
-
-      /* 2byte文字のN-gram取得 */
+      /* UTF-8 非ASCII */
       gram = YAP_Ngram_get_2byte(tokp);
-
-      if (*(tokp + Ngram_N) > 0x7f) {
-	/*
-	 *次の単語も2バイト文字で、Nグラム分の2バイト文字数に満たない
-	 *2バイト分移動する
-	 */
-	unsigned char *np;
-	np = tokp + Ngram_N + 2;
-	while (*np > 0x80 && np < tokp + (Ngram_N * 2)) {
-	  np += 2;
-	}
-	tokp_next = np - Ngram_N;
-      } else {
-	tokp_next = tokp + Ngram_N;
-      }
+      tokp_next = tokp + YAP_Utf8_char_len(*tokp);
+      pos++;
     }
 
     if (gram != NULL) {
@@ -298,7 +298,7 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num)
 
       list[*keyword_num].keyword = (unsigned char *) YAP_malloc(strlen((const char *) gram) + 1);
       strcpy((char *) list[*keyword_num].keyword, (const char *) gram);
-      list[*keyword_num].pos = (tokp - tokp_start);
+      list[*keyword_num].pos = pos_before;
       (*keyword_num)++;
       free(gram);
     }
