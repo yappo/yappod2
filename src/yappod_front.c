@@ -47,7 +47,7 @@ typedef struct{
 int count;
 
 
-void :YAP_Error( char *msg){
+void YAP_Error( char *msg){
   fprintf(stderr, "ERROR: %s\n", msg);
   exit(-1);
 }
