@@ -30,6 +30,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_alloc.c
   ${SRC_DIR}/yappo_io.c
+  ${SRC_DIR}/yappo_stat.c
   ${SRC_DIR}/yappo_db.c
   ${SRC_DIR}/yappo_index.c
   ${SRC_DIR}/yappo_index_pos.c

@@ -17,6 +17,7 @@
 
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_stat.h"
 #include "yappo_search.h"
 #include "yappo_db.h"
 #include "yappo_index.h"
@@ -450,8 +451,9 @@ int main(int argc, char *argv[])
     }
   }
 
-  if (stat(indextexts_dirpath, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
-    printf("Plase Index Dir: %s\n", indextexts_dirpath);
+  if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
+    perror("Plase Index Dir");
+    printf("%s\n", indextexts_dirpath);
     exit(-1);
   }
 

@@ -18,6 +18,7 @@
 #include "yappo_index_deletefile.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_stat.h"
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
 
@@ -802,7 +803,7 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  if (stat(yappo_db_files.base_dir, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
+  if (!YAP_is_dir(yappo_db_files.base_dir)) {
     printf("Plase dir\n");
     exit(-1);
   }
@@ -811,7 +812,7 @@ int main(int argc, char *argv[])
   {
     char *pos_dir = (char *) YAP_malloc(strlen(yappo_db_files.base_dir) + 5);
     sprintf(pos_dir, "%s/pos", yappo_db_files.base_dir);
-    if (stat(pos_dir, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
+    if (!YAP_is_dir(pos_dir)) {
       fprintf(stderr, "Missing pos dir: %s (mkdir -p %s)\n", pos_dir, pos_dir);
       free(pos_dir);
       exit(-1);
@@ -834,8 +835,8 @@ int main(int argc, char *argv[])
 
     //入力ファイルが存在するか調べる
     */
-    stat(indextext_filepath, &f_stats);
-    if (! S_ISREG(f_stats.st_mode)) {
+    if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
+      perror("Plase file");
       printf("Plase file\n");
       exit(-1);
     }
@@ -845,8 +846,8 @@ int main(int argc, char *argv[])
   } else {
     struct dirent *direntp;
     /*ディレクトリ中の.gzファイルを処理*/
-    stat(indextexts_dirpath, &f_stats);
-    if (! S_ISDIR(f_stats.st_mode)) {
+    if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
+      perror("Plase dir");
       printf("Plase dir\n");
       exit(-1);
     }
@@ -861,8 +862,8 @@ int main(int argc, char *argv[])
 	indextext_filepath = (char *) YAP_malloc(strlen(indextexts_dirpath) + strlen(name) + 2);
 	sprintf(indextext_filepath, "%s/%s", indextexts_dirpath, name);
 
- 	stat(indextext_filepath, &f_stats);
-	if (! S_ISREG(f_stats.st_mode)) {
+ 	if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
+	  perror("Plase file");
 	  printf("Plase file\n");
 	  exit(-1);
 	}

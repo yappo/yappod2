@@ -18,6 +18,7 @@
 #include "yappo_linklist.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_stat.h"
 #include "yappo_ngram.h"
 
 static void YAP_Error(char *msg)
@@ -146,18 +147,13 @@ void YAP_Db_filename_set (YAPPO_DB_FILES *p)
  */
 void _tmp_copy (char *base, char *dest)
 {
-  struct stat f_stats;
  
   printf("%s/%s\n", base, dest);
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(dest, &f_stats);
-  if (S_ISREG(f_stats.st_mode)) {
+  if (YAP_is_reg(dest)) {
     return;
   }
 
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(base, &f_stats);
-  if (S_ISREG(f_stats.st_mode)) {
+  if (YAP_is_reg(base)) {
     if (fork()) {
       int s;
       wait(&s);
@@ -173,7 +169,6 @@ void _tmp_copy (char *base, char *dest)
  */
 void YAP_Db_base_open (YAPPO_DB_FILES *p)
 {
-  struct stat f_stats;
   u_int32_t mode = DB_RDONLY;
   char *fileindex, *domainindex, *deletefile, *key1byte;
   char *filedata, *filedata_size, *filedata_index;
@@ -223,9 +218,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   /* 削除URL */
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書きこみ時 */
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(deletefile, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(deletefile)) {
       p->deletefile_file = fopen(deletefile, "w");
       if (p->deletefile_file == NULL) {
         YAP_Error("fopen error");
@@ -248,27 +241,21 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   /* URLメタデータ */
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書きこみ時 */
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(filedata, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(filedata)) {
       p->filedata_file = fopen(filedata, "w");
       if (p->filedata_file == NULL) {
         YAP_Error("fopen error");
       }
       fclose(p->filedata_file);
     }
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(filedata_size, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(filedata_size)) {
       p->filedata_size_file = fopen(filedata_size, "w");
       if (p->filedata_size_file == NULL) {
         YAP_Error("fopen error");
       }
       fclose(p->filedata_size_file);
     }
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(filedata_index, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(filedata_index)) {
       p->filedata_index_file = fopen(filedata_index, "w");
       if (p->filedata_index_file == NULL) {
         YAP_Error("fopen error");
@@ -300,9 +287,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
 
   /* 登録URL数 */
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(p->filenum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->filenum)) {
     /* 新規作成 */
     p->total_filenum = 0;
   } else {
@@ -316,12 +301,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->filenum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
 
   /* 登録DOMAIN数 */
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(p->domainnum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->domainnum)) {
     /* 新規作成 */
     p->total_domainnum = 0;
   } else {
@@ -335,11 +317,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->domainnum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
 
   /* 登録キーワード数 */
-  stat(p->keywordnum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->keywordnum)) {
     /* 新規作成 */
     p->total_keywordnum = 0;
   } else {
@@ -353,14 +333,12 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->keywordnum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
 
   printf("url=%d:key=%d\n", p->total_filenum, p->total_keywordnum);
 
 
   /* 各URLのサイズ */
-  stat(p->size, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->size)) {
     /* 新規作成 */
     p->size_file = fopen(p->size, "w");
     if (p->size_file == NULL) {
@@ -368,7 +346,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->size_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->size_file = fopen(p->size, "r+");
     if (p->size_file == NULL) {
@@ -385,8 +362,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   }
 
   /* 各URLのDOMAIN ID */
-  stat(p->domainid, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->domainid)) {
     /* 新規作成 */
     p->domainid_file = fopen(p->domainid, "w");
     if (p->domainid_file == NULL) {
@@ -394,7 +370,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->domainid_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->domainid_file = fopen(p->domainid, "r+");
     if (p->domainid_file == NULL) {
@@ -411,8 +386,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   }
 
   /* 各URLのスコア */
-  stat(p->score, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->score)) {
     /* 新規作成 */
     p->score_file = fopen(p->score, "w");
     if (p->score_file == NULL) {
@@ -420,7 +394,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->score_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->score_file = fopen(p->score, "r+");
     if (p->score_file == NULL) {
@@ -438,8 +411,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
 
   /* 各URLのキーワード数 */
-  stat(p->filekeywordnum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->filekeywordnum)) {
     /* 新規作成 */
     p->filekeywordnum_file = fopen(p->filekeywordnum, "w");
     if (p->filekeywordnum_file == NULL) {
@@ -447,7 +419,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->filekeywordnum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->filekeywordnum_file = fopen(p->filekeywordnum, "r+");
     if (p->filekeywordnum_file == NULL) {
@@ -464,8 +435,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   }
 
   /* URLの長さ */
-  stat(p->urllen, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->urllen)) {
     /* 新規作成 */
     p->urllen_file = fopen(p->urllen, "w");
     if (p->urllen_file == NULL) {
@@ -473,7 +443,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->urllen_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->urllen_file = fopen(p->urllen, "r+");
     if (p->urllen_file == NULL) {
@@ -490,8 +459,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   }
 
   /* キーワードの総出現数 */
-  stat(p->keyword_totalnum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->keyword_totalnum)) {
     /* 新規作成 */
     p->keyword_totalnum_file = fopen(p->keyword_totalnum, "w");
     if (p->keyword_totalnum_file == NULL) {
@@ -499,7 +467,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->keyword_totalnum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->keyword_totalnum_file = fopen(p->keyword_totalnum, "r+");
     if (p->keyword_totalnum_file == NULL) {
@@ -513,8 +480,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   }
 
   /* キーワードの総出現URL数 */
-  stat(p->keyword_docsnum, &f_stats);
-  if (! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->keyword_docsnum)) {
     /* 新規作成 */
     p->keyword_docsnum_file = fopen(p->keyword_docsnum, "w");
     if (p->keyword_docsnum_file == NULL) {
@@ -522,7 +488,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     }
     fclose(p->keyword_docsnum_file);
   }
-  memset(&f_stats, 0, sizeof(struct stat));
   if (p->mode == YAPPO_DB_WRITE) {
     p->keyword_docsnum_file = fopen(p->keyword_docsnum, "r+");
     if (p->keyword_docsnum_file == NULL) {
@@ -753,13 +718,10 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
   char *base = p->base_dir;
   int base_len = strlen(base);
   int ret;
-  struct stat f_stats; 
 
   p->linklist = (char *) YAP_malloc(base_len + strlen(LINKLIST_NAME) + 2);
   sprintf(p->linklist, "%s/%s", base, LINKLIST_NAME);
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(p->linklist, &f_stats);
-  if ( ! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->linklist)) {
     free(p->linklist);
     p->linklist = NULL;
     return;
@@ -773,9 +735,7 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
 
   p->linklist_size = (char *) YAP_malloc(base_len + strlen(LINKLIST_SIZE_NAME) + 2);
   sprintf(p->linklist_size, "%s/%s", base, LINKLIST_SIZE_NAME);
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(p->linklist_size, &f_stats);
-  if ( ! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->linklist_size)) {
     free(p->linklist);
     p->linklist = NULL;
     free(p->linklist_size);
@@ -796,9 +756,7 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
 
   p->linklist_index = (char *) YAP_malloc(base_len + strlen(LINKLIST_INDEX_NAME) + 2);
   sprintf(p->linklist_index, "%s/%s", base, LINKLIST_INDEX_NAME);
-  memset(&f_stats, 0, sizeof(struct stat));
-  stat(p->linklist_index, &f_stats);
-  if ( ! S_ISREG(f_stats.st_mode)) {
+  if (!YAP_is_reg(p->linklist_index)) {
     free(p->linklist);
     p->linklist = NULL;
     free(p->linklist_size);
@@ -859,7 +817,6 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
   char *tmp;
   char *base = p->base_dir;
   int base_len = strlen(base) + 2;
-  struct stat f_stats; 
   char *pos, *pos_size, *pos_index;
   int ret;
 
@@ -872,10 +829,7 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
      *読み込みモードなら
      *開く前にファイルが存在しているか調べる
      */
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(tmp, &f_stats);
-
-    if (! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(tmp)) {
       /* 存在しない */
       free(tmp);
       return 0;
@@ -931,9 +885,7 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
 
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書き込み時 */
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(pos, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(pos)) {
       int i = 0;
       long l = 0;
       p->pos_file = fopen(pos, "w");
@@ -947,18 +899,14 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
       }
       fclose(p->pos_file);
     }
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(pos_size, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(pos_size)) {
       p->pos_size_file = fopen(pos_size, "w");
       if (p->pos_size_file == NULL) {
         YAP_Error("fopen error");
       }
       fclose(p->pos_size_file);
     }
-    memset(&f_stats, 0, sizeof(struct stat));
-    stat(pos_index, &f_stats);
-    if ( ! S_ISREG(f_stats.st_mode)) {
+    if (!YAP_is_reg(pos_index)) {
       p->pos_index_file = fopen(pos_index, "w");
       if (p->pos_index_file == NULL) {
         YAP_Error("fopen error");

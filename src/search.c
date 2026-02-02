@@ -14,6 +14,7 @@
 #include "yappo_index.h"
 #include "yappo_index_filedata.h"
 #include "yappo_alloc.h"
+#include "yappo_stat.h"
 #include "yappo_ngram.h"
 #include "yappo_search.h"
 #include "yappo_linklist.h"
@@ -60,7 +61,6 @@ int main(int argc, char *argv[])
   char **keyword_list = NULL;
   int op = 0;/*0=AND 1=OR*/
   int keyword_list_num = 0;
-  struct stat f_stats;
 
   memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
 
@@ -98,8 +98,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  stat(yappo_db_files.base_dir, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (!YAP_is_dir(yappo_db_files.base_dir)) {
     printf("Plase Index Dir: %s\n", yappo_db_files.base_dir);
     exit(-1);
   }

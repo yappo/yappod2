@@ -15,6 +15,7 @@
 #include "yappo_index.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_stat.h"
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
 
@@ -57,7 +58,6 @@ int main(int argc, char *argv[])
   pos_t *output;
   int start = 0, end = -1, num, i;
   int tmp_size;
-  struct stat f_stats;
   int new_index;
   int seek_stops = 0;
 
@@ -111,8 +111,7 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  stat(input_dir, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (!YAP_is_dir(input_dir)) {
     printf("Usage: %s -l input_index -d output_file -s start -e end\n", argv[0]);
     printf("Plase index dir\n");
     exit(-1);
@@ -579,14 +578,12 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  stat(in_index.base_dir, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (!YAP_is_dir(in_index.base_dir)) {
     printf("Plase index dir\n");
     exit(-1);
   }
 
-  stat(out_index.base_dir, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (!YAP_is_dir(out_index.base_dir)) {
     printf("Plase index dir\n");
     exit(-1);
   }
