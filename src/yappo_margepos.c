@@ -14,6 +14,7 @@
 #include "yappo_db.h"
 #include "yappo_index.h"
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
 
@@ -190,7 +191,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "fopen error: %s\n", key_num_file);
     exit(-1);
   }
-  if (fread(&key_num, sizeof(int), 1, key_num_fp) != 1) {
+  if (YAP_fread_exact(key_num_fp, &key_num, sizeof(int), 1) != 0) {
     fprintf(stderr, "fread error: %s\n", key_num_file);
     exit(-1);
   }
@@ -229,20 +230,23 @@ int main(int argc, char *argv[])
       /*      printf("KEYNUM:%d\tPOS:%d\n", key_pos, i + start);*/
 
       if (!inputs[i]->seek_stop) {
-	ret = fread(&size, sizeof(int), 1, inputs[i]->size_fp);
+	ret = (YAP_fread_exact(inputs[i]->size_fp, &size, sizeof(int), 1) == 0);
 	if (!ret) {
 	  inputs[i]->seek_stop = 1;
 	  seek_stops++;
 	} else {
-	  ret = fread(&index, sizeof(int), 1, inputs[i]->index_fp);
+	  ret = (YAP_fread_exact(inputs[i]->index_fp, &index, sizeof(int), 1) == 0);
 	  if (ret) {
 	    /* 読み込み */
 	    /*	    printf("size:%d\tindex:%d\n", size, index);*/
 
 	    if (size) {
 	      buf = (unsigned char *) YAP_malloc(size);
-	      fseek(inputs[i]->data_fp, index, SEEK_SET);
-	      fread(buf, 1, size, inputs[i]->data_fp);
+	      if (YAP_fseek_set(inputs[i]->data_fp, index) != 0 ||
+	          YAP_fread_exact(inputs[i]->data_fp, buf, 1, size) != 0) {
+	        free(buf);
+	        continue;
+	      }
 	      
 	      bufs = (unsigned char *) YAP_realloc(bufs, size + total_size);
 	      memcpy(bufs + total_size, buf, size);
@@ -282,8 +286,10 @@ int main(int argc, char *argv[])
 	delete_f = 0;
 	delete_seek = fileindex / 8;
 	delete_bit  = fileindex % 8;
-	fseek(delete_fp, delete_seek, SEEK_SET);
-	fread(&delete_f, 1, 1, delete_fp);
+	if (YAP_fseek_set(delete_fp, delete_seek) != 0 ||
+	    YAP_fread_exact(delete_fp, &delete_f, 1, 1) != 0) {
+	  delete_f = 0;
+	}
 	if (delete_f & (1 << delete_bit)) {
 	  /*printf("[D]");*/
 	} else {
@@ -306,12 +312,14 @@ int main(int argc, char *argv[])
 	 * 保存する
 	 */
 	key_pos_seek = sizeof(int) * key_pos;
-	fseek(output->index_fp, key_pos_seek, SEEK_SET);
-	fseek(output->size_fp, key_pos_seek, SEEK_SET);
-
-	fwrite(new_bufs, sizeof(char), new_pos_len, output->data_fp);
-	fwrite(&new_index, sizeof(int), 1, output->index_fp);
-	fwrite(&new_pos_len, sizeof(int), 1, output->size_fp);
+	if (YAP_fseek_set(output->index_fp, key_pos_seek) != 0 ||
+	    YAP_fseek_set(output->size_fp, key_pos_seek) != 0 ||
+	    YAP_fwrite_exact(output->data_fp, new_bufs, sizeof(char), new_pos_len) != 0 ||
+	    YAP_fwrite_exact(output->index_fp, &new_index, sizeof(int), 1) != 0 ||
+	    YAP_fwrite_exact(output->size_fp, &new_pos_len, sizeof(int), 1) != 0) {
+	  free(new_bufs);
+	  break;
+	}
 
 	new_index += new_pos_len;
 	free(new_bufs);

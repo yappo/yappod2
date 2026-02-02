@@ -15,6 +15,7 @@
 #include <pthread.h>
 
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 #include "yappo_search.h"
 #include "yappo_index.h"
 #include "yappo_index_filedata.h"
@@ -108,28 +109,59 @@ SEARCH_RESULT *search_result_recv(FILE *socket)
 
   /* リターンコードを取得 */
   i = 0; 
-  fread(&i, sizeof(int), 1, socket); 
+  if (YAP_fread_exact(socket, &i, sizeof(int), 1) != 0) {
+    return NULL;
+  }
   if (i == 0) {
     /* ヒットしなかった */
   } else {
     p = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));
 
     /* KEYWORDを取得 */
-    fread(&keyword_id, sizeof(long), 1, socket);
-    fread(&keyword_total_num, sizeof(int), 1, socket);
-    fread(&keyword_docs_num, sizeof(int), 1, socket);
+    if (YAP_fread_exact(socket, &keyword_id, sizeof(long), 1) != 0 ||
+        YAP_fread_exact(socket, &keyword_total_num, sizeof(int), 1) != 0 ||
+        YAP_fread_exact(socket, &keyword_docs_num, sizeof(int), 1) != 0) {
+      free(p);
+      return NULL;
+    }
+    if (keyword_docs_num < 0) {
+      free(p);
+      return NULL;
+    }
     p->keyword_id = keyword_id;
     p->keyword_total_num = keyword_total_num;
     p->keyword_docs_num = keyword_docs_num;
 
     /* SEARCH_DOCUMENTをまず取得する */
     p->docs_list = (SEARCH_DOCUMENT *) YAP_malloc(sizeof(SEARCH_DOCUMENT) * p->keyword_docs_num);
-    fread(p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num, socket);
+    if (YAP_fread_exact(socket, p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num) != 0) {
+      free(p->docs_list);
+      free(p);
+      return NULL;
+    }
 
     /* posを取得 */
     for (i = 0; i < p->keyword_docs_num; i++) {
+      if (p->docs_list[i].pos_len < 0) {
+        int j;
+        for (j = 0; j < i; j++) {
+          free(p->docs_list[j].pos);
+        }
+        free(p->docs_list);
+        free(p);
+        return NULL;
+      }
       p->docs_list[i].pos = (int *) YAP_malloc(sizeof(int) * p->docs_list[i].pos_len);
-      fread(p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len, socket);
+      if (YAP_fread_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
+        int j;
+        free(p->docs_list[i].pos);
+        for (j = 0; j < i; j++) {
+          free(p->docs_list[j].pos);
+        }
+        free(p->docs_list);
+        free(p);
+        return NULL;
+      }
     }
   }
   return p;
@@ -145,6 +177,7 @@ char *readline (FILE *socket)
 
   socket_buf = (char *) YAP_malloc(BUF_SIZE);
   line_buf = (char *) YAP_malloc(BUF_SIZE);
+  line_buf[0] = '\0';
 
   while (! feof(socket)) { 
     memset(socket_buf, 0, BUF_SIZE);
@@ -291,21 +324,31 @@ void *thread_server (void *ip)
 	    int buf_size;
 
 	    buf_size = 1;
-	    fwrite(&buf_size, sizeof(int), 1, p->server_socket[i]);
+	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0) {
+	      continue;
+	    }
 
 	    buf_size = strlen(dict);
-	    fwrite(&buf_size, sizeof(int), 1, p->server_socket[i]);
-	    fwrite(dict, sizeof(char), buf_size, p->server_socket[i]);
+	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
+	        YAP_fwrite_exact(p->server_socket[i], dict, sizeof(char), buf_size) != 0) {
+	      continue;
+	    }
 
 	    buf_size = strlen(op);
-	    fwrite(&buf_size, sizeof(int), 1, p->server_socket[i]);
-	    fwrite(op, sizeof(char), buf_size, p->server_socket[i]);
+	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
+	        YAP_fwrite_exact(p->server_socket[i], op, sizeof(char), buf_size) != 0) {
+	      continue;
+	    }
 
 	    buf_size = strlen(keyword);
-	    fwrite(&buf_size, sizeof(int), 1, p->server_socket[i]);
-	    fwrite(keyword, sizeof(char), buf_size, p->server_socket[i]);
+	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
+	        YAP_fwrite_exact(p->server_socket[i], keyword, sizeof(char), buf_size) != 0) {
+	      continue;
+	    }
 
-	    fwrite(&max_size, sizeof(int), 1, p->server_socket[i]);
+	    if (YAP_fwrite_exact(p->server_socket[i], &max_size, sizeof(int), 1) != 0) {
+	      continue;
+	    }
 
 	    fflush(p->server_socket[i]);
 	  }
@@ -395,7 +438,7 @@ void *thread_server (void *ip)
    */
   for (i = 0; i < p->server_num; i++) {
     int buf_size = 0;
-    fwrite(&buf_size, sizeof(int), 1, p->server_socket[i]);
+    YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1);
     fclose(p->server_socket[i]);
     close(p->server_fd[i]);
   }
@@ -522,8 +565,7 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  stat(indextexts_dirpath, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (stat(indextexts_dirpath, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
     printf("Plase Index Dir: %s\n", indextexts_dirpath);
     exit(-1);
   }

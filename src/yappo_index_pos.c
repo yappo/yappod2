@@ -7,6 +7,7 @@
 #include "yappo_index_pos.h"
 #include "yappo_index.h"
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 
 
 
@@ -28,9 +29,11 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
   seek = sizeof(int) * keyword_id;
 
   /*サイズの読みこみ*/
-  fseek(ydfp->pos_size_file, seek, SEEK_SET);
-  ret = fread(&pos_size, sizeof(int), 1, ydfp->pos_size_file);
-  if (ret == 0) {
+  if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0) {
+    return -1;
+  }
+  ret = YAP_fread_exact(ydfp->pos_size_file, &pos_size, sizeof(int), 1);
+  if (ret != 0) {
     return -1;
   }
 
@@ -41,18 +44,19 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
 
 
   /*indexの読みこみ*/
-  fseek(ydfp->pos_index_file, seek, SEEK_SET);
-  ret = fread(&pos_index, sizeof(int), 1, ydfp->pos_index_file);
-  if (ret == 0) {
+  if (YAP_fseek_set(ydfp->pos_index_file, seek) != 0) {
+    return -1;
+  }
+  ret = YAP_fread_exact(ydfp->pos_index_file, &pos_index, sizeof(int), 1);
+  if (ret != 0) {
     return -1;
   }
 
 
   /*データの読みこみ*/
   *postings_buf = (unsigned char *) YAP_malloc(pos_size);
-  fseek(ydfp->pos_file, pos_index, SEEK_SET);
-  ret = fread(*postings_buf, 1, pos_size, ydfp->pos_file);
-  if (ret != pos_size) {
+  if (YAP_fseek_set(ydfp->pos_file, pos_index) != 0 ||
+      YAP_fread_exact(ydfp->pos_file, *postings_buf, 1, pos_size) != 0) {
     free(*postings_buf);
     *postings_buf = NULL;
     return -1;
@@ -80,17 +84,25 @@ int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
   seek = sizeof(int) * keyword_id;
 
   /*サイズの書きこみ*/
-  fseek(ydfp->pos_size_file, seek, SEEK_SET);
-  fwrite(&postings_buf_len, sizeof(int), 1, ydfp->pos_size_file);
+  if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0 ||
+      YAP_fwrite_exact(ydfp->pos_size_file, &postings_buf_len, sizeof(int), 1) != 0) {
+    return -1;
+  }
 
   /*データの書きこみ*/
-  fseek(ydfp->pos_file, 0L, SEEK_END);
+  if (fseek(ydfp->pos_file, 0L, SEEK_END) != 0) {
+    return -1;
+  }
   pos_index = ftell(ydfp->pos_file);
-  fwrite(postings_buf, 1, postings_buf_len, ydfp->pos_file);
+  if (YAP_fwrite_exact(ydfp->pos_file, postings_buf, 1, postings_buf_len) != 0) {
+    return -1;
+  }
 
   /*indexの書きこみ*/
-  fseek(ydfp->pos_index_file, seek, SEEK_SET);
-  fwrite(&pos_index, sizeof(int), 1, ydfp->pos_index_file);
+  if (YAP_fseek_set(ydfp->pos_index_file, seek) != 0 ||
+      YAP_fwrite_exact(ydfp->pos_index_file, &pos_index, sizeof(int), 1) != 0) {
+    return -1;
+  }
 
   return 0;
 }
@@ -111,12 +123,16 @@ int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id)
   seek = sizeof(int) * keyword_id;
 
   /*サイズの書きこみ*/
-  fseek(ydfp->pos_size_file, seek, SEEK_SET);
-  fwrite(&c, sizeof(int), 1, ydfp->pos_size_file);
+  if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0 ||
+      YAP_fwrite_exact(ydfp->pos_size_file, &c, sizeof(int), 1) != 0) {
+    return -1;
+  }
 
   /*indexの書きこみ*/
-  fseek(ydfp->pos_index_file, seek, SEEK_SET);
-  fwrite(&c, sizeof(int), 1, ydfp->pos_index_file);
+  if (YAP_fseek_set(ydfp->pos_index_file, seek) != 0 ||
+      YAP_fwrite_exact(ydfp->pos_index_file, &c, sizeof(int), 1) != 0) {
+    return -1;
+  }
 
   return 0;
 }
@@ -169,49 +185,77 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
 
 
   /*基本情報をコピーする*/
-  fread(&pos_num, sizeof(long), 1, pos_file);
-  fwrite(&pos_num, sizeof(long), 1, pos_tmp_file);
-  fread(&tmp, sizeof(int), 1, pos_file);
-  fwrite(&tmp, sizeof(int), 1, pos_tmp_file);
-  fread(&tmp, sizeof(int), 1, pos_file);
-  fwrite(&tmp, sizeof(int), 1, pos_tmp_file);
+  if (YAP_fread_exact(pos_file, &pos_num, sizeof(long), 1) != 0 ||
+      YAP_fwrite_exact(pos_tmp_file, &pos_num, sizeof(long), 1) != 0 ||
+      YAP_fread_exact(pos_file, &tmp, sizeof(int), 1) != 0 ||
+      YAP_fwrite_exact(pos_tmp_file, &tmp, sizeof(int), 1) != 0 ||
+      YAP_fread_exact(pos_file, &tmp, sizeof(int), 1) != 0 ||
+      YAP_fwrite_exact(pos_tmp_file, &tmp, sizeof(int), 1) != 0) {
+    fclose(pos_file);
+    fclose(pos_size_file);
+    fclose(pos_index_file);
+    fclose(pos_tmp_file);
+    fclose(pos_index_tmp_file);
+    free(pos_tmp);
+    free(pos_index_tmp);
+    return -1;
+  }
 
 
-  fseek(pos_size_file, sizeof(int), SEEK_SET);
-  fseek(pos_index_file, sizeof(int), SEEK_SET);
-  fseek(pos_index_tmp_file, sizeof(int), SEEK_SET);
+  if (YAP_fseek_set(pos_size_file, sizeof(int)) != 0 ||
+      YAP_fseek_set(pos_index_file, sizeof(int)) != 0 ||
+      YAP_fseek_set(pos_index_tmp_file, sizeof(int)) != 0) {
+    fclose(pos_file);
+    fclose(pos_size_file);
+    fclose(pos_index_file);
+    fclose(pos_tmp_file);
+    fclose(pos_index_tmp_file);
+    free(pos_tmp);
+    free(pos_index_tmp);
+    return -1;
+  }
 
   /*位置情報のコピー*/
   for (i = 1; (unsigned int) i <= ydfp->total_keywordnum; i++) {
     seek = sizeof(int) * i;
 
     /*サイズの読みこみ*/
-    fread(&size, sizeof(int), 1, pos_size_file);
+    if (YAP_fread_exact(pos_size_file, &size, sizeof(int), 1) != 0) {
+      break;
+    }
 
     if (size > 0) {
       /*登録が有る*/
 
       /*indexの読みこみ*/
-      fseek(pos_index_file, seek, SEEK_SET);
-      fread(&index, sizeof(int), 1, pos_index_file);
+      if (YAP_fseek_set(pos_index_file, seek) != 0 ||
+          YAP_fread_exact(pos_index_file, &index, sizeof(int), 1) != 0) {
+        break;
+      }
 
       /*データの読みこみ*/
       if (buf_len < size) {
 	buf = (char *) YAP_realloc(buf, size);
 	buf_len = size;
       }
-      fseek(pos_file, index, SEEK_SET);
-      fread(buf, 1, size, pos_file);
+      if (YAP_fseek_set(pos_file, index) != 0 ||
+          YAP_fread_exact(pos_file, buf, 1, size) != 0) {
+        break;
+      }
 
       /*データの書きこみ*/
       index_tmp = ftell(pos_tmp_file);
-      fwrite(buf, 1, size, pos_tmp_file);
+      if (YAP_fwrite_exact(pos_tmp_file, buf, 1, size) != 0) {
+        break;
+      }
     } else {
       index_tmp = 0;
     }
     /*indexの書きこみ*/
 
-    fwrite(&index_tmp, sizeof(int), 1, pos_index_tmp_file);
+    if (YAP_fwrite_exact(pos_index_tmp_file, &index_tmp, sizeof(int), 1) != 0) {
+      break;
+    }
   }
 
   if (buf != NULL) {

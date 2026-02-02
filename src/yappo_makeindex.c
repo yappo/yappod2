@@ -17,6 +17,7 @@
 #include "yappo_index_filedata.h"
 #include "yappo_index_deletefile.h"
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
 
@@ -58,21 +59,33 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
 
     seek = sizeof(int) * index_stack[i].fileindex;
 
-    fseek(ydfp->size_file, seek, SEEK_SET);
-    fwrite(&(index_stack[i].filedata.size), sizeof(int), 1, ydfp->size_file);
+    if (YAP_fseek_set(ydfp->size_file, seek) != 0 ||
+        YAP_fwrite_exact(ydfp->size_file, &(index_stack[i].filedata.size), sizeof(int), 1) != 0) {
+      return -1;
+    }
 
-    fseek(ydfp->domainid_file, seek, SEEK_SET);
-    fwrite(&(index_stack[i].filedata.domainid), sizeof(int), 1, ydfp->domainid_file);
+    if (YAP_fseek_set(ydfp->domainid_file, seek) != 0 ||
+        YAP_fwrite_exact(ydfp->domainid_file, &(index_stack[i].filedata.domainid), sizeof(int), 1) != 0) {
+      return -1;
+    }
 
-    fseek(ydfp->score_file, sizeof(double) * index_stack[i].fileindex, SEEK_SET);
-    fwrite(&score, sizeof(double), 1, ydfp->score_file);
+    if (YAP_fseek_set(ydfp->score_file, sizeof(double) * index_stack[i].fileindex) != 0 ||
+        YAP_fwrite_exact(ydfp->score_file, &score, sizeof(double), 1) != 0) {
+      return -1;
+    }
 
-    fseek(ydfp->filekeywordnum_file, seek, SEEK_SET);
-    fwrite(&(index_stack[i].filedata.keyword_num), sizeof(int), 1, ydfp->filekeywordnum_file);
+    if (YAP_fseek_set(ydfp->filekeywordnum_file, seek) != 0 ||
+        YAP_fwrite_exact(ydfp->filekeywordnum_file, &(index_stack[i].filedata.keyword_num), sizeof(int), 1) != 0) {
+      return -1;
+    }
 
-    fseek(ydfp->urllen_file, seek, SEEK_SET);
+    if (YAP_fseek_set(ydfp->urllen_file, seek) != 0) {
+      return -1;
+    }
     len = strlen(index_stack[i].filedata.url);
-    fwrite(&len, sizeof(int), 1, ydfp->urllen_file);
+    if (YAP_fwrite_exact(ydfp->urllen_file, &len, sizeof(int), 1) != 0) {
+      return -1;
+    }
   }
 
   return 0;
@@ -112,10 +125,12 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
 	keyword_total_num = ((BTREE_DATA *) btree_this->data)->keyword_total_num;
 	keyword_docs_num = ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
 
-	fseek(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id, SEEK_SET);
-	fwrite(&keyword_total_num, sizeof(int), 1, ydfp->keyword_totalnum_file);
-	fseek(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id, SEEK_SET);
-	fwrite(&keyword_docs_num, sizeof(int), 1, ydfp->keyword_docsnum_file);
+	if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+	    YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
+	    YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+	    YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+	  return -1;
+	}
 
 	YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
 
@@ -130,18 +145,22 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
 	int postings_buf_len;
 
 	/*数値の加算*/
-	fseek(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id, SEEK_SET);
-	fread(&keyword_total_num, sizeof(int), 1, ydfp->keyword_totalnum_file);
-	fseek(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id, SEEK_SET);
-	fread(&keyword_docs_num, sizeof(int), 1, ydfp->keyword_docsnum_file);
+	if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+	    YAP_fread_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
+	    YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+	    YAP_fread_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+	  return -1;
+	}
 
 	keyword_total_num += ((BTREE_DATA *) btree_this->data)->keyword_total_num;
 	keyword_docs_num += ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
 
-	fseek(ydfp->keyword_totalnum_file, sizeof(int) * -1, SEEK_CUR);
-	fwrite(&keyword_total_num, sizeof(int), 1, ydfp->keyword_totalnum_file);
-	fseek(ydfp->keyword_docsnum_file, sizeof(int) * -1, SEEK_CUR);
-	fwrite(&keyword_docs_num, sizeof(int), 1, ydfp->keyword_docsnum_file);
+	if (fseek(ydfp->keyword_totalnum_file, sizeof(int) * -1, SEEK_CUR) != 0 ||
+	    YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
+	    fseek(ydfp->keyword_docsnum_file, sizeof(int) * -1, SEEK_CUR) != 0 ||
+	    YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+	  return -1;
+	}
 
 	YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
 

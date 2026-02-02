@@ -17,6 +17,7 @@
 #include "yappo_index_deletefile.h"
 #include "yappo_linklist.h"
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 #include "yappo_ngram.h"
 
 static void YAP_Error(char *msg)
@@ -310,7 +311,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->filenum_file == NULL) {
       YAP_Error("fopen error");
     }
-    if (fread(&(p->total_filenum), sizeof(int), 1, p->filenum_file) != 1) {
+    if (YAP_fread_exact(p->filenum_file, &(p->total_filenum), sizeof(int), 1) != 0) {
       YAP_Error("fread error");
     }
     fclose(p->filenum_file);
@@ -329,7 +330,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->domainnum_file == NULL) {
       YAP_Error("fopen error");
     }
-    if (fread(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file) != 1) {
+    if (YAP_fread_exact(p->domainnum_file, &(p->total_domainnum), sizeof(int), 1) != 0) {
       YAP_Error("fread error");
     }
     fclose(p->domainnum_file);
@@ -347,7 +348,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->keywordnum_file == NULL) {
       YAP_Error("fopen error");
     }
-    if (fread(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file) != 1) {
+    if (YAP_fread_exact(p->keywordnum_file, &(p->total_keywordnum), sizeof(int), 1) != 0) {
       YAP_Error("fread error");
     }
     fclose(p->keywordnum_file);
@@ -373,7 +374,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->size_file == NULL) {
       YAP_Error("fopen error");
     }
-    fseek(p->size_file, sizeof(int) * p->total_filenum, SEEK_SET);
+    if (YAP_fseek_set(p->size_file, sizeof(int) * p->total_filenum) != 0) {
+      YAP_Error("fseek error");
+    }
   } else {
     p->size_file = fopen(p->size, "r");
     if (p->size_file == NULL) {
@@ -397,7 +400,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->domainid_file == NULL) {
       YAP_Error("fopen error");
     }
-    fseek(p->domainid_file, sizeof(int) * p->total_domainnum, SEEK_SET);
+    if (YAP_fseek_set(p->domainid_file, sizeof(int) * p->total_domainnum) != 0) {
+      YAP_Error("fseek error");
+    }
   } else {
     p->domainid_file = fopen(p->domainid, "r");
     if (p->domainid_file == NULL) {
@@ -421,7 +426,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->score_file == NULL) {
       YAP_Error("fopen error");
     }
-    fseek(p->score_file, sizeof(double) * p->total_filenum, SEEK_SET);
+    if (YAP_fseek_set(p->score_file, sizeof(double) * p->total_filenum) != 0) {
+      YAP_Error("fseek error");
+    }
   } else {
     p->score_file = fopen(p->score, "r");
     if (p->score_file == NULL) {
@@ -446,7 +453,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->filekeywordnum_file == NULL) {
       YAP_Error("fopen error");
     }
-    fseek(p->filekeywordnum_file, sizeof(int) * p->total_filenum, SEEK_SET);
+    if (YAP_fseek_set(p->filekeywordnum_file, sizeof(int) * p->total_filenum) != 0) {
+      YAP_Error("fseek error");
+    }
   } else {
     p->filekeywordnum_file = fopen(p->filekeywordnum, "r");
     if (p->filekeywordnum_file == NULL) {
@@ -470,7 +479,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->urllen_file == NULL) {
       YAP_Error("fopen error");
     }
-    fseek(p->urllen_file, sizeof(int) * p->total_filenum, SEEK_SET);
+    if (YAP_fseek_set(p->urllen_file, sizeof(int) * p->total_filenum) != 0) {
+      YAP_Error("fseek error");
+    }
   } else {
     p->urllen_file = fopen(p->urllen, "r");
     if (p->urllen_file == NULL) {
@@ -656,7 +667,9 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
     if (p->filenum_file == NULL) {
       YAP_Error("fopen error");
     } else {
-      fwrite(&(p->total_filenum), sizeof(int), 1, p->filenum_file);
+      if (YAP_fwrite_exact(p->filenum_file, &(p->total_filenum), sizeof(int), 1) != 0) {
+        YAP_Error("fwrite error");
+      }
       fclose(p->filenum_file);
     }
   }
@@ -670,7 +683,9 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
     if (p->domainnum_file == NULL) {
       YAP_Error("fopen error");
     } else {
-      fwrite(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file);
+      if (YAP_fwrite_exact(p->domainnum_file, &(p->total_domainnum), sizeof(int), 1) != 0) {
+        YAP_Error("fwrite error");
+      }
       fclose(p->domainnum_file);
     }
   }
@@ -684,7 +699,9 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
     if (p->keywordnum_file == NULL) {
       YAP_Error("fopen error");
     } else {
-      fwrite(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file);
+      if (YAP_fwrite_exact(p->keywordnum_file, &(p->total_keywordnum), sizeof(int), 1) != 0) {
+        YAP_Error("fwrite error");
+      }
       fclose(p->keywordnum_file);
     }
   }
@@ -806,8 +823,8 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
 
-  ret = fread(&(p->linklist_num), sizeof(int), 1, p->linklist_file);
-  if (ret == 0) {
+  ret = YAP_fread_exact(p->linklist_file, &(p->linklist_num), sizeof(int), 1);
+  if (ret != 0) {
     p->linklist_num = 0;
   }
 }
@@ -923,9 +940,9 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
       if (p->pos_file == NULL) {
         YAP_Error("fopen error");
       }
-      if (fwrite(&l, sizeof(long), 1, p->pos_file) != 1 ||
-          fwrite(&i, sizeof(int), 1, p->pos_file) != 1 ||
-          fwrite(&i, sizeof(int), 1, p->pos_file) != 1) {
+      if (YAP_fwrite_exact(p->pos_file, &l, sizeof(long), 1) != 0 ||
+          YAP_fwrite_exact(p->pos_file, &i, sizeof(int), 1) != 0 ||
+          YAP_fwrite_exact(p->pos_file, &i, sizeof(int), 1) != 0) {
         YAP_Error("fwrite error");
       }
       fclose(p->pos_file);
@@ -966,16 +983,16 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
   }
 
   /* 各種情報を読みこむ */
-  ret = fread(&(p->pos_num), sizeof(long), 1, p->pos_file);
-  if (ret == 0) {
+  ret = YAP_fread_exact(p->pos_file, &(p->pos_num), sizeof(long), 1);
+  if (ret != 0) {
     p->pos_num = 0;
   }
-  ret = fread(&(p->pos_fileindex_start), sizeof(int), 1, p->pos_file);
-  if (ret == 0) {
+  ret = YAP_fread_exact(p->pos_file, &(p->pos_fileindex_start), sizeof(int), 1);
+  if (ret != 0) {
     p->pos_fileindex_start = 0;
   }
-  ret = fread(&(p->pos_fileindex_end), sizeof(int), 1, p->pos_file);
-  if (ret == 0) {
+  ret = YAP_fread_exact(p->pos_file, &(p->pos_fileindex_end), sizeof(int), 1);
+  if (ret != 0) {
     p->pos_fileindex_end = 0;
   }
 
@@ -999,10 +1016,12 @@ void YAP_Db_pos_close (YAPPO_DB_FILES *p)
       p->pos_fileindex_end = p->pos_fileindex_end_w;
     }
 
-    fseek(p->pos_file, 0L, SEEK_SET);
-    fwrite(&(p->pos_num), sizeof(long), 1, p->pos_file);
-    fwrite(&(p->pos_fileindex_start), sizeof(int), 1, p->pos_file);
-    fwrite(&(p->pos_fileindex_end), sizeof(int), 1, p->pos_file);
+    if (YAP_fseek_set(p->pos_file, 0L) != 0 ||
+        YAP_fwrite_exact(p->pos_file, &(p->pos_num), sizeof(long), 1) != 0 ||
+        YAP_fwrite_exact(p->pos_file, &(p->pos_fileindex_start), sizeof(int), 1) != 0 ||
+        YAP_fwrite_exact(p->pos_file, &(p->pos_fileindex_end), sizeof(int), 1) != 0) {
+      YAP_Error("pos header write error");
+    }
   }
 
   /* ファイルを閉じる */
@@ -1133,45 +1152,69 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
     /* スコアファイルキャッシュ */
     pthread_mutex_lock(&(p->score_mutex));
     p->score = (double *) YAP_realloc(p->score, sizeof(double) * ydfp->total_filenum);
-    fseek(ydfp->score_file, 0L, SEEK_SET);
-    p->score_num = fread(p->score, sizeof(double), ydfp->total_filenum, ydfp->score_file);
+    if (YAP_fseek_set(ydfp->score_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->score_file, p->score, sizeof(double), ydfp->total_filenum) != 0) {
+      p->score_num = 0;
+    } else {
+      p->score_num = ydfp->total_filenum;
+    }
     pthread_mutex_unlock(&(p->score_mutex));
 
     /* ファイルサイズキャッシュ */
     pthread_mutex_lock(&(p->size_mutex));
     p->size = (int *) YAP_realloc(p->size, sizeof(int) * ydfp->total_filenum);
-    fseek(ydfp->size_file, 0L, SEEK_SET);
-    p->size_num = fread(p->size, sizeof(int), ydfp->total_filenum, ydfp->size_file);
+    if (YAP_fseek_set(ydfp->size_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->size_file, p->size, sizeof(int), ydfp->total_filenum) != 0) {
+      p->size_num = 0;
+    } else {
+      p->size_num = ydfp->total_filenum;
+    }
     pthread_mutex_unlock(&(p->size_mutex));
 
     /* URL文字数ファイルキャッシュ */
     pthread_mutex_lock(&(p->urllen_mutex));
     p->urllen = (int *) YAP_realloc(p->urllen, sizeof(int) * ydfp->total_filenum);
-    fseek(ydfp->urllen_file, 0L, SEEK_SET);
-    p->urllen_num = fread(p->urllen, sizeof(int), ydfp->total_filenum, ydfp->urllen_file);
+    if (YAP_fseek_set(ydfp->urllen_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->urllen_file, p->urllen, sizeof(int), ydfp->total_filenum) != 0) {
+      p->urllen_num = 0;
+    } else {
+      p->urllen_num = ydfp->total_filenum;
+    }
     pthread_mutex_unlock(&(p->urllen_mutex));
 
 
     /* 各URLのキーワード数ファイルキャッシュ */
     pthread_mutex_lock(&(p->filekeywordnum_mutex));
     p->filekeywordnum = (unsigned int *) YAP_realloc(p->filekeywordnum, sizeof(int) * ydfp->total_filenum);
-    fseek(ydfp->filekeywordnum_file, 0L, SEEK_SET);
-    p->filekeywordnum_num = fread(p->filekeywordnum, sizeof(int), ydfp->total_filenum, ydfp->filekeywordnum_file);
+    if (YAP_fseek_set(ydfp->filekeywordnum_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->filekeywordnum_file, p->filekeywordnum, sizeof(int), ydfp->total_filenum) != 0) {
+      p->filekeywordnum_num = 0;
+    } else {
+      p->filekeywordnum_num = ydfp->total_filenum;
+    }
     pthread_mutex_unlock(&(p->filekeywordnum_mutex));
     
 
     /* domain idファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
     p->domainid = (int *) YAP_realloc(p->domainid, sizeof(int) * ydfp->total_filenum);
-    fseek(ydfp->domainid_file, 0L, SEEK_SET);
-    p->domainid_num = fread(p->domainid, sizeof(int), ydfp->total_filenum, ydfp->domainid_file);
+    if (YAP_fseek_set(ydfp->domainid_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->domainid_file, p->domainid, sizeof(int), ydfp->total_filenum) != 0) {
+      p->domainid_num = 0;
+    } else {
+      p->domainid_num = ydfp->total_filenum;
+    }
     pthread_mutex_unlock(&(p->domainid_mutex));
 
     /* 削除URLファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
     p->deletefile = (unsigned char *) YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
-    fseek(ydfp->deletefile_file, 0L, SEEK_SET);
-    p->deletefile_num = fread(p->deletefile, 1, (ydfp->total_filenum / 8) + 1, ydfp->deletefile_file);
+    if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0 ||
+        YAP_fread_exact(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1) != 0) {
+      p->deletefile_num = 0;
+    } else {
+      p->deletefile_num = (ydfp->total_filenum / 8) + 1;
+    }
     pthread_mutex_unlock(&(p->domainid_mutex));
 
     printf("load delete: %d/%d\n", p->deletefile_num, (ydfp->total_filenum / 8) + 1);

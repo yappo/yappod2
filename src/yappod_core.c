@@ -16,6 +16,7 @@
 #include <pthread.h>
 
 #include "yappo_alloc.h"
+#include "yappo_io.h"
 #include "yappo_search.h"
 #include "yappo_db.h"
 #include "yappo_index.h"
@@ -62,26 +63,36 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p)
   if (p == NULL || 0 == p->keyword_docs_num) {
     /*リターンコードを送る*/
     i = 0;
-    fwrite(&i, sizeof(int), 1, socket);
+    if (YAP_fwrite_exact(socket, &i, sizeof(int), 1) != 0) {
+      return;
+    }
   } else {
     /*リターンコードを送る*/
     i = 1;
-    fwrite(&i, sizeof(int), 1, socket);
+    if (YAP_fwrite_exact(socket, &i, sizeof(int), 1) != 0) {
+      return;
+    }
 
     /*KEYWORDを送る*/
     keyword_id = p->keyword_id;
     keyword_total_num = p->keyword_total_num;
     keyword_docs_num = p->keyword_docs_num;
-    fwrite(&keyword_id, sizeof(long), 1, socket);
-    fwrite(&keyword_total_num, sizeof(int), 1, socket);
-    fwrite(&keyword_docs_num, sizeof(int), 1, socket);
+    if (YAP_fwrite_exact(socket, &keyword_id, sizeof(long), 1) != 0 ||
+        YAP_fwrite_exact(socket, &keyword_total_num, sizeof(int), 1) != 0 ||
+        YAP_fwrite_exact(socket, &keyword_docs_num, sizeof(int), 1) != 0) {
+      return;
+    }
 
     /*SEARCH_DOCUMENTをまず送る*/
-    fwrite(p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num, socket);
+    if (YAP_fwrite_exact(socket, p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num) != 0) {
+      return;
+    }
 
     /*posを送る*/
     for (i = 0; i < p->keyword_docs_num; i++) {
-      fwrite(p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len, socket);
+      if (YAP_fwrite_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
+        return;
+      }
     }
   }
 
@@ -243,7 +254,7 @@ void *thread_server (void *ip)
     while (1) {
       /*永遠と処理を続ける*/
       buf_size = 0;
-      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
         break;
       }
       if (buf_size == 0) {
@@ -256,7 +267,7 @@ void *thread_server (void *ip)
       
       /*クライアントからリクエストを受け取る*/
       buf_size = 0;
-      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
         break;
       }
       printf("SIZE[%d]: %d\n", p->id, buf_size);
@@ -265,14 +276,14 @@ void *thread_server (void *ip)
         break;
       }
       dict = (char *) YAP_malloc(buf_size + 1);
-      if (fread(dict, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+      if (YAP_fread_exact(socket, dict, sizeof(char), buf_size) != 0) {
         free(dict);
         break;
       }
       dict[buf_size] = '\0';
       
       buf_size = 0;
-      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
         free(dict);
         break;
       }
@@ -282,7 +293,7 @@ void *thread_server (void *ip)
         break;
       }
       op = (char *) YAP_malloc(buf_size + 1);
-      if (fread(op, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+      if (YAP_fread_exact(socket, op, sizeof(char), buf_size) != 0) {
         free(dict);
         free(op);
         break;
@@ -290,7 +301,7 @@ void *thread_server (void *ip)
       op[buf_size] = '\0';
       
       buf_size = 0;
-      if (fread(&buf_size, sizeof(int), 1, socket) != 1) {
+      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
         free(dict);
         free(op);
         break;
@@ -302,7 +313,7 @@ void *thread_server (void *ip)
         break;
       }
       keyword = (char *) YAP_malloc(buf_size + 1);
-      if (fread(keyword, sizeof(char), buf_size, socket) != (size_t) buf_size) {
+      if (YAP_fread_exact(socket, keyword, sizeof(char), buf_size) != 0) {
         free(dict);
         free(op);
         free(keyword);
@@ -310,7 +321,7 @@ void *thread_server (void *ip)
       }
       keyword[buf_size] = '\0';
       
-      if (fread(&max_size, sizeof(int), 1, socket) != 1) {
+      if (YAP_fread_exact(socket, &max_size, sizeof(int), 1) != 0) {
         free(dict);
         free(op);
         free(keyword);
@@ -439,8 +450,7 @@ int main(int argc, char *argv[])
     }
   }
 
-  stat(indextexts_dirpath, &f_stats);
-  if (! S_ISDIR(f_stats.st_mode)) {
+  if (stat(indextexts_dirpath, &f_stats) != 0 || ! S_ISDIR(f_stats.st_mode)) {
     printf("Plase Index Dir: %s\n", indextexts_dirpath);
     exit(-1);
   }
