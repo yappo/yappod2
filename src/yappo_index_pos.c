@@ -182,7 +182,7 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   fseek(pos_index_tmp_file, sizeof(int), SEEK_SET);
 
   /*位置情報のコピー*/
-  for (i = 1; i <= ydfp->total_keywordnum; i++) {
+  for (i = 1; (unsigned int) i <= ydfp->total_keywordnum; i++) {
     seek = sizeof(int) * i;
 
     /*サイズの読みこみ*/

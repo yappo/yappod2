@@ -233,7 +233,7 @@ unsigned char *YAP_Index_8bit_encode(int *list, int list_len, int *ret_len)
 int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len)
 {
   int i;
-  int *list, *ret;
+  int *list;
   unsigned char *encode_p;
   int bits;
 

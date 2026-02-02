@@ -7,8 +7,13 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 enable_testing()
 
-if(APPLE)
+option(YAPPOD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Wpedantic)
+  if(YAPPOD_WARNINGS_AS_ERRORS)
+    add_compile_options(-Werror)
+  endif()
 endif()
 
 find_package(Threads REQUIRED)

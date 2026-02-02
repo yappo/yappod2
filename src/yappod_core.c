@@ -57,6 +57,7 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p)
   int i;
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
+  (void) ydfp;
 
   if (p == NULL || 0 == p->keyword_docs_num) {
     /*リターンコードを送る*/
@@ -145,10 +146,11 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
 {
   int f_op;
   char **keyword_list;
-  char *keyword_encode, *keyp, *keys, *keye;
+  char *keyp, *keys, *keye;
   char *buf;
   int keyword_list_num = 1;
   int i;
+  (void) dict;
 
   /*検索条件*/
   if (strcmp(op, "OR") == 0) {
@@ -204,7 +206,7 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
 /*
  *サーバの本体
  */
-void thread_server (void *ip) 
+void *thread_server (void *ip) 
 {
   struct sockaddr_in *yap_sin;
   YAPPO_DB_FILES yappo_db_files;
@@ -224,12 +226,10 @@ void thread_server (void *ip)
     SEARCH_RESULT *result;
     socklen_t sockaddr_len = sizeof(yap_sin);
     int accept_socket;
-    char *line, *line_buf;
     FILE *socket;
     char *dict, *op, *keyword;/*リクエスト*/
     int buf_size;
     int max_size;
-    int ret;
 
     accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
     socket = fdopen(accept_socket, "r+");
@@ -343,6 +343,8 @@ void thread_server (void *ip)
     fclose(socket);
     close(accept_socket);
   }
+
+  return NULL;
 }
 
 void start_deamon_thread(char *indextexts_dirpath) 
@@ -392,7 +394,7 @@ void start_deamon_thread(char *indextexts_dirpath)
 
     /*thread_server(dup(yap_socket), &yap_sin);*/
     printf( "start: %d:%s\n", i, thread_data[i].base_dir);
-    pthread_create(&(pthread[i]), NULL, (void *) thread_server, (void *) &(thread_data[i]));
+    pthread_create(&(pthread[i]), NULL, thread_server, (void *) &(thread_data[i]));
 
     /*    pthread_join(pthread[i], NULL); 
     //pthread_join(t1, NULL);

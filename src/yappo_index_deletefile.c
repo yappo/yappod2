@@ -13,7 +13,7 @@ int YAP_Index_Deletefile_get(YAPPO_DB_FILES *ydfp, int fileindex)
   int seek, bit;
   unsigned char c = 0;
 
-  if (ydfp->total_filenum < fileindex) {
+  if ((unsigned int) fileindex > ydfp->total_filenum) {
     /*対象となるIDは存在していない*/
     return -1;
   }
@@ -95,4 +95,3 @@ int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex)
     return -1;
   }
 }
-

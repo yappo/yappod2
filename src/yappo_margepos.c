@@ -43,7 +43,7 @@ typedef struct {
 
 int main(int argc, char *argv[])
 {
-  char *output_file, *input_dir;
+  char *output_file = NULL, *input_dir = NULL;
 
   char *delete_file;
   FILE *delete_fp;
@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
 
   pos_t **inputs;
   pos_t *output;
-  int start, end, num, i;
+  int start = 0, end = -1, num, i;
   int tmp_size;
   struct stat f_stats;
   int new_index;
@@ -204,9 +204,8 @@ int main(int argc, char *argv[])
    */
   new_index = 0;
   for (key_pos = 0;key_pos < key_num;key_pos++) {
-    int ret;
     int total_size = 0;
-    int *pos, pos_len, pos_i;
+    int *pos, pos_len;
     int *new_pos, new_pos_len, new_pos_i;
     unsigned char *bufs = NULL;
     bufs = (unsigned char *) YAP_malloc(1);
@@ -224,6 +223,7 @@ int main(int argc, char *argv[])
      * DBの数だけくり返す
      */
     for (i = 0;i < num;i++) {
+      int ret;
       int size, index;
       unsigned char *buf;
       /*      printf("KEYNUM:%d\tPOS:%d\n", key_pos, i + start);*/
@@ -300,8 +300,6 @@ int main(int argc, char *argv[])
 
       new_bufs = YAP_Index_8bit_encode(new_pos, new_pos_i, &new_pos_len);
       if (new_pos_len > 0) {
-	int ret;
-
 	/*	printf("\nNEW SIZE: %d\n\n\n", new_pos_len);*/
 
 	/*
@@ -311,9 +309,9 @@ int main(int argc, char *argv[])
 	fseek(output->index_fp, key_pos_seek, SEEK_SET);
 	fseek(output->size_fp, key_pos_seek, SEEK_SET);
 
-	ret = fwrite(new_bufs, sizeof(char), new_pos_len, output->data_fp);
-	ret = fwrite(&new_index, sizeof(int), 1, output->index_fp);
-	ret = fwrite(&new_pos_len, sizeof(int), 1, output->size_fp);
+	fwrite(new_bufs, sizeof(char), new_pos_len, output->data_fp);
+	fwrite(&new_index, sizeof(int), 1, output->index_fp);
+	fwrite(&new_pos_len, sizeof(int), 1, output->size_fp);
 
 	new_index += new_pos_len;
 	free(new_bufs);

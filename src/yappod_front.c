@@ -411,6 +411,7 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
   int i;
   pthread_t *pthread;
   YAP_THREAD_DATA *thread_data;
+  (void) server_socket;
 
   /* ソケットの作成 */
   yap_socket = socket( AF_INET, SOCK_STREAM, 0);

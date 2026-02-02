@@ -14,7 +14,7 @@
 /*
  *btreeの初期化
  */
-MINIBTREE *YAP_Minibtree_init()
+MINIBTREE *YAP_Minibtree_init(void)
 {
   MINIBTREE *p = (MINIBTREE *) YAP_malloc(sizeof(MINIBTREE));
   p->key   = NULL;

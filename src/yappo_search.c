@@ -105,7 +105,7 @@ SEARCH_RESULT *YAP_Search_result_delete_size (YAPPO_DB_FILES *ydfp, SEARCH_RESUL
   for (i = 0; i < p->keyword_docs_num; i++) {
     size = 0;
 
-    if (ydfp->cache->size_num > p->docs_list[i].fileindex) { 
+    if ((unsigned int) p->docs_list[i].fileindex < ydfp->cache->size_num) {
       size = ydfp->cache->size[p->docs_list[i].fileindex]; 
     } else {
       continue;
@@ -314,8 +314,7 @@ SEARCH_RESULT *YAP_Search_op_and (SEARCH_RESULT *left, SEARCH_RESULT *right, int
 	/* 見つかった */
 	if (order > 0) {
 	  /* 出現位置リストを調べる */	  
-	  int ret;
-	  int _r, _l;
+		  int _r, _l;
 	  if (left == base) {
 	    _l = base_i;
 	    _r = c_i;
@@ -510,10 +509,9 @@ SEARCH_RESULT *YAP_Search_op_or (SEARCH_RESULT *left, SEARCH_RESULT *right)
  */
 SEARCH_RESULT *YAP_Search_op_or_add_position (SEARCH_RESULT *left, SEARCH_RESULT *right)
 {
-  SEARCH_RESULT *result, *new;
-  int left_i, right_i, new_i;
+  SEARCH_RESULT *result;
+  int left_i, right_i;
   int total_num = 0, docs_num = 0;
-  double score;
 
   /* NULL対策 */
   if (left == NULL || right == NULL) {
@@ -682,10 +680,10 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *k
   int ret, i, df;
   unsigned char *posbuf, *posbuf_tmp;
   int posbuf_len, posbuf_len_tmp;
-  int *pos, *pos_tmp, pos_len, pos_len_tmp;
+  int *pos, pos_len;
   SEARCH_DOCUMENT *docs_list;
-  FILEDATA filedata;
   double base_idf;
+  int max_pos_file;
 
   /* 全文書中の対象文書の出現率を求める */
   base_idf = log( ydfp->total_filenum / docs_num) + 1.0;
@@ -698,7 +696,8 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *k
    */
   posbuf_tmp = (unsigned char *) YAP_malloc(sizeof(int) * (total_num + docs_num + docs_num) * 2);
   posbuf_len_tmp = 0;
-  for (i = 0; i <= ydfp->total_filenum / MAX_POS_URL; i++) {
+  max_pos_file = (int) (ydfp->total_filenum / MAX_POS_URL);
+  for (i = 0; i <= max_pos_file; i++) {
     if (YAP_Db_pos_open(ydfp, i)) {
 
       ret = YAP_Index_Pos_get(ydfp, keyword_id, &posbuf, &posbuf_len); 
@@ -731,10 +730,8 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *k
   printf("get pos end: %ld\n", (long) time(NULL));
 
   if (pos_len > 0) { 
-    int ret;
-    int ii;
     int size, urllen, filekeywordnum;
-    int last_index, now_index, now_seek;
+    int now_index;
     double tf, idf, tmp, score;
 
     docs_list = (SEARCH_DOCUMENT *) YAP_malloc(sizeof(SEARCH_DOCUMENT) * docs_num * 2);
@@ -747,7 +744,6 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *k
 
     df = 0;
     i = 0;
-    last_index = 0;
     while (i < pos_len) {
 
       /*
@@ -788,22 +784,22 @@ SEARCH_DOCUMENT *YAP_Search_position_get (YAPPO_DB_FILES *ydfp, unsigned char *k
 	now_index = docs_list[df].fileindex;
 
 	/* スコアファイル取得 */
-	if (ydfp->cache->score_num > now_index) {
+	if ((unsigned int) now_index < ydfp->cache->score_num) {
 	  score = ydfp->cache->score[now_index];
 	}
 
 	/* ファイルサイズ取得 */
-	if (ydfp->cache->size_num > now_index) {
+	if ((unsigned int) now_index < ydfp->cache->size_num) {
 	  size = ydfp->cache->size[now_index];
 	}
 	
 	/* URLの長さ取得 */
-	if (ydfp->cache->urllen_num > now_index) {
+	if ((unsigned int) now_index < ydfp->cache->urllen_num) {
 	  urllen = ydfp->cache->urllen[now_index];
 	}
 
 	/* 文書中のキーワード数の取得 */
-	if (ydfp->cache->filekeywordnum_num > now_index) {
+	if (now_index < ydfp->cache->filekeywordnum_num) {
 	  filekeywordnum = ydfp->cache->filekeywordnum[now_index];
 	}
       }
@@ -864,7 +860,7 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
 {
   SEARCH_RESULT *result;
   int ret;
-  int i, docs_num;
+  int docs_num;
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
 
@@ -1022,9 +1018,7 @@ SEARCH_RESULT *YAP_Search_word (YAPPO_DB_FILES *ydfp, char *keyword)
  */
 SEARCH_RESULT *YAP_Search (YAPPO_DB_FILES *ydfp, char **keyword_list, int keyword_list_num, int max_size, int op)
 {
-  NGRAM_SEARCH_LIST *ngram_key;
   SEARCH_RESULT *result, *left, *right, *result_tmp;
-  int ngram_key_len;
   int i;
 
   if (keyword_list == NULL || keyword_list_num == 0) {

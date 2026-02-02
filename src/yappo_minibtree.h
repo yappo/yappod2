@@ -17,7 +17,7 @@ typedef struct yap_minibtree{
 }MINIBTREE;
 
 
-MINIBTREE *YAP_Minibtree_init();
+MINIBTREE *YAP_Minibtree_init(void);
 MINIBTREE *YAP_Minibtree_search( MINIBTREE *root, unsigned char *key);
 int YAP_Minibtree_add( MINIBTREE *root, MINIBTREE *add);
 

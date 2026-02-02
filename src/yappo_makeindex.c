@@ -360,7 +360,7 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
  */
 int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
 {
-  char *gz_in, *gz_out, *line_buf;
+  char *gz_in, *line_buf;
   gzFile gz_file;
   INDEX_STACK index_stack[MAX_STACK_SIZE];
   FILEDATA old_filedata;

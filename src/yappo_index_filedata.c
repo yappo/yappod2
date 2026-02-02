@@ -17,7 +17,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   int str_len;
   unsigned char *buf, *bufp;
 
-  if (ydfp->total_filenum < fileindex) {
+  if ((unsigned int) fileindex > ydfp->total_filenum) {
     /*対象となるIDは存在していない*/
     return -1;
   }
@@ -283,7 +283,7 @@ int YAP_Index_Filedata_free (FILEDATA *p)
 int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_size, char *filedata_index)
 {
   int i;
-  int seek, index, index_tmp, size, tmp;
+  int seek, index, index_tmp, size;
   char *filedata_tmp, *filedata_index_tmp;
   FILE *filedata_file, *filedata_size_file, *filedata_index_file;
   FILE *filedata_tmp_file, *filedata_index_tmp_file;
@@ -326,7 +326,7 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   fseek(filedata_index_tmp_file, sizeof(int), SEEK_SET);
 
   /*位置情報のコピー*/
-  for (i = 1; i <= ydfp->total_filenum; i++) {
+  for (i = 1; (unsigned int) i <= ydfp->total_filenum; i++) {
     seek = sizeof(int) * i;
 
     /*サイズの読みこみ*/

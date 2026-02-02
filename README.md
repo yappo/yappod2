@@ -76,6 +76,12 @@ $ cmake -S . -B build \
 $ cmake --build build -j
 ```
 
+警告をエラーとして扱う設定（`-Werror`）はデフォルトで有効です。  
+必要なら以下で無効化できます:
+```
+$ cmake -S . -B build -DYAPPOD_WARNINGS_AS_ERRORS=OFF ...
+```
+
 ### インストール（デフォルト先へ）
 ```
 $ cmake --install build
