@@ -99,3 +99,4 @@ install(TARGETS ${ALL_TARGETS}
 )
 
 add_test(NAME e2e COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.sh)
+add_test(NAME error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/error_cases.sh)
