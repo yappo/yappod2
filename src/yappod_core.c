@@ -46,7 +46,7 @@ int count;
 
 
 void YAP_Error( char *msg){
-  printf( "%s\n", msg);
+  fprintf(stderr, "ERROR: %s\n", msg);
   exit(-1);
 }
 
@@ -273,7 +273,7 @@ void *thread_server (void *ip)
       }
       printf("SIZE[%d]: %d\n", p->id, buf_size);
       if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "invalid dict size: %d\n", buf_size);
+        fprintf(stderr, "ERROR: invalid dict size: %d\n", buf_size);
         break;
       }
       dict = (char *) YAP_malloc(buf_size + 1);
@@ -289,7 +289,7 @@ void *thread_server (void *ip)
         break;
       }
       if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "invalid op size: %d\n", buf_size);
+        fprintf(stderr, "ERROR: invalid op size: %d\n", buf_size);
         free(dict);
         break;
       }
@@ -308,7 +308,7 @@ void *thread_server (void *ip)
         break;
       }
       if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "invalid keyword size: %d\n", buf_size);
+        fprintf(stderr, "ERROR: invalid keyword size: %d\n", buf_size);
         free(dict);
         free(op);
         break;
@@ -452,8 +452,8 @@ int main(int argc, char *argv[])
   }
 
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
-    perror("Plase Index Dir");
-    printf("%s\n", indextexts_dirpath);
+    perror("ERROR: invalid index dir");
+    fprintf(stderr, "%s\n", indextexts_dirpath);
     exit(-1);
   }
 

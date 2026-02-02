@@ -804,7 +804,7 @@ int main(int argc, char *argv[])
   }
 
   if (!YAP_is_dir(yappo_db_files.base_dir)) {
-    printf("Plase dir\n");
+    printf("Please specify an existing index directory.\n");
     exit(-1);
   }
 
@@ -836,8 +836,8 @@ int main(int argc, char *argv[])
     //入力ファイルが存在するか調べる
     */
     if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
-      perror("Plase file");
-      printf("Plase file\n");
+      perror("ERROR: invalid input file");
+      printf("Please specify an existing input file.\n");
       exit(-1);
     }
 
@@ -847,8 +847,8 @@ int main(int argc, char *argv[])
     struct dirent *direntp;
     /*ディレクトリ中の.gzファイルを処理*/
     if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
-      perror("Plase dir");
-      printf("Plase dir\n");
+      perror("ERROR: invalid input directory");
+      printf("Please specify an existing input directory.\n");
       exit(-1);
     }
 
@@ -863,8 +863,8 @@ int main(int argc, char *argv[])
 	sprintf(indextext_filepath, "%s/%s", indextexts_dirpath, name);
 
  	if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
-	  perror("Plase file");
-	  printf("Plase file\n");
+	  perror("ERROR: invalid input file");
+	  printf("Please specify an existing input file.\n");
 	  exit(-1);
 	}
 

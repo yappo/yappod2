@@ -48,7 +48,7 @@ int count;
 
 
 void YAP_Error( char *msg){
-  printf( "%s\n", msg);
+  fprintf(stderr, "ERROR: %s\n", msg);
   exit(-1);
 }
 
@@ -567,8 +567,8 @@ int main(int argc, char *argv[])
   }
 
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
-    perror("Plase Index Dir");
-    printf("%s\n", indextexts_dirpath);
+    perror("ERROR: invalid index dir");
+    fprintf(stderr, "%s\n", indextexts_dirpath);
     exit(-1);
   }
 

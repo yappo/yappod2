@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
   }
 
   if (!YAP_is_dir(yappo_db_files.base_dir)) {
-    printf("Plase Index Dir: %s\n", yappo_db_files.base_dir);
+    printf("Please specify an existing index directory: %s\n", yappo_db_files.base_dir);
     exit(-1);
   }
 

@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
 
   if (!YAP_is_dir(input_dir)) {
     printf("Usage: %s -l input_index -d output_file -s start -e end\n", argv[0]);
-    printf("Plase index dir\n");
+    printf("Please specify an existing index directory.\n");
     exit(-1);
   }
 
@@ -579,12 +579,12 @@ int main(int argc, char *argv[])
   }
 
   if (!YAP_is_dir(in_index.base_dir)) {
-    printf("Plase index dir\n");
+    printf("Please specify an existing index directory.\n");
     exit(-1);
   }
 
   if (!YAP_is_dir(out_index.base_dir)) {
-    printf("Plase index dir\n");
+    printf("Please specify an existing index directory.\n");
     exit(-1);
   }
 
