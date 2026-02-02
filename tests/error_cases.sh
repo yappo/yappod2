@@ -7,6 +7,8 @@ FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
 
 TMP_ROOT="$(mktemp -d)"
 INDEX_DIR_OK="${TMP_ROOT}/ok"
+INDEX_DIR_OK2="${TMP_ROOT}/ok2"
+INDEX_DIR_OK3="${TMP_ROOT}/ok3"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 
 cleanup() {
@@ -25,17 +27,40 @@ fi
 mkdir -p "${INDEX_DIR_OK}/pos"
 "${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR_OK}" >/dev/null
 
-# keyword_docsnum を破損させる（短い読み込みを誘発）
+assert_not_segv() {
+  local index_dir="$1"
+  local query="$2"
+
+  set +e
+  "${BUILD_DIR}/search" -l "${index_dir}" "${query}" >/dev/null 2>&1
+  rc=$?
+  set -e
+
+  if [ "${rc}" -eq 139 ]; then
+    echo "search crashed with SIGSEGV: index=${index_dir} query=${query}" >&2
+    exit 1
+  fi
+}
+
+# Case 2-1: keyword_docsnum を破損（短い読み込み）
 : > "${INDEX_DIR_OK}/keyword_docsnum"
+assert_not_segv "${INDEX_DIR_OK}" "テスト"
 
-set +e
-"${BUILD_DIR}/search" -l "${INDEX_DIR_OK}" "テスト" >/dev/null 2>&1
-rc=$?
-set -e
+# Case 2-2: keyword_totalnum を破損（短い読み込み）
+mkdir -p "${INDEX_DIR_OK2}/pos"
+"${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR_OK2}" >/dev/null
+: > "${INDEX_DIR_OK2}/keyword_totalnum"
+assert_not_segv "${INDEX_DIR_OK2}" "テスト"
 
-if [ "${rc}" -eq 139 ]; then
-  echo "search crashed with SIGSEGV on corrupted metadata." >&2
+# Case 2-3: pos ヘッダを破損（先頭posファイルをtruncate）
+mkdir -p "${INDEX_DIR_OK3}/pos"
+"${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR_OK3}" >/dev/null
+POS_FILE="$(find "${INDEX_DIR_OK3}/pos" -maxdepth 1 -type f | grep -E '/[0-9]+$' | head -n 1 || true)"
+if [ -z "${POS_FILE}" ]; then
+  echo "Could not find postings file under ${INDEX_DIR_OK3}/pos" >&2
   exit 1
 fi
+truncate -s 4 "${POS_FILE}"
+assert_not_segv "${INDEX_DIR_OK3}" "テスト"
 
 exit 0
