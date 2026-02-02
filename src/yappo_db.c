@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "yappo_db.h"
 #include "yappo_index.h"
@@ -16,6 +18,12 @@
 #include "yappo_linklist.h"
 #include "yappo_alloc.h"
 #include "yappo_ngram.h"
+
+static void YAP_Error(char *msg)
+{
+  perror(msg);
+  exit(-1);
+}
 
 /*
  *YAPPO_DB_FILESに必要なファイル名をセットする
@@ -218,6 +226,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     stat(deletefile, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->deletefile_file = fopen(deletefile, "w");
+      if (p->deletefile_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->deletefile_file);
     }
     p->deletefile_file = fopen(deletefile, "r+");
@@ -240,18 +251,27 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     stat(filedata, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->filedata_file = fopen(filedata, "w");
+      if (p->filedata_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->filedata_file);
     }
     memset(&f_stats, 0, sizeof(struct stat));
     stat(filedata_size, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->filedata_size_file = fopen(filedata_size, "w");
+      if (p->filedata_size_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->filedata_size_file);
     }
     memset(&f_stats, 0, sizeof(struct stat));
     stat(filedata_index, &f_stats);
     if ( ! S_ISREG(f_stats.st_mode)) {
       p->filedata_index_file = fopen(filedata_index, "w");
+      if (p->filedata_index_file == NULL) {
+        YAP_Error("fopen error");
+      }
       fclose(p->filedata_index_file);
     }
 
@@ -290,7 +310,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->filenum_file == NULL) {
       YAP_Error("fopen error");
     }
-    fread(&(p->total_filenum), sizeof(int), 1, p->filenum_file);
+    if (fread(&(p->total_filenum), sizeof(int), 1, p->filenum_file) != 1) {
+      YAP_Error("fread error");
+    }
     fclose(p->filenum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
@@ -307,7 +329,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->domainnum_file == NULL) {
       YAP_Error("fopen error");
     }
-    fread(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file);
+    if (fread(&(p->total_domainnum), sizeof(int), 1, p->domainnum_file) != 1) {
+      YAP_Error("fread error");
+    }
     fclose(p->domainnum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));
@@ -323,7 +347,9 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
     if (p->keywordnum_file == NULL) {
       YAP_Error("fopen error");
     }
-    fread(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file);
+    if (fread(&(p->total_keywordnum), sizeof(int), 1, p->keywordnum_file) != 1) {
+      YAP_Error("fread error");
+    }
     fclose(p->keywordnum_file);
   }
   memset(&f_stats, 0, sizeof(struct stat));

@@ -381,6 +381,7 @@ void *thread_server (void *ip)
 	free(dict); free(op); free(keyword); free(line);
 	break;
       }
+      }
     }
 
     fflush(stdout);
