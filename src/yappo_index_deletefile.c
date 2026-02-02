@@ -67,7 +67,6 @@ int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex)
   } else {
     /*未削除*/
     c |= (1 << bit);
-    /*fseek(ydfp->deletefile_file, -1L, SEEK_CUR);*/
     if (YAP_fseek_set(ydfp->deletefile_file, seek) != 0) {
       return -1;
     }
@@ -104,7 +103,7 @@ int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex)
   if (c & (1 << bit)) {
     /*削除済*/
     c -= (1 << bit);
-    if (fseek(ydfp->deletefile_file, -1L, SEEK_CUR) != 0) {
+    if (YAP_fseek_cur(ydfp->deletefile_file, -1L) != 0) {
       return -1;
     }
     if (YAP_fwrite_exact(ydfp->deletefile_file, &c, 1, 1) != 0) {

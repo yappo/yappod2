@@ -156,9 +156,9 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
 	keyword_total_num += ((BTREE_DATA *) btree_this->data)->keyword_total_num;
 	keyword_docs_num += ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
 
-	if (fseek(ydfp->keyword_totalnum_file, sizeof(int) * -1, SEEK_CUR) != 0 ||
+	if (YAP_fseek_cur(ydfp->keyword_totalnum_file, sizeof(int) * -1) != 0 ||
 	    YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-	    fseek(ydfp->keyword_docsnum_file, sizeof(int) * -1, SEEK_CUR) != 0 ||
+	    YAP_fseek_cur(ydfp->keyword_docsnum_file, sizeof(int) * -1) != 0 ||
 	    YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
 	  return -1;
 	}

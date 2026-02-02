@@ -20,6 +20,32 @@ int __YAP_fseek_set(char *filename, int line, FILE *fp, long offset)
   return 0;
 }
 
+int __YAP_fseek_cur(char *filename, int line, FILE *fp, long offset)
+{
+  if (fp == NULL) {
+    fprintf(stderr, "YAP_fseek_cur: null file pointer: %s:%d\n", filename, line);
+    return -1;
+  }
+  if (fseek(fp, offset, SEEK_CUR) != 0) {
+    fprintf(stderr, "YAP_fseek_cur: fseek failed: %s:%d: %s\n", filename, line, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
+int __YAP_fseek_end(char *filename, int line, FILE *fp, long offset)
+{
+  if (fp == NULL) {
+    fprintf(stderr, "YAP_fseek_end: null file pointer: %s:%d\n", filename, line);
+    return -1;
+  }
+  if (fseek(fp, offset, SEEK_END) != 0) {
+    fprintf(stderr, "YAP_fseek_end: fseek failed: %s:%d: %s\n", filename, line, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
 int __YAP_fread_exact(char *filename, int line, FILE *fp, void *ptr, size_t size, size_t nmemb)
 {
   size_t got;

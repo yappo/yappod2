@@ -214,7 +214,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   }
 
   /*データの書きこみ*/
-  if (fseek(ydfp->filedata_file, 0L, SEEK_END) != 0) {
+  if (YAP_fseek_end(ydfp->filedata_file, 0L) != 0) {
     free(buf);
     return -1;
   }

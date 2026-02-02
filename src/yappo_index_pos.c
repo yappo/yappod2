@@ -90,7 +90,7 @@ int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
   }
 
   /*データの書きこみ*/
-  if (fseek(ydfp->pos_file, 0L, SEEK_END) != 0) {
+  if (YAP_fseek_end(ydfp->pos_file, 0L) != 0) {
     return -1;
   }
   pos_index = ftell(ydfp->pos_file);
