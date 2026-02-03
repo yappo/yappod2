@@ -48,6 +48,9 @@ typedef struct{
 
 
 int count;
+static volatile sig_atomic_t g_shutdown_requested = 0;
+static volatile sig_atomic_t g_shutdown_signal = 0;
+static const char *g_front_pidfile = "./front.pid";
 
 
 void YAP_Error( char *msg){
@@ -58,6 +61,17 @@ void YAP_Error( char *msg){
 static void YAP_log_thread_error(int thread_id, const char *msg)
 {
   fprintf(stderr, "ERROR: front thread %d %s\n", thread_id, msg);
+}
+
+static void YAP_request_shutdown(int sig)
+{
+  g_shutdown_signal = sig;
+  g_shutdown_requested = 1;
+}
+
+static void YAP_remove_pidfile(void)
+{
+  unlink(g_front_pidfile);
 }
 
 static int YAP_send_bad_request(int fd, int thread_id)
@@ -322,8 +336,14 @@ void *thread_server (void *ip)
     int start, end;
 
 
+    if (g_shutdown_requested) {
+      break;
+    }
     if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len,
                               &socket, &accept_socket, "front", p->id) != 0) {
+      if (g_shutdown_requested) {
+        break;
+      }
       continue;
     }
 
@@ -522,9 +542,14 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
   /*
    *メインループ
    */
-  while(1){
-    sleep(120);
+  while(!g_shutdown_requested){
+    sleep(1);
   }
+
+  if (g_shutdown_signal != 0) {
+    fprintf(stderr, "INFO: front shutdown requested by signal %d\n", g_shutdown_signal);
+  }
+  close(yap_socket);
   printf("end\n");
 }
 
@@ -611,10 +636,14 @@ int main(int argc, char *argv[])
     }
     exit(0);
   }
+
+  atexit(YAP_remove_pidfile);
   
   /*
-   *SIGPIPEを無視
+   *シグナル処理
    */
+  signal(SIGTERM, YAP_request_shutdown);
+  signal(SIGINT, YAP_request_shutdown);
   signal(SIGPIPE, SIG_IGN);
 
   start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
