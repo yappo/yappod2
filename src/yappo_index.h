@@ -1,8 +1,8 @@
 /*
  *インデクシング回り
  */
-#ifndef __INDEX_H__
-#define __INDEX_H__
+#ifndef YAPPO_INDEX_H
+#define YAPPO_INDEX_H
 
 #include "yappo_db.h"
 

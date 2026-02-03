@@ -1,8 +1,8 @@
 /*
  *キーワード出現位置データを取扱う
  */
-#ifndef __INDEX_POS_H__
-#define __INDEX_POS_H__
+#ifndef YAPPO_INDEX_POS_H
+#define YAPPO_INDEX_POS_H
 
 #include "yappo_db.h"
 

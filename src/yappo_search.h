@@ -3,8 +3,8 @@
  *キーワードを保有するドキュメント番号の取得等
  *
  */
-#ifndef __SEARCH_H__
-#define __SEARCH_H__
+#ifndef YAPPO_SEARCH_H
+#define YAPPO_SEARCH_H
 
 #include "yappo_db.h"
 #include "yappo_index.h"

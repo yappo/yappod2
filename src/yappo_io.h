@@ -1,8 +1,8 @@
 /*
  *stdio helpers
  */
-#ifndef __YAPPO_IO_H__
-#define __YAPPO_IO_H__
+#ifndef YAPPO_IO_H
+#define YAPPO_IO_H
 
 #include <stdio.h>
 #include <stddef.h>

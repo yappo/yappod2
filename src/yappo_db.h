@@ -3,8 +3,8 @@
  *DB回りの処理を行なう
  *
  */
-#ifndef __YAPPO_DB_H__
-#define __YAPPO_DB_H__
+#ifndef YAPPO_DB_H
+#define YAPPO_DB_H
 
 typedef unsigned long u_long;
 

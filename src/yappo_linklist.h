@@ -1,8 +1,8 @@
 /*
  *リンクリストの操作を行なう
  */
-#ifndef __LINKLIST_H__
-#define __LINKLIST_H__
+#ifndef YAPPO_LINKLIST_H
+#define YAPPO_LINKLIST_H
 
 #include "yappo_search.h"
 

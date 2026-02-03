@@ -1,8 +1,8 @@
 /*
  *削除URLの処理
  */
-#ifndef __INDEX_DELETEFILE_H__
-#define __INDEX_DELETEFILE_H__
+#ifndef YAPPO_INDEX_DELETEFILE_H
+#define YAPPO_INDEX_DELETEFILE_H
 
 #define DELETEFILE_NAME "deletefile"
 

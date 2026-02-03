@@ -1,8 +1,8 @@
 /*
  *socket/file-stream helpers
  */
-#ifndef __YAPPO_NET_H__
-#define __YAPPO_NET_H__
+#ifndef YAPPO_NET_H
+#define YAPPO_NET_H
 
 #include <stdio.h>
 #include <sys/socket.h>
