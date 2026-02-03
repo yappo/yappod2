@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libdb-dev zlib1g-dev
+
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install berkeley-db
+
+      - name: Configure (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          BDB_PREFIX="$(brew --prefix berkeley-db)"
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBDB_INCLUDE_DIR="${BDB_PREFIX}/include" \
+            -DBDB_LIB="${BDB_PREFIX}/lib/libdb.dylib"
+
+      - name: Build
+        run: |
+          cmake --build build -j
+
+      - name: Test
+        run: |
+          ctest --test-dir build --output-on-failure
