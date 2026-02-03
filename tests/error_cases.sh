@@ -14,6 +14,8 @@ INDEX_DIR_OK5="${TMP_ROOT}/ok5"
 INDEX_DIR_OK6="${TMP_ROOT}/ok6"
 INDEX_DIR_OK7="${TMP_ROOT}/ok7"
 INDEX_DIR_OK8="${TMP_ROOT}/ok8"
+INDEX_DIR_OK9="${TMP_ROOT}/ok9"
+INDEX_DIR_OK10="${TMP_ROOT}/ok10"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -94,6 +96,31 @@ s.close()
 PY
 }
 
+send_http_long_query() {
+  local length="$1"
+  python3 - "$length" <<'PY'
+import socket, sys
+length = int(sys.argv[1])
+query = "A" * length
+payload = f"GET / d/100/OR/0-10?{query} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode("utf-8")
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+try:
+    s.recv(4096)
+except OSError:
+    pass
+s.close()
+PY
+}
+
+assert_daemons_alive() {
+  local context="$1"
+  if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
+    echo "front/core daemon crashed: ${context}" >&2
+    exit 1
+  fi
+}
+
 stop_daemons() {
   local pid
   for pid in "${FRONT_PID}" "${CORE_PID}"; do
@@ -112,6 +139,7 @@ stop_daemons() {
 start_daemons() {
   local index_dir="$1"
   mkdir -p "${DAEMON_RUN_DIR}"
+  rm -f "${DAEMON_RUN_DIR}/core.pid" "${DAEMON_RUN_DIR}/front.pid"
   (cd "${DAEMON_RUN_DIR}" && "${BUILD_DIR}/yappod_core" -l "${index_dir}" >/dev/null 2>&1)
   (cd "${DAEMON_RUN_DIR}" && "${BUILD_DIR}/yappod_front" -l "${index_dir}" -s 127.0.0.1 >/dev/null 2>&1)
 
@@ -178,10 +206,26 @@ truncate -s 1 "${INDEX_DIR_OK8}/score"
 start_daemons "${INDEX_DIR_OK8}"
 send_http_raw $'GET / bad\r\n\r\n'
 send_http_raw $'GET / d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
-if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
-  echo "front/core daemon crashed on malformed or broken-index request." >&2
+assert_daemons_alive "malformed or broken-index request"
+stop_daemons
+
+# Case 2-9: core 停止後のリクエストでも front が落ちないこと
+make_index "${INDEX_DIR_OK9}"
+start_daemons "${INDEX_DIR_OK9}"
+kill "${CORE_PID}" 2>/dev/null || true
+sleep 0.2
+send_http_raw $'GET / d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
+if ! kill -0 "${FRONT_PID}" 2>/dev/null; then
+  echo "front daemon crashed after core disconnect." >&2
   exit 1
 fi
+stop_daemons
+
+# Case 2-10: 巨大クエリ行でも front/core が落ちないこと
+make_index "${INDEX_DIR_OK10}"
+start_daemons "${INDEX_DIR_OK10}"
+send_http_long_query 200000
+assert_daemons_alive "oversized request query"
 stop_daemons
 
 exit 0
