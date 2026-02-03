@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
-#include <ctype.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -59,7 +58,6 @@ void YAP_Error( char *msg){
  */
 static char *urldecode (const char *p) {
   char *ret, *retp;
-  char f, l;
   size_t in_len;
 
   if (p == NULL) {
@@ -71,34 +69,36 @@ static char *urldecode (const char *p) {
   retp = ret;
 
   while (*p) {
-
     if (*p != '%') {
       *retp = *p;
       retp++;
       p++;
     } else {
-      p++;
-      f = tolower(*p);
-      p++;
-      l = tolower(*p);
-      p++;
-
-      if (f >= 'a' && f <= 'f') {
-	*retp = ((f - 'a') + 10) * 16;
-      } else if (f >= '0' && f <= '9') {
-	*retp = (f - '0') * 16;
-      } else {
-	continue;
+      int hi = -1, lo = -1;
+      if (p[1] >= '0' && p[1] <= '9') {
+        hi = p[1] - '0';
+      } else if (p[1] >= 'a' && p[1] <= 'f') {
+        hi = p[1] - 'a' + 10;
+      } else if (p[1] >= 'A' && p[1] <= 'F') {
+        hi = p[1] - 'A' + 10;
       }
-      if (l >= 'a' && l <= 'f') {
-	*retp += l - 'a' + 10;
-      } else if (l >= '0' && l <= '9') {
-	*retp += l - '0';
-      } else {
-	continue;
+      if (p[2] >= '0' && p[2] <= '9') {
+        lo = p[2] - '0';
+      } else if (p[2] >= 'a' && p[2] <= 'f') {
+        lo = p[2] - 'a' + 10;
+      } else if (p[2] >= 'A' && p[2] <= 'F') {
+        lo = p[2] - 'A' + 10;
       }
-
-      retp++;
+      if (hi >= 0 && lo >= 0) {
+        *retp = (char) ((hi << 4) + lo);
+        retp++;
+        p += 3;
+      } else {
+        /* 不正な%エスケープはそのまま残して安全に進める */
+        *retp = *p;
+        retp++;
+        p++;
+      }
     }
   }
   *retp = '\0';
