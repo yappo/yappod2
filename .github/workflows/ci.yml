@@ -4,16 +4,32 @@ on:
   push:
     branches:
       - master
-      - "codex/*"
+    paths:
+      - ".github/workflows/ci.yml"
+      - "CMakeLists.txt"
+      - "src/**"
+      - "tests/**"
   pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/ci.yml"
+      - "CMakeLists.txt"
+      - "src/**"
+      - "tests/**"
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os:
           - ubuntu-latest
