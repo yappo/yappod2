@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "yappo_db.h"
@@ -65,6 +66,20 @@ static int YAP_parse_nonnegative_int(const char *value, int *out) {
 
   *out = (int)parsed;
   return 0;
+}
+
+static void YAP_format_or_die(char *dst, size_t dst_size, const char *fmt, ...) {
+  int written;
+  va_list ap;
+
+  va_start(ap, fmt);
+  written = vsnprintf(dst, dst_size, fmt, ap);
+  va_end(ap);
+
+  if (written < 0 || (size_t)written >= dst_size) {
+    fprintf(stderr, "path format overflow\n");
+    exit(EXIT_FAILURE);
+  }
 }
 
 int main(int argc, char *argv[]) {
@@ -149,11 +164,11 @@ int main(int argc, char *argv[]) {
    */
   output = (pos_t *)YAP_malloc(sizeof(pos_t));
   output->data = (char *)YAP_malloc(strlen(output_file) + 1);
-  strcpy(output->data, output_file);
+  YAP_format_or_die(output->data, strlen(output_file) + 1, "%s", output_file);
   output->index = (char *)YAP_malloc(strlen(output_file) + 7);
-  sprintf(output->index, "%s_index", output_file);
+  YAP_format_or_die(output->index, strlen(output_file) + 7, "%s_index", output_file);
   output->size = (char *)YAP_malloc(strlen(output_file) + 6);
-  sprintf(output->size, "%s_size", output_file);
+  YAP_format_or_die(output->size, strlen(output_file) + 6, "%s_size", output_file);
 
   inputs = (pos_t **)YAP_malloc(sizeof(pos_t *) * num);
   tmp_size = fprintf(stderr, "%d", end) + strlen(input_dir) + 64;
@@ -161,11 +176,11 @@ int main(int argc, char *argv[]) {
     inputs[i] = (pos_t *)YAP_malloc(sizeof(pos_t));
 
     inputs[i]->data = (char *)YAP_malloc(tmp_size);
-    sprintf(inputs[i]->data, "%s/pos/%d", input_dir, start + i);
+    YAP_format_or_die(inputs[i]->data, (size_t)tmp_size, "%s/pos/%d", input_dir, start + i);
     inputs[i]->index = (char *)YAP_malloc(tmp_size);
-    sprintf(inputs[i]->index, "%s/pos/%d_index", input_dir, start + i);
+    YAP_format_or_die(inputs[i]->index, (size_t)tmp_size, "%s/pos/%d_index", input_dir, start + i);
     inputs[i]->size = (char *)YAP_malloc(tmp_size);
-    sprintf(inputs[i]->size, "%s/pos/%d_size", input_dir, start + i);
+    YAP_format_or_die(inputs[i]->size, (size_t)tmp_size, "%s/pos/%d_size", input_dir, start + i);
 
     inputs[i]->seek_stop = 0;
   }
@@ -196,7 +211,7 @@ int main(int argc, char *argv[]) {
    * 削除ファイルを開く
    */
   delete_file = (char *)YAP_malloc(strlen(input_dir) + 16);
-  sprintf(delete_file, "%s/deletefile", input_dir);
+  YAP_format_or_die(delete_file, strlen(input_dir) + 16, "%s/deletefile", input_dir);
   delete_fp = fopen(delete_file, "r");
   if (delete_fp == NULL) {
     fprintf(stderr, "fopen error: %s\n", delete_file);
@@ -207,7 +222,7 @@ int main(int argc, char *argv[]) {
    * キーワード数を求める
    */
   key_num_file = (char *)YAP_malloc(strlen(input_dir) + 16);
-  sprintf(key_num_file, "%s/keywordnum", input_dir);
+  YAP_format_or_die(key_num_file, strlen(input_dir) + 16, "%s/keywordnum", input_dir);
   key_num_fp = fopen(key_num_file, "r");
   if (key_num_fp == NULL) {
     fprintf(stderr, "fopen error: %s\n", key_num_file);
@@ -447,10 +462,10 @@ void core(YAPPO_DB_FILES *in_p, YAPPO_DB_FILES *out_p, int start, int end, int b
   int c = 0;
 
   /*マップファイルの初期化*/
-  buf_file = (char *)YAP_malloc(strlen(MAP_TEMPLATE));
-  buf_len_file = (char *)YAP_malloc(strlen(MAP_TEMPLATE));
-  strcpy(buf_file, MAP_TEMPLATE);
-  strcpy(buf_len_file, MAP_TEMPLATE);
+  buf_file = (char *)YAP_malloc(strlen(MAP_TEMPLATE) + 1);
+  buf_len_file = (char *)YAP_malloc(strlen(MAP_TEMPLATE) + 1);
+  YAP_format_or_die(buf_file, strlen(MAP_TEMPLATE) + 1, "%s", MAP_TEMPLATE);
+  YAP_format_or_die(buf_len_file, strlen(MAP_TEMPLATE) + 1, "%s", MAP_TEMPLATE);
   buf_fd = mkstemp(buf_file);
   buf_len_fd = mkstemp(buf_len_file);
   lseek(buf_fd, sizeof(char) * (in_p->total_keywordnum + 1), SEEK_SET);
