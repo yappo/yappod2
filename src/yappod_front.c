@@ -334,16 +334,6 @@ static int YAP_parse_request_line(const char *line, char *dict, int *max_size, c
     }
   }
 
-  /* 旧形式: GET / dict/max/op/start-end?keyword HTTP/1.x */
-  if (sscanf(line, "%15s / %1023s %31s", method, target, version) == 3) {
-    if (strcmp(method, "GET") != 0 || strncmp(version, "HTTP/", 5) != 0) {
-      return -1;
-    }
-    if (YAP_parse_request_target(target, dict, max_size, op, start, end, keyword) == 0) {
-      return 0;
-    }
-  }
-
   return -1;
 }
 
