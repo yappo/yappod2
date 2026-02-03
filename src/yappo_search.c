@@ -244,13 +244,13 @@ int YAP_Search_word_pos (int *left_pos, int left_pos_len, int *right_pos, int ri
       return 0;
     } else if (base_last > target_last) {
       /* targetのカウンタを上げる */
-      if (target_i < target_len) {
+      if ((target_i + 1) < target_len) {
 	target_i++;
 	target_last += target[target_i];
       }
     } else if (base_last < target_last) {
       /* baseのカウンタを上げる */
-      if (base_i < base_len) {
+      if ((base_i + 1) < base_len) {
 	base_i++;
 	base_last += base[base_i];
       }
@@ -259,7 +259,7 @@ int YAP_Search_word_pos (int *left_pos, int left_pos_len, int *right_pos, int ri
        *両方同じなので(要するに同じ文字列の連続判定をする事になる)
        *targetのカウンタを上げる
        */
-      if (target_i < target_len) {
+      if ((target_i + 1) < target_len) {
 	target_i++;
 	target_last += target[target_i];
       }
@@ -377,7 +377,7 @@ SEARCH_RESULT *YAP_Search_op_and (SEARCH_RESULT *left, SEARCH_RESULT *right, int
 	 *出現位置をコピーする
 	 */
 	result->docs_list[docs_num].pos = (int *) YAP_malloc(sizeof(int) * right->docs_list[new_i].pos_len);      
-	memcpy(result->docs_list[docs_num].pos, right->docs_list[new_i].pos, right->docs_list[new_i].pos_len);
+	memcpy(result->docs_list[docs_num].pos, right->docs_list[new_i].pos, sizeof(int) * right->docs_list[new_i].pos_len);
 	result->docs_list[docs_num].pos_len = right->docs_list[new_i].pos_len;
       } else {
 	/* 出現位置はコピーしない */
@@ -1038,7 +1038,7 @@ SEARCH_RESULT *YAP_Search (YAPPO_DB_FILES *ydfp, char **keyword_list, int keywor
     for (i = 1; i < keyword_list_num; i++) {
       left = result;
       /* 右を検索 */
-      right =  YAP_Search_word(ydfp, keyword_list[1]);
+      right =  YAP_Search_word(ydfp, keyword_list[i]);
       if (op == 0) {
 	/* AND */
 	result = YAP_Search_op_and(left, right, 0);
