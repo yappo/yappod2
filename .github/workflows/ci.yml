@@ -57,3 +57,18 @@ jobs:
       - name: Test
         run: |
           ctest --test-dir build --output-on-failure
+
+      - name: Install
+        run: |
+          cmake --install build --prefix "${RUNNER_TEMP}/yappod"
+
+      - name: Install smoke test
+        shell: bash
+        run: |
+          PREFIX="${RUNNER_TEMP}/yappod"
+          INDEX_DIR="$(mktemp -d)"
+          trap 'rm -rf "${INDEX_DIR}"' EXIT
+
+          mkdir -p "${INDEX_DIR}/pos"
+          "${PREFIX}/bin/yappo_makeindex" -f tests/fixtures/index.txt -d "${INDEX_DIR}" >/dev/null
+          "${PREFIX}/bin/search" -l "${INDEX_DIR}" "OpenAI2025" | grep -q "http://example.com/doc1"
