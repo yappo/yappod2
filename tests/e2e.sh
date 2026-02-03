@@ -48,11 +48,21 @@ expect_hit_args() {
   run_search "$@" | grep -q "${expect}"
 }
 
+expect_hit_with_domain() {
+  local query="$1"
+  local url="$2"
+  local domainid="$3"
+  local out
+  out="$(run_search "${query}")"
+  echo "${out}" | grep -q "URL:${url}"
+  echo "${out}" | grep -B2 "URL:${url}" | grep -q "(domainid:${domainid})"
+}
+
 expect_hit "テスト" "http://example.com/doc1"
 expect_hit "テスト" "http://example.com/doc2"
 expect_hit "OpenAI2025" "http://example.com/doc1"
 expect_hit "openai2025" "http://example.com/doc1"
-expect_hit "example.com/doc3" "http://example.com/doc3"
+expect_hit "サンプル本文" "https://example.com/doc3"
 expect_hit "abc123" "http://example.com/doc5"
 expect_hit "foo+bar@example.com" "http://example.com/doc5"
 expect_hit "日本語" "http://example.com/doc5"
@@ -60,6 +70,7 @@ expect_hit "本文です。" "http://example.com/doc1"
 expect_hit "本文です。OpenAI2025" "http://example.com/doc1"
 expect_hit "検索用のテスト本文です" "http://example.com/doc2"
 expect_hit "日本語とabc123" "http://example.com/doc5"
+expect_hit_with_domain "サンプル本文" "https://example.com/doc3" "1"
 expect_no_hit "削除対象"
 expect_no_hit "短い"
 expect_no_hit "abc124"
