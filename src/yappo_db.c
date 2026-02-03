@@ -213,7 +213,8 @@ void _tmp_copy(char *base, char *dest) {
       wait(&s);
     } else {
       execl("/bin/cp", "/bin/cp", base, dest, (char *)0);
-      exit(0);
+      perror("execl /bin/cp");
+      _exit(EXIT_FAILURE);
     }
   }
 }
@@ -387,7 +388,8 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
           wait(&s);
         } else {
           execl("/bin/mv", "/bin/mv", name, new_name, (char *)0);
-          exit(0);
+          perror("execl /bin/mv");
+          _exit(EXIT_FAILURE);
         }
         free(new_name);
       }
@@ -419,7 +421,8 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
           wait(&s);
         } else {
           execl("/bin/mv", "/bin/mv", name, new_name, (char *)0);
-          exit(0);
+          perror("execl /bin/mv");
+          _exit(EXIT_FAILURE);
         }
         free(new_name);
       }

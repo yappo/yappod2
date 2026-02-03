@@ -5,6 +5,7 @@
 #include "yappo_index_filedata.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -407,14 +408,16 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
     wait(&s);
   } else {
     execl("/bin/mv", "/bin/mv", filedata_tmp, filedata, (char *)0);
-    exit(0);
+    perror("execl /bin/mv");
+    _exit(EXIT_FAILURE);
   }
   if (fork()) {
     int s;
     wait(&s);
   } else {
     execl("/bin/mv", "/bin/mv", filedata_index_tmp, filedata_index, (char *)0);
-    exit(0);
+    perror("execl /bin/mv");
+    _exit(EXIT_FAILURE);
   }
 
   free(filedata_tmp);

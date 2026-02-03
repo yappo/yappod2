@@ -2,6 +2,7 @@
  *キーワード出現位置データを取扱う
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -267,14 +268,16 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
     wait(&s);
   } else {
     execl("/bin/mv", "/bin/mv", pos_tmp, pos, (char *)0);
-    exit(0);
+    perror("execl /bin/mv");
+    _exit(EXIT_FAILURE);
   }
   if (fork()) {
     int s;
     wait(&s);
   } else {
     execl("/bin/mv", "/bin/mv", pos_index_tmp, pos_index, (char *)0);
-    exit(0);
+    perror("execl /bin/mv");
+    _exit(EXIT_FAILURE);
   }
 
   free(pos_tmp);
