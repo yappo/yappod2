@@ -30,7 +30,10 @@ run_search_loose() {
 expect_hit() {
   local query="$1"
   local expect="$2"
-  run_search "${query}" | grep -q "${expect}"
+  if ! run_search "${query}" | grep -q "${expect}"; then
+    echo "Expected hit '${expect}' for query: ${query}" >&2
+    exit 1
+  fi
 }
 
 expect_no_hit() {
@@ -53,13 +56,19 @@ expect_no_match_args() {
 expect_hit_args() {
   local expect="$1"
   shift
-  run_search "$@" | grep -q "${expect}"
+  if ! run_search "$@" | grep -q "${expect}"; then
+    echo "Expected hit '${expect}' for args: $*" >&2
+    exit 1
+  fi
 }
 
 expect_hit_loose() {
   local query="$1"
   local expect="$2"
-  run_search_loose "${query}" | grep -q "${expect}"
+  if ! run_search_loose "${query}" | grep -q "${expect}"; then
+    echo "Expected hit '${expect}' in loose index for query: ${query}" >&2
+    exit 1
+  fi
 }
 
 expect_hit_with_domain() {
@@ -68,8 +77,14 @@ expect_hit_with_domain() {
   local domainid="$3"
   local out
   out="$(run_search "${query}")"
-  echo "${out}" | grep -q "URL:${url}"
-  echo "${out}" | grep -B2 "URL:${url}" | grep -q "(domainid:${domainid})"
+  if ! echo "${out}" | grep -q "URL:${url}"; then
+    echo "Expected URL hit '${url}' for query: ${query}" >&2
+    exit 1
+  fi
+  if ! echo "${out}" | grep -B2 "URL:${url}" | grep -q "(domainid:${domainid})"; then
+    echo "Expected domainid '${domainid}' for URL '${url}' query: ${query}" >&2
+    exit 1
+  fi
 }
 
 expect_hit "テスト" "http://example.com/doc1"

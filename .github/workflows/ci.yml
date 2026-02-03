@@ -68,17 +68,48 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build -j
+          set -o pipefail
+          cmake --build build -j 2>&1 | tee build/build.log
 
       - name: Test
+        id: ctest
+        continue-on-error: true
         run: |
-          ctest --test-dir build --output-on-failure
+          set -o pipefail
+          ctest --test-dir build --output-on-failure 2>&1 | tee build/ctest.log
+
+      - name: Dump test logs on failure
+        if: steps.ctest.outcome == 'failure'
+        run: |
+          echo "::group::ctest.log"
+          cat build/ctest.log
+          echo "::endgroup::"
+          if [ -f build/Testing/Temporary/LastTest.log ]; then
+            echo "::group::LastTest.log"
+            cat build/Testing/Temporary/LastTest.log
+            echo "::endgroup::"
+          fi
+          if [ -f build/Testing/Temporary/LastTestsFailed.log ]; then
+            echo "::group::LastTestsFailed.log"
+            cat build/Testing/Temporary/LastTestsFailed.log
+            echo "::endgroup::"
+          fi
+
+      - name: Enforce test success
+        if: always()
+        run: |
+          if [ "${{ steps.ctest.outcome }}" != "success" ]; then
+            echo "ctest failed"
+            exit 1
+          fi
 
       - name: Install
+        if: steps.ctest.outcome == 'success'
         run: |
           cmake --install build --prefix "${RUNNER_TEMP}/yappod"
 
       - name: Install smoke test
+        if: steps.ctest.outcome == 'success'
         shell: bash
         run: |
           PREFIX="${RUNNER_TEMP}/yappod"
