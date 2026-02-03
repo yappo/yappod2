@@ -41,6 +41,35 @@ typedef struct{
   unsigned char *data;/*エンコードされた出現位置情報*/
 }BTREE_DATA;
 
+static int YAP_extract_domain_range(const char *url, const char **start_out, int *len_out)
+{
+  const char *start;
+  const char *end;
+
+  if (strncmp(url, "http://", 7) == 0) {
+    start = url + 7;
+  } else if (strncmp(url, "https://", 8) == 0) {
+    start = url + 8;
+  } else {
+    return -1;
+  }
+
+  if (*start == '\0') {
+    return -1;
+  }
+
+  end = strchr(start, '/');
+  if (end == NULL) {
+    *start_out = start;
+    *len_out = (int) strlen(start);
+    return (*len_out > 0) ? 0 : -1;
+  }
+
+  *start_out = start;
+  *len_out = (int) (end - start);
+  return (*len_out > 0) ? 0 : -1;
+}
+
 static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int *keyword_total_num, int *keyword_docs_num)
 {
   if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
@@ -633,39 +662,25 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
 	index_stack[stack_count].filedata.other_len = 0;
 
 	
-	domainid = 0;
-	if (strlen(url) > 11) {
-	  /*ドメインの取得*/
-	  if (strncmp(url, "http://", 7) == 0) {
-	    int len = 0;
-	    char *domain, *domain_p, *domain_s;
-	    domain_s = domain_p = url + 7;
+		domainid = 0;
+		{
+		  const char *domain_start;
+		  int domain_len;
+		  if (YAP_extract_domain_range(url, &domain_start, &domain_len) == 0) {
+		    char *domain = (char *) YAP_malloc((size_t) domain_len + 1);
+		    memcpy(domain, domain_start, (size_t) domain_len);
+		    domain[domain_len] = '\0';
 
-	    /* /を探す*/
-	    while (*domain_p) {
-	      domain_p++;
-	      if (*domain_p == '/') {
-		len = domain_p - domain_s;
-		break;
-	      }
-	    }
-
-	    if (len > 0) {
-	      /*ドメインが見つかった*/
-	      domain = (char *) YAP_malloc(len + 1);
-	      memcpy(domain, domain_s, len);
-
-	      if (YAP_Index_get_domainindex(ydfp, domain, &domainid)) {
-		/*ドメインの新規登録*/
-		ydfp->total_domainnum++;
-		domainid = ydfp->total_domainnum;
-		YAP_Index_put_domainindex(ydfp, domain, &domainid);
-	      }
-	      free(domain);
-	    }
-	  }
-	}
-	index_stack[stack_count].filedata.domainid = domainid;
+		    if (YAP_Index_get_domainindex(ydfp, domain, &domainid)) {
+		      /*ドメインの新規登録*/
+		      ydfp->total_domainnum++;
+		      domainid = ydfp->total_domainnum;
+		      YAP_Index_put_domainindex(ydfp, domain, &domainid);
+		    }
+		    free(domain);
+		  }
+		}
+		index_stack[stack_count].filedata.domainid = domainid;
 
 
 	/*N-gramで文字列の切り出し*/

@@ -1,6 +1,6 @@
 http://example.com/doc1	ADD	テスト文書	100	テストの本文です。OpenAI2025 の説明。
 http://example.com/doc2	ADD	検索テスト	100	これは検索用のテスト本文です。キーワードはテストと検索。
-http://example.com/doc3	ADD	別の文書	100	サンプル本文です。URLも含める http://example.com/doc3
+https://example.com/doc3	ADD	別の文書	100	サンプル本文です。URLも含める https://example.com/doc3
 http://example.com/doc4	ADD	削除対象	100	この文書は後で削除されます。
 http://example.com/doc4	DELETE	削除対象	100	この文書は削除されます。
 http://example.com/skip	ADD	短い	10	小さすぎて無視される
