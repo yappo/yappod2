@@ -3,3 +3,9 @@ build
 \.idea
 \.DS_Store
 *\.swp
+core.log
+core.error
+core.pid
+front.log
+front.error
+front.pid
