@@ -907,7 +907,11 @@ int main(int argc, char *argv[]) {
   /* pos ディレクトリが無いと落ちやすいので事前にチェック */
   {
     char *pos_dir = (char *)YAP_malloc(strlen(yappo_db_files.base_dir) + 5);
-    sprintf(pos_dir, "%s/pos", yappo_db_files.base_dir);
+    if (snprintf(pos_dir, strlen(yappo_db_files.base_dir) + 5, "%s/pos", yappo_db_files.base_dir) <
+        0) {
+      free(pos_dir);
+      exit(EXIT_FAILURE);
+    }
     if (!YAP_is_dir(pos_dir)) {
       fprintf(stderr, "Missing pos dir: %s (mkdir -p %s)\n", pos_dir, pos_dir);
       free(pos_dir);
@@ -955,7 +959,11 @@ int main(int argc, char *argv[]) {
       if (name[len - 3] == '.' && name[len - 2] == 'g' && name[len - 1] == 'z') {
         /*.gzファイルのみを処理*/
         indextext_filepath = (char *)YAP_malloc(strlen(indextexts_dirpath) + strlen(name) + 2);
-        sprintf(indextext_filepath, "%s/%s", indextexts_dirpath, name);
+        if (snprintf(indextext_filepath, strlen(indextexts_dirpath) + strlen(name) + 2, "%s/%s",
+                     indextexts_dirpath, name) < 0) {
+          free(indextext_filepath);
+          exit(EXIT_FAILURE);
+        }
 
         if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
           perror("ERROR: invalid input file");

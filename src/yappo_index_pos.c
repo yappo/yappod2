@@ -151,9 +151,16 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
 
   /*待避ファイル名の作成*/
   pos_tmp = (char *)YAP_malloc(strlen(pos) + 5);
-  sprintf(pos_tmp, "%s_tmp", pos);
+  if (snprintf(pos_tmp, strlen(pos) + 5, "%s_tmp", pos) < 0) {
+    free(pos_tmp);
+    return -1;
+  }
   pos_index_tmp = (char *)YAP_malloc(strlen(pos_index) + 5);
-  sprintf(pos_index_tmp, "%s_tmp", pos_index);
+  if (snprintf(pos_index_tmp, strlen(pos_index) + 5, "%s_tmp", pos_index) < 0) {
+    free(pos_tmp);
+    free(pos_index_tmp);
+    return -1;
+  }
 
   /*ファイルを開く*/
   pos_file = fopen(pos, "r");
