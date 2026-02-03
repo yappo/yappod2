@@ -1,0 +1,6 @@
+http://example.com/doc1	ADD	テスト文書	100	テストの本文です。OpenAI2025 の説明。
+http://example.com/malformed-badcmd	UPSERT	Bad Command	100	This line should be skipped badcmdtoken999.
+MALFORMED LINE WITHOUT TABS
+http://example.com/malformed-badsize	ADD	Bad Size	NOT_A_NUMBER	This line should be skipped too.
+http://example.com/doc2	ADD	検索テスト	100	これは検索用のテスト本文です。キーワードはテストと検索。
+https://example.com/doc3	ADD	別の文書	100	サンプル本文です。URLも含める https://example.com/doc3
