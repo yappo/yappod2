@@ -96,6 +96,21 @@ s.close()
 PY
 }
 
+send_http_raw_hex() {
+  local hex_payload="$1"
+  python3 - "$hex_payload" <<'PY'
+import socket, sys
+payload = bytes.fromhex(sys.argv[1])
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+try:
+    s.recv(4096)
+except OSError:
+    pass
+s.close()
+PY
+}
+
 send_http_long_query() {
   local length="$1"
   python3 - "$length" <<'PY'
@@ -226,6 +241,13 @@ make_index "${INDEX_DIR_OK10}"
 start_daemons "${INDEX_DIR_OK10}"
 send_http_long_query 200000
 assert_daemons_alive "oversized request query"
+stop_daemons
+
+# Case 2-11: 不正UTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
+make_index "${INDEX_DIR_OK10}"
+start_daemons "${INDEX_DIR_OK10}"
+send_http_raw_hex "474554202f20642f3130302f4f522f302d31303fffFE20485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
+assert_daemons_alive "invalid utf-8 query bytes"
 stop_daemons
 
 exit 0
