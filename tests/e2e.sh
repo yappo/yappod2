@@ -5,18 +5,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
 INDEX_DIR="$(mktemp -d)"
+INDEX_DIR_LOOSE="$(mktemp -d)"
 
 cleanup() {
   rm -rf "${INDEX_DIR}"
+  rm -rf "${INDEX_DIR_LOOSE}"
 }
 trap cleanup EXIT
 
 mkdir -p "${INDEX_DIR}/pos"
+mkdir -p "${INDEX_DIR_LOOSE}/pos"
 
 "${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR}" >/dev/null
+"${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR_LOOSE}" --min-body-size 1 >/dev/null
 
 run_search() {
   "${BUILD_DIR}/search" -l "${INDEX_DIR}" "$@"
+}
+
+run_search_loose() {
+  "${BUILD_DIR}/search" -l "${INDEX_DIR_LOOSE}" "$@"
 }
 
 expect_hit() {
@@ -46,6 +54,12 @@ expect_hit_args() {
   local expect="$1"
   shift
   run_search "$@" | grep -q "${expect}"
+}
+
+expect_hit_loose() {
+  local query="$1"
+  local expect="$2"
+  run_search_loose "${query}" | grep -q "${expect}"
 }
 
 expect_hit_with_domain() {
@@ -81,5 +95,6 @@ expect_no_hit "123"
 expect_no_hit "テスト。"
 expect_no_hit "本文です。OpenAI"
 expect_no_hit "日本語とabc"
+expect_hit_loose "短い" "http://example.com/skip"
 expect_hit_args "http://example.com/doc2" -a "テスト" "本文" "検索"
 expect_no_match_args "http://example.com/doc1" -a "テスト" "本文" "検索"
