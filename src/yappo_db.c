@@ -27,6 +27,68 @@ static void YAP_Error(char *msg)
   exit(-1);
 }
 
+static FILE *yap_fopen_or_die(const char *path, const char *mode)
+{
+  FILE *fp = fopen(path, mode);
+  if (fp == NULL) {
+    YAP_Error("fopen error");
+  }
+  return fp;
+}
+
+static void yap_touch_file_if_missing(const char *path)
+{
+  FILE *fp;
+  if (YAP_is_reg(path)) {
+    return;
+  }
+  fp = yap_fopen_or_die(path, "w");
+  fclose(fp);
+}
+
+static FILE *yap_open_managed_file(const char *path, int db_mode, long write_seek)
+{
+  FILE *fp;
+
+  yap_touch_file_if_missing(path);
+  if (db_mode == YAPPO_DB_WRITE) {
+    fp = yap_fopen_or_die(path, "r+");
+    if (write_seek >= 0 && YAP_fseek_set(fp, write_seek) != 0) {
+      YAP_Error("fseek error");
+    }
+  } else {
+    fp = yap_fopen_or_die(path, "r");
+  }
+  return fp;
+}
+
+static int yap_read_int_or_zero(const char *path)
+{
+  int value = 0;
+  FILE *fp;
+
+  if (!YAP_is_reg(path)) {
+    return 0;
+  }
+  fp = yap_fopen_or_die(path, "r");
+  if (YAP_fread_exact(fp, &value, sizeof(int), 1) != 0) {
+    fclose(fp);
+    YAP_Error("fread error");
+  }
+  fclose(fp);
+  return value;
+}
+
+static void yap_write_int_value(const char *path, int value)
+{
+  FILE *fp = yap_fopen_or_die(path, "w");
+  if (YAP_fwrite_exact(fp, &value, sizeof(int), 1) != 0) {
+    fclose(fp);
+    YAP_Error("fwrite error");
+  }
+  fclose(fp);
+}
+
 /*
  *YAPPO_DB_FILESに必要なファイル名をセットする
  */
@@ -216,68 +278,13 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
                     DB_BTREE, mode, 0);
 
   /* 削除URL */
-  if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみ時 */
-    if (!YAP_is_reg(deletefile)) {
-      p->deletefile_file = fopen(deletefile, "w");
-      if (p->deletefile_file == NULL) {
-        YAP_Error("fopen error");
-      }
-      fclose(p->deletefile_file);
-    }
-    p->deletefile_file = fopen(deletefile, "r+");
-    if (p->deletefile_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  } else {
-    /* 読み込み時 */
-    p->deletefile_file = fopen(deletefile, "r");
-    if (p->deletefile_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
+  p->deletefile_file = yap_open_managed_file(deletefile, p->mode, -1);
 
 
   /* URLメタデータ */
-  if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみ時 */
-    if (!YAP_is_reg(filedata)) {
-      p->filedata_file = fopen(filedata, "w");
-      if (p->filedata_file == NULL) {
-        YAP_Error("fopen error");
-      }
-      fclose(p->filedata_file);
-    }
-    if (!YAP_is_reg(filedata_size)) {
-      p->filedata_size_file = fopen(filedata_size, "w");
-      if (p->filedata_size_file == NULL) {
-        YAP_Error("fopen error");
-      }
-      fclose(p->filedata_size_file);
-    }
-    if (!YAP_is_reg(filedata_index)) {
-      p->filedata_index_file = fopen(filedata_index, "w");
-      if (p->filedata_index_file == NULL) {
-        YAP_Error("fopen error");
-      }
-      fclose(p->filedata_index_file);
-    }
-
-    p->filedata_file = fopen(filedata, "r+");
-    p->filedata_size_file = fopen(filedata_size, "r+");
-    p->filedata_index_file = fopen(filedata_index, "r+");
-    if (p->filedata_file == NULL || p->filedata_size_file == NULL || p->filedata_index_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  } else {
-    /* 読み込み時 */
-    p->filedata_file = fopen(filedata, "r");
-    p->filedata_size_file = fopen(filedata_size, "r");
-    p->filedata_index_file = fopen(filedata_index, "r");
-    if (p->filedata_file == NULL || p->filedata_size_file == NULL || p->filedata_index_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
+  p->filedata_file = yap_open_managed_file(filedata, p->mode, -1);
+  p->filedata_size_file = yap_open_managed_file(filedata_size, p->mode, -1);
+  p->filedata_index_file = yap_open_managed_file(filedata_index, p->mode, -1);
 
   /* 辞書ファイル 1byte */
   db_create(&(p->key1byte_db), NULL, 0);
@@ -287,218 +294,29 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
 
   /* 登録URL数 */
-  if (!YAP_is_reg(p->filenum)) {
-    /* 新規作成 */
-    p->total_filenum = 0;
-  } else {
-    /* 読み込み */
-    p->filenum_file = fopen(p->filenum, "r");
-    if (p->filenum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fread_exact(p->filenum_file, &(p->total_filenum), sizeof(int), 1) != 0) {
-      YAP_Error("fread error");
-    }
-    fclose(p->filenum_file);
-  }
-
+  p->total_filenum = yap_read_int_or_zero(p->filenum);
   /* 登録DOMAIN数 */
-  if (!YAP_is_reg(p->domainnum)) {
-    /* 新規作成 */
-    p->total_domainnum = 0;
-  } else {
-    /* 読み込み */
-    p->domainnum_file = fopen(p->domainnum, "r");
-    if (p->domainnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fread_exact(p->domainnum_file, &(p->total_domainnum), sizeof(int), 1) != 0) {
-      YAP_Error("fread error");
-    }
-    fclose(p->domainnum_file);
-  }
-
+  p->total_domainnum = yap_read_int_or_zero(p->domainnum);
   /* 登録キーワード数 */
-  if (!YAP_is_reg(p->keywordnum)) {
-    /* 新規作成 */
-    p->total_keywordnum = 0;
-  } else {
-    /* 読み込み */
-    p->keywordnum_file = fopen(p->keywordnum, "r");
-    if (p->keywordnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fread_exact(p->keywordnum_file, &(p->total_keywordnum), sizeof(int), 1) != 0) {
-      YAP_Error("fread error");
-    }
-    fclose(p->keywordnum_file);
-  }
+  p->total_keywordnum = yap_read_int_or_zero(p->keywordnum);
 
   printf("url=%d:key=%d\n", p->total_filenum, p->total_keywordnum);
 
 
   /* 各URLのサイズ */
-  if (!YAP_is_reg(p->size)) {
-    /* 新規作成 */
-    p->size_file = fopen(p->size, "w");
-    if (p->size_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->size_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->size_file = fopen(p->size, "r+");
-    if (p->size_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fseek_set(p->size_file, sizeof(int) * p->total_filenum) != 0) {
-      YAP_Error("fseek error");
-    }
-  } else {
-    p->size_file = fopen(p->size, "r");
-    if (p->size_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
+  p->size_file = yap_open_managed_file(p->size, p->mode, sizeof(int) * p->total_filenum);
   /* 各URLのDOMAIN ID */
-  if (!YAP_is_reg(p->domainid)) {
-    /* 新規作成 */
-    p->domainid_file = fopen(p->domainid, "w");
-    if (p->domainid_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->domainid_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->domainid_file = fopen(p->domainid, "r+");
-    if (p->domainid_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fseek_set(p->domainid_file, sizeof(int) * p->total_domainnum) != 0) {
-      YAP_Error("fseek error");
-    }
-  } else {
-    p->domainid_file = fopen(p->domainid, "r");
-    if (p->domainid_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
+  p->domainid_file = yap_open_managed_file(p->domainid, p->mode, sizeof(int) * p->total_domainnum);
   /* 各URLのスコア */
-  if (!YAP_is_reg(p->score)) {
-    /* 新規作成 */
-    p->score_file = fopen(p->score, "w");
-    if (p->score_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->score_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->score_file = fopen(p->score, "r+");
-    if (p->score_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fseek_set(p->score_file, sizeof(double) * p->total_filenum) != 0) {
-      YAP_Error("fseek error");
-    }
-  } else {
-    p->score_file = fopen(p->score, "r");
-    if (p->score_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
-
+  p->score_file = yap_open_managed_file(p->score, p->mode, sizeof(double) * p->total_filenum);
   /* 各URLのキーワード数 */
-  if (!YAP_is_reg(p->filekeywordnum)) {
-    /* 新規作成 */
-    p->filekeywordnum_file = fopen(p->filekeywordnum, "w");
-    if (p->filekeywordnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->filekeywordnum_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->filekeywordnum_file = fopen(p->filekeywordnum, "r+");
-    if (p->filekeywordnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fseek_set(p->filekeywordnum_file, sizeof(int) * p->total_filenum) != 0) {
-      YAP_Error("fseek error");
-    }
-  } else {
-    p->filekeywordnum_file = fopen(p->filekeywordnum, "r");
-    if (p->filekeywordnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
+  p->filekeywordnum_file = yap_open_managed_file(p->filekeywordnum, p->mode, sizeof(int) * p->total_filenum);
   /* URLの長さ */
-  if (!YAP_is_reg(p->urllen)) {
-    /* 新規作成 */
-    p->urllen_file = fopen(p->urllen, "w");
-    if (p->urllen_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->urllen_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->urllen_file = fopen(p->urllen, "r+");
-    if (p->urllen_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    if (YAP_fseek_set(p->urllen_file, sizeof(int) * p->total_filenum) != 0) {
-      YAP_Error("fseek error");
-    }
-  } else {
-    p->urllen_file = fopen(p->urllen, "r");
-    if (p->urllen_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
+  p->urllen_file = yap_open_managed_file(p->urllen, p->mode, sizeof(int) * p->total_filenum);
   /* キーワードの総出現数 */
-  if (!YAP_is_reg(p->keyword_totalnum)) {
-    /* 新規作成 */
-    p->keyword_totalnum_file = fopen(p->keyword_totalnum, "w");
-    if (p->keyword_totalnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->keyword_totalnum_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->keyword_totalnum_file = fopen(p->keyword_totalnum, "r+");
-    if (p->keyword_totalnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  } else {
-    p->keyword_totalnum_file = fopen(p->keyword_totalnum, "r");
-    if (p->keyword_totalnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
-
+  p->keyword_totalnum_file = yap_open_managed_file(p->keyword_totalnum, p->mode, -1);
   /* キーワードの総出現URL数 */
-  if (!YAP_is_reg(p->keyword_docsnum)) {
-    /* 新規作成 */
-    p->keyword_docsnum_file = fopen(p->keyword_docsnum, "w");
-    if (p->keyword_docsnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-    fclose(p->keyword_docsnum_file);
-  }
-  if (p->mode == YAPPO_DB_WRITE) {
-    p->keyword_docsnum_file = fopen(p->keyword_docsnum, "r+");
-    if (p->keyword_docsnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  } else {
-    p->keyword_docsnum_file = fopen(p->keyword_docsnum, "r");
-    if (p->keyword_docsnum_file == NULL) {
-      YAP_Error("fopen error");
-    }
-  }
+  p->keyword_docsnum_file = yap_open_managed_file(p->keyword_docsnum, p->mode, -1);
 }
 
 
@@ -627,48 +445,21 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
 
   /* 登録URL数 */
   if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみモード */
-    p->filenum_file = fopen(p->filenum, "w"); 
-    if (p->filenum_file == NULL) {
-      YAP_Error("fopen error");
-    } else {
-      if (YAP_fwrite_exact(p->filenum_file, &(p->total_filenum), sizeof(int), 1) != 0) {
-        YAP_Error("fwrite error");
-      }
-      fclose(p->filenum_file);
-    }
+    yap_write_int_value(p->filenum, p->total_filenum);
   }
   free(p->filenum);
   p->filenum = NULL;
 
   /* 登録DOMAIN数 */
   if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみモード */
-    p->domainnum_file = fopen(p->domainnum, "w"); 
-    if (p->domainnum_file == NULL) {
-      YAP_Error("fopen error");
-    } else {
-      if (YAP_fwrite_exact(p->domainnum_file, &(p->total_domainnum), sizeof(int), 1) != 0) {
-        YAP_Error("fwrite error");
-      }
-      fclose(p->domainnum_file);
-    }
+    yap_write_int_value(p->domainnum, p->total_domainnum);
   }
   free(p->domainnum);
   p->domainnum = NULL;
 
   /* 登録キーワード数 */
   if (p->mode == YAPPO_DB_WRITE) {
-    /* 書きこみモード */
-    p->keywordnum_file = fopen(p->keywordnum, "w");
-    if (p->keywordnum_file == NULL) {
-      YAP_Error("fopen error");
-    } else {
-      if (YAP_fwrite_exact(p->keywordnum_file, &(p->total_keywordnum), sizeof(int), 1) != 0) {
-        YAP_Error("fwrite error");
-      }
-      fclose(p->keywordnum_file);
-    }
+    yap_write_int_value(p->keywordnum, p->total_keywordnum);
   }
   free(p->keywordnum);
   p->keywordnum = NULL;

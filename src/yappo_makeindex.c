@@ -41,6 +41,28 @@ typedef struct{
   unsigned char *data;/*エンコードされた出現位置情報*/
 }BTREE_DATA;
 
+static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int *keyword_total_num, int *keyword_docs_num)
+{
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fread_exact(ydfp->keyword_totalnum_file, keyword_total_num, sizeof(int), 1) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fread_exact(ydfp->keyword_docsnum_file, keyword_docs_num, sizeof(int), 1) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int keyword_total_num, int keyword_docs_num)
+{
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
 
 /*
  *URL情報を登録する
@@ -146,22 +168,16 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
 	int postings_buf_len;
 
 	/*数値の加算*/
-	if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
-	    YAP_fread_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-	    YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
-	    YAP_fread_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
-	  return -1;
-	}
+		if (YAP_KeywordStat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num) != 0) {
+		  return -1;
+		}
 
 	keyword_total_num += ((BTREE_DATA *) btree_this->data)->keyword_total_num;
 	keyword_docs_num += ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
 
-	if (YAP_fseek_cur(ydfp->keyword_totalnum_file, sizeof(int) * -1) != 0 ||
-	    YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-	    YAP_fseek_cur(ydfp->keyword_docsnum_file, sizeof(int) * -1) != 0 ||
-	    YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
-	  return -1;
-	}
+		if (YAP_KeywordStat_put(ydfp, keyword_id, keyword_total_num, keyword_docs_num) != 0) {
+		  return -1;
+		}
 
 	YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
 
