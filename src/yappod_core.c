@@ -51,6 +51,11 @@ void YAP_Error( char *msg){
   exit(-1);
 }
 
+static void YAP_log_thread_error(int thread_id, const char *msg)
+{
+  fprintf(stderr, "ERROR: core thread %d %s\n", thread_id, msg);
+}
+
 
 
 /*
@@ -244,7 +249,7 @@ void *thread_server (void *ip)
       recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);
       if (recv_code <= 0) {
         if (recv_code < 0) {
-          fprintf(stderr, "ERROR: core thread %d failed to receive query payload\n", p->id);
+          YAP_log_thread_error(p->id, "receive query failed");
         }
         break;
       }
@@ -262,6 +267,7 @@ void *thread_server (void *ip)
 
       /*結果出力*/
       if (YAP_Proto_send_result(socket, result) != 0) {
+        YAP_log_thread_error(p->id, "send result failed");
         if (result != NULL) {
           YAP_Search_result_free(result);
           free(result);

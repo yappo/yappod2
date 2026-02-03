@@ -11,6 +11,7 @@
 
 /* Safety cap against corrupted payloads that request huge allocations. */
 #define YAP_PROTO_MAX_DOCS (1024 * 1024)
+#define YAP_PROTO_MAX_POS_PER_DOC (1024 * 1024)
 
 static int proto_read_string(FILE *socket, int max_payload, char **out)
 {
@@ -130,6 +131,7 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
   int i, code;
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
+  uint64_t total_pos_count = 0;
   SEARCH_RESULT *p = NULL;
 
   if (YAP_fread_exact(socket, &code, sizeof(int), 1) != 0) {
@@ -148,6 +150,10 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
   }
 
   if (keyword_docs_num < 0) {
+    free(p);
+    return NULL;
+  }
+  if (keyword_total_num < 0) {
     free(p);
     return NULL;
   }
@@ -179,6 +185,28 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
       free(p);
       return NULL;
     }
+    if (p->docs_list[i].pos_len > YAP_PROTO_MAX_POS_PER_DOC) {
+      int j;
+      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      free(p->docs_list);
+      free(p);
+      return NULL;
+    }
+    total_pos_count += (uint64_t) p->docs_list[i].pos_len;
+    if (total_pos_count > (uint64_t) keyword_total_num) {
+      int j;
+      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      free(p->docs_list);
+      free(p);
+      return NULL;
+    }
+    if ((size_t) p->docs_list[i].pos_len > (SIZE_MAX / sizeof(int))) {
+      int j;
+      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      free(p->docs_list);
+      free(p);
+      return NULL;
+    }
     p->docs_list[i].pos = (int *) YAP_malloc(sizeof(int) * p->docs_list[i].pos_len);
     if (YAP_fread_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
       int j;
@@ -188,6 +216,13 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
       free(p);
       return NULL;
     }
+  }
+  if (total_pos_count != (uint64_t) keyword_total_num) {
+    int j;
+    for (j = 0; j < p->keyword_docs_num; j++) free(p->docs_list[j].pos);
+    free(p->docs_list);
+    free(p);
+    return NULL;
   }
 
   return p;

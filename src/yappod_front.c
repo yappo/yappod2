@@ -4,6 +4,7 @@
   検索結果をまとめてクライアントに返す
 */
 #include <stdio.h>
+#include <stdarg.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -54,6 +55,11 @@ void YAP_Error( char *msg){
   exit(-1);
 }
 
+static void YAP_log_thread_error(int thread_id, const char *msg)
+{
+  fprintf(stderr, "ERROR: front thread %d %s\n", thread_id, msg);
+}
+
 static int YAP_send_bad_request(int fd, int thread_id)
 {
   const char *msg =
@@ -63,6 +69,83 @@ static int YAP_send_bad_request(int fd, int thread_id)
       "\r\n"
       "Bad Search Request<br>By Yappo Search";
   return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
+}
+
+static int YAP_writef(FILE *socket, const char *fmt, ...)
+{
+  int rc;
+  va_list ap;
+  va_start(ap, fmt);
+  rc = vfprintf(socket, fmt, ap);
+  va_end(ap);
+  if (rc < 0) {
+    perror("ERROR: front response write");
+    return -1;
+  }
+  return 0;
+}
+
+static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_out, int thread_id)
+{
+  struct addrinfo hints;
+  struct addrinfo *res = NULL, *rp;
+  char port_str[16];
+  int gai_rc;
+  int fd = -1;
+  FILE *stream;
+
+  *stream_out = NULL;
+  *fd_out = -1;
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  snprintf(port_str, sizeof(port_str), "%d", CORE_PORT);
+  gai_rc = getaddrinfo(host, port_str, &hints, &res);
+  if (gai_rc != 0) {
+    fprintf(stderr, "ERROR: front thread %d resolve %s failed: %s\n",
+            thread_id, host, gai_strerror(gai_rc));
+    return -1;
+  }
+
+  for (rp = res; rp != NULL; rp = rp->ai_next) {
+    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (fd < 0) {
+      continue;
+    }
+    if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+      break;
+    }
+    close(fd);
+    fd = -1;
+  }
+
+  freeaddrinfo(res);
+  if (fd < 0) {
+    fprintf(stderr, "ERROR: front thread %d connect %s:%d failed\n", thread_id, host, CORE_PORT);
+    return -1;
+  }
+
+  stream = (FILE *) fdopen(fd, "r+");
+  if (stream == NULL) {
+    perror("ERROR: front core fdopen");
+    close(fd);
+    return -1;
+  }
+
+  *stream_out = stream;
+  *fd_out = fd;
+  return 0;
+}
+
+static int YAP_flush_or_log(FILE *socket)
+{
+  if (fflush(socket) != 0) {
+    perror("ERROR: front response flush");
+    return -1;
+  }
+  return 0;
 }
 
 
@@ -75,20 +158,25 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
   FILEDATA filedata;
   char *title;
 
-  fprintf( socket, "HTTP/1.0 200 OK\r\nServer: Yappo Search/1.0\r\nContent-Type: text/plain\r\n\r\n");
-  fflush(socket);
+  if (YAP_writef(socket, "HTTP/1.0 200 OK\r\nServer: Yappo Search/1.0\r\nContent-Type: text/plain\r\n\r\n") != 0 ||
+      YAP_flush_or_log(socket) != 0) {
+    return;
+  }
 
   if (p == NULL || start >= p->keyword_docs_num) {
-    fprintf(socket, "0\n\n");
-    fflush(socket);
+    if (YAP_writef(socket, "0\n\n") != 0 || YAP_flush_or_log(socket) != 0) {
+      return;
+    }
   } else {
 
     if (end >= p->keyword_docs_num) {
       end = p->keyword_docs_num;
     }
 
-    fprintf(socket, "%d\n%d\n\n", p->keyword_docs_num, end - start);
-    fflush(socket);
+    if (YAP_writef(socket, "%d\n%d\n\n", p->keyword_docs_num, end - start) != 0 ||
+        YAP_flush_or_log(socket) != 0) {
+      return;
+    }
 
     for (i = start; i < end; i++) {
       if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
@@ -96,18 +184,25 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
 	if (title == NULL) {
 	  title = filedata.url;
 	}
-        fprintf(socket, "%s\t%s\t%d\t%ld\t%.2f\n", filedata.url, title, filedata.size, (long) filedata.lastmod, p->docs_list[i].score); 
-	fflush(socket);
+        if (YAP_writef(socket, "%s\t%s\t%d\t%ld\t%.2f\n",
+                       filedata.url, title, filedata.size, (long) filedata.lastmod,
+                       p->docs_list[i].score) != 0 ||
+            YAP_flush_or_log(socket) != 0) {
+          YAP_Index_Filedata_free(&filedata);
+          return;
+        }
 
 	YAP_Index_Filedata_free(&filedata);
       } else {
-	fprintf(socket, "%d\t%.2f\n", p->docs_list[i].fileindex, p->docs_list[i].score);
+	if (YAP_writef(socket, "%d\t%.2f\n", p->docs_list[i].fileindex, p->docs_list[i].score) != 0 ||
+            YAP_flush_or_log(socket) != 0) {
+          return;
+        }
 
       }
-      fflush(socket);
     }
   }
-  fflush(socket);
+  YAP_flush_or_log(socket);
 }
 
 
@@ -207,35 +302,8 @@ void *thread_server (void *ip)
    *各サーバとの接続を開始する
    */
   for (i = 0; i < p->server_num; i++) {
-    struct hostent *cl_host;
-    struct sockaddr_in cl_sin;
-
-    memset(&cl_sin, 0, sizeof(struct sockaddr_in));
-
-    cl_host = gethostbyname(p->server_addr[i]);
-    if (cl_host == NULL) {
-      YAP_Error( "gethostbyname error");
-    }
-    cl_sin.sin_family = AF_INET;
-    memcpy((char *) &cl_sin.sin_addr, cl_host->h_addr, cl_host->h_length);
-
-    cl_sin.sin_port = htons(CORE_PORT);
-
-    /* ソケット作成 */
-    if ((p->server_fd[i] = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-      YAP_Error( "client socket error");
-    }
-
-    /* 接続 */
-    if (connect(p->server_fd[i], (struct sockaddr *) &cl_sin, sizeof(struct sockaddr_in)) == -1) {
-      YAP_Error( "client connect error");
-    }
-
-    p->server_socket[i] = (FILE *) fdopen(p->server_fd[i], "r+");
-    if (p->server_socket[i] == NULL) {
-      perror("ERROR: front core fdopen");
-      close(p->server_fd[i]);
-      YAP_Error("client fdopen error");
+    if (YAP_connect_core_stream(p->server_addr[i], &(p->server_socket[i]), &(p->server_fd[i]), p->id) != 0) {
+      YAP_Error("client connect error");
     }
   }
 
@@ -262,7 +330,7 @@ void *thread_server (void *ip)
     read_rc = YAP_readline_alloc(socket, &line);
     if (read_rc <= 0) {
       if (read_rc < 0) {
-        fprintf(stderr, "ERROR: front thread %d failed to read request line\n", p->id);
+        YAP_log_thread_error(p->id, "read request line failed");
       }
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
@@ -297,7 +365,7 @@ void *thread_server (void *ip)
     header_rc = YAP_drain_http_headers(socket);
     if (header_rc <= 0) {
       if (header_rc < 0) {
-        fprintf(stderr, "ERROR: front thread %d failed while reading headers\n", p->id);
+        YAP_log_thread_error(p->id, "read headers failed");
       }
       free(dict); free(op); free(keyword); free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
@@ -309,7 +377,7 @@ void *thread_server (void *ip)
      */
     for (i = 0; i < p->server_num; i++) {
       if (YAP_Proto_send_query(p->server_socket[i], dict, max_size, op, keyword) != 0) {
-        fprintf(stderr, "ERROR: front thread %d failed to send query to core[%d]\n", p->id, i);
+        fprintf(stderr, "ERROR: front thread %d send query to core[%d] failed\n", p->id, i);
         continue;
       }
       fflush(p->server_socket[i]);
@@ -382,7 +450,7 @@ void *thread_server (void *ip)
    */
   for (i = 0; i < p->server_num; i++) {
     if (YAP_Proto_send_shutdown(p->server_socket[i]) != 0) {
-      fprintf(stderr, "ERROR: front thread %d failed to send shutdown to core[%d]\n", p->id, i);
+      fprintf(stderr, "ERROR: front thread %d send shutdown to core[%d] failed\n", p->id, i);
     }
     YAP_Net_close_stream(&(p->server_socket[i]), &(p->server_fd[i]));
   }

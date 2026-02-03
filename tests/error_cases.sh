@@ -12,9 +12,15 @@ INDEX_DIR_OK3="${TMP_ROOT}/ok3"
 INDEX_DIR_OK4="${TMP_ROOT}/ok4"
 INDEX_DIR_OK5="${TMP_ROOT}/ok5"
 INDEX_DIR_OK6="${TMP_ROOT}/ok6"
+INDEX_DIR_OK7="${TMP_ROOT}/ok7"
+INDEX_DIR_OK8="${TMP_ROOT}/ok8"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
+DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
+CORE_PID=""
+FRONT_PID=""
 
 cleanup() {
+  stop_daemons
   rm -rf "${TMP_ROOT}"
 }
 trap cleanup EXIT
@@ -45,6 +51,81 @@ make_index() {
   local index_dir="$1"
   mkdir -p "${index_dir}/pos"
   "${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${index_dir}" >/dev/null
+}
+
+wait_for_port() {
+  local port="$1"
+  local retries=50
+  local i
+  for ((i=0; i<retries; i++)); do
+    if python3 - "$port" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(0.1)
+try:
+    s.connect(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+else:
+    s.close()
+    sys.exit(0)
+PY
+    then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+send_http_raw() {
+  local payload="$1"
+  python3 - "$payload" <<'PY'
+import socket, sys
+payload = sys.argv[1].encode("utf-8")
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+try:
+    s.recv(4096)
+except OSError:
+    pass
+s.close()
+PY
+}
+
+stop_daemons() {
+  local pid
+  for pid in "${FRONT_PID}" "${CORE_PID}"; do
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+      sleep 0.1
+      if kill -0 "${pid}" 2>/dev/null; then
+        kill -9 "${pid}" 2>/dev/null || true
+      fi
+    fi
+  done
+  FRONT_PID=""
+  CORE_PID=""
+}
+
+start_daemons() {
+  local index_dir="$1"
+  mkdir -p "${DAEMON_RUN_DIR}"
+  (cd "${DAEMON_RUN_DIR}" && "${BUILD_DIR}/yappod_core" -l "${index_dir}" >/dev/null 2>&1)
+  (cd "${DAEMON_RUN_DIR}" && "${BUILD_DIR}/yappod_front" -l "${index_dir}" -s 127.0.0.1 >/dev/null 2>&1)
+
+  if [ ! -f "${DAEMON_RUN_DIR}/core.pid" ] || [ ! -f "${DAEMON_RUN_DIR}/front.pid" ]; then
+    echo "Failed to start daemon stack (pid file missing)." >&2
+    exit 1
+  fi
+  CORE_PID="$(cat "${DAEMON_RUN_DIR}/core.pid")"
+  FRONT_PID="$(cat "${DAEMON_RUN_DIR}/front.pid")"
+
+  if ! wait_for_port 10086 || ! wait_for_port 10080; then
+    echo "Failed to open core/front ports." >&2
+    exit 1
+  fi
 }
 
 # Case 2: メタデータ破損時に search が SIGSEGV しないこと
@@ -83,5 +164,24 @@ assert_not_segv "${INDEX_DIR_OK5}" "テスト"
 make_index "${INDEX_DIR_OK6}"
 truncate -s 1 "${INDEX_DIR_OK6}/score"
 assert_not_segv "${INDEX_DIR_OK6}" "テスト"
+
+# Case 2-7: 不正な%エスケープを含むクエリで search が SIGSEGV しないこと
+make_index "${INDEX_DIR_OK7}"
+assert_not_segv "${INDEX_DIR_OK7}" "%"
+assert_not_segv "${INDEX_DIR_OK7}" "%A"
+assert_not_segv "${INDEX_DIR_OK7}" "%ZZ"
+assert_not_segv "${INDEX_DIR_OK7}" "A%2"
+
+# Case 2-8: 破損インデックスでも front/core 経由でプロセスが落ちないこと
+make_index "${INDEX_DIR_OK8}"
+truncate -s 1 "${INDEX_DIR_OK8}/score"
+start_daemons "${INDEX_DIR_OK8}"
+send_http_raw $'GET / bad\r\n\r\n'
+send_http_raw $'GET / d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
+if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
+  echo "front/core daemon crashed on malformed or broken-index request." >&2
+  exit 1
+fi
+stop_daemons
 
 exit 0
