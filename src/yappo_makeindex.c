@@ -8,6 +8,9 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 #include <zlib.h>
 #include <string.h>
 
@@ -24,6 +27,8 @@
 
 #define GZ_BUF_SIZE 1024
 #define MAX_STACK_SIZE 2040
+#define DEFAULT_MIN_BODY_SIZE 24
+#define DEFAULT_MAX_BODY_SIZE 102400
 
 /*ファイル毎のキーワードインデックス情報を保存する構造体*/
 typedef struct{
@@ -68,6 +73,25 @@ static int YAP_extract_domain_range(const char *url, const char **start_out, int
   *start_out = start;
   *len_out = (int) (end - start);
   return (*len_out > 0) ? 0 : -1;
+}
+
+static int YAP_parse_int_option(const char *value, int *out)
+{
+  char *endptr;
+  long parsed;
+
+  if (value == NULL || value[0] == '\0') {
+    return -1;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &endptr, 10);
+  if (errno != 0 || endptr == value || *endptr != '\0' || parsed < 0 || parsed > INT_MAX) {
+    return -1;
+  }
+
+  *out = (int) parsed;
+  return 0;
 }
 
 static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int *keyword_total_num, int *keyword_docs_num)
@@ -423,7 +447,7 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
 /*
  *入力されたファイルをgz展開してインデックスを行なう
  */
-int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
+int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, int min_body_size, int max_body_size)
 {
   char *gz_in, *line_buf;
   gzFile gz_file;
@@ -524,7 +548,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
       body = tokp_start;
 
 
-      if (body_size < 24 || body_size > 102400) {
+      if (body_size < min_body_size || body_size > max_body_size) {
 	/*ファイルサイズが小さすぎるか大きすぎるので索引に加えない
 	
 	  //行バッファをクリア
@@ -807,6 +831,8 @@ int main(int argc, char *argv[])
 {
   YAPPO_DB_FILES yappo_db_files;
   int i;
+  int min_body_size = DEFAULT_MIN_BODY_SIZE;
+  int max_body_size = DEFAULT_MAX_BODY_SIZE;
   char *indextext_filepath = NULL;
   char *indextexts_dirpath = NULL;
   DIR *input_dir;
@@ -841,6 +867,20 @@ int main(int argc, char *argv[])
 	if (argc == i)
 	  break;
 	yappo_db_files.base_dir = argv[i];
+      } else if (! strcmp(argv[i], "--min-body-size") || ! strcmp(argv[i], "-m")) {
+	/*最小本文サイズを取得*/
+	i++;
+	if (argc == i || YAP_parse_int_option(argv[i], &min_body_size) != 0) {
+	  printf("Invalid min body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
+	  exit(-1);
+	}
+      } else if (! strcmp(argv[i], "--max-body-size") || ! strcmp(argv[i], "-M")) {
+	/*最大本文サイズを取得*/
+	i++;
+	if (argc == i || YAP_parse_int_option(argv[i], &max_body_size) != 0) {
+	  printf("Invalid max body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
+	  exit(-1);
+	}
       }
       i++;
     }
@@ -849,7 +889,11 @@ int main(int argc, char *argv[])
   /*入力ファイルが指定されていない*/
   if (( indextext_filepath == NULL && indextexts_dirpath == NULL) || 
       yappo_db_files.base_dir == NULL) {
-    printf("Usage: %s [-f inputfile | -l inputfilesdir] -d outputdir\n", argv[0]);
+    printf("Usage: %s [-f inputfile | -l inputfilesdir] -d outputdir [--min-body-size N] [--max-body-size N]\n", argv[0]);
+    exit(-1);
+  }
+  if (min_body_size > max_body_size) {
+    printf("Invalid size range: min_body_size(%d) > max_body_size(%d)\n", min_body_size, max_body_size);
     exit(-1);
   }
 
@@ -892,7 +936,7 @@ int main(int argc, char *argv[])
     }
 
     /*圧縮ファイルの展開をしつつインデックスを行なう*/
-    indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files);
+    indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size, max_body_size);
   } else {
     struct dirent *direntp;
     /*ディレクトリ中の.gzファイルを処理*/
@@ -918,7 +962,7 @@ int main(int argc, char *argv[])
 	  exit(-1);
 	}
 
-	indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files);
+		indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size, max_body_size);
 	printf("%s\n", indextext_filepath);
 	free(indextext_filepath);
       }

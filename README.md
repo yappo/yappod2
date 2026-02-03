@@ -59,6 +59,11 @@ $ yappo_makeindex -f (2で作ったファイル) -d (3で作ったディレク�
 $ yappo_makeindex -f sample.gz -d /tmp/yappoindex
 ```
 
+本文サイズのフィルタ範囲はオプションで変更できます（デフォルト: `24`〜`102400` バイト）。
+```
+$ yappo_makeindex -f sample.gz -d /tmp/yappoindex --min-body-size 1 --max-body-size 200000
+```
+
 ---
 
 ## ビルド（CMake / macOS向け）
