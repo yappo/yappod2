@@ -948,11 +948,18 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
     /* 削除URLファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
     p->deletefile = (unsigned char *) YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
-    if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0 ||
-        YAP_fread_exact(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1) != 0) {
+    memset(p->deletefile, 0, (ydfp->total_filenum / 8) + 1);
+    if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0) {
       p->deletefile_num = 0;
     } else {
-      p->deletefile_num = (ydfp->total_filenum / 8) + 1;
+      size_t got;
+      clearerr(ydfp->deletefile_file);
+      got = fread(p->deletefile, 1, (ydfp->total_filenum / 8) + 1, ydfp->deletefile_file);
+      if (ferror(ydfp->deletefile_file)) {
+        p->deletefile_num = 0;
+      } else {
+        p->deletefile_num = (int) got;
+      }
     }
     pthread_mutex_unlock(&(p->domainid_mutex));
 

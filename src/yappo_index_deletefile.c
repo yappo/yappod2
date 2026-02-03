@@ -6,6 +6,29 @@
 #include "yappo_io.h"
 #include "yappo_index_deletefile.h"
 
+static int YAP_Deletefile_read_flag_byte(YAPPO_DB_FILES *ydfp, int seek, unsigned char *out)
+{
+  size_t got;
+
+  *out = 0;
+  if (YAP_fseek_set(ydfp->deletefile_file, seek) != 0) {
+    return -1;
+  }
+
+  clearerr(ydfp->deletefile_file);
+  got = fread(out, 1, 1, ydfp->deletefile_file);
+  if (got == 1) {
+    return 0;
+  }
+  if (ferror(ydfp->deletefile_file)) {
+    return -1;
+  }
+
+  /* EOF は「未削除ビット(0)」として扱う。 */
+  clearerr(ydfp->deletefile_file);
+  return 0;
+}
+
 /*
  *
  */
@@ -22,10 +45,7 @@ int YAP_Index_Deletefile_get(YAPPO_DB_FILES *ydfp, int fileindex)
   seek = fileindex / 8;
   bit  = fileindex % 8;
 
-  if (YAP_fseek_set(ydfp->deletefile_file, seek) != 0) {
-    return -1;
-  }
-  if (YAP_fread_exact(ydfp->deletefile_file, &c, 1, 1) != 0) {
+  if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;
   }
 
@@ -54,10 +74,7 @@ int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex)
   seek = fileindex / 8;
   bit  = fileindex % 8;
 
-  if (YAP_fseek_set(ydfp->deletefile_file, seek) != 0) {
-    return -1;
-  }
-  if (YAP_fread_exact(ydfp->deletefile_file, &c, 1, 1) != 0) {
+  if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;
   }
 
@@ -93,10 +110,7 @@ int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex)
   seek = fileindex / 8;
   bit  = fileindex % 8;
 
-  if (YAP_fseek_set(ydfp->deletefile_file, seek) != 0) {
-    return -1;
-  }
-  if (YAP_fread_exact(ydfp->deletefile_file, &c, 1, 1) != 0) {
+  if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;
   }
 

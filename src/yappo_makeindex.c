@@ -535,6 +535,15 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
       if ( YAP_Index_get_fileindex(ydfp, url, &fileindex) != 0) {
 	/*登録されていないので新規登録をする*/
 	if (! strcmp( command, "DELETE")) {
+	  int pending_i;
+	  /* 同一バッチ内の未反映ADDを取り消す */
+	  for (pending_i = 0; pending_i < stack_count; pending_i++) {
+	    if (index_stack[pending_i].filedata.url != NULL &&
+	        strcmp(index_stack[pending_i].filedata.url, url) == 0) {
+	      YAP_Index_Deletefile_put(ydfp, index_stack[pending_i].fileindex);
+	      YAP_Index_del_fileindex(ydfp, url);
+	    }
+	  }
 	  /*削除扱いなので終了する
 
 	  //行バッファをクリア*/
@@ -561,8 +570,9 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
 	  /*メモリの解放&初期化*/
 	  YAP_Index_Filedata_free(&old_filedata);
 	  
-	  if (old_mtime > gz_file_mtime ||
-	      (old_mtime == gz_file_mtime && old_body_size == body_size)) {
+	  if (strcmp(command, "DELETE") != 0 &&
+	      (old_mtime > gz_file_mtime ||
+	       (old_mtime == gz_file_mtime && old_body_size == body_size))) {
 	    /*現在の登録情報の更新日時が新しいか、本文が同じならスキップ
 	    
 	    //行バッファをクリア
@@ -576,14 +586,23 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp)
 	    continue;
 	  }
 	} else {
-	  /*現在索引中のデータの場合は、今回の登録をスキップする*/
-	  continue;
+	  /*現在索引中のデータ（まだFiledata未反映） */
+	  if (! strcmp(command, "DELETE")) {
+	    /* 同一バッチ内ADDの取り消しを許可する */
+	    YAP_Index_del_fileindex(ydfp, url);
+	    YAP_Index_Deletefile_put(ydfp, fileindex);
+	  } else {
+	    /* ADDは同一バッチ内で重複登録しない */
+	    continue;
+	  }
 	}
 
 	/*昔のレコードを削除*/
-	YAP_Index_del_fileindex(ydfp, url);
-	YAP_Index_Filedata_del(ydfp, fileindex);
-	YAP_Index_Deletefile_put(ydfp, fileindex);
+	if (ret == 0) {
+	  YAP_Index_del_fileindex(ydfp, url);
+	  YAP_Index_Filedata_del(ydfp, fileindex);
+	  YAP_Index_Deletefile_put(ydfp, fileindex);
+	}
       }
     
       if (! strcmp( command, "DELETE")) {
