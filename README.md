@@ -156,6 +156,31 @@ yappo_makeindex -f tests/fixtures/index.txt -d /tmp/yappoindex \
   --min-body-size 1 --max-body-size 200000
 ```
 
+## pos 統合（`yappo_mergepos`）
+
+`yappo_mergepos` は、`<index_dir>/pos/` 配下に分割された位置情報DBを1つにまとめる補助コマンドです。  
+大量更新後のメンテナンスや、検索時のI/O断片化を減らしたいときに使います。
+
+```bash
+yappo_mergepos -l /tmp/yappoindex -d /tmp/yappoindex/pos/merged -s 0 -e 31
+```
+
+- `-l`: 入力インデックスディレクトリ（`deletefile` / `keywordnum` / `pos/` がある場所）
+- `-d`: 出力ファイルのベース名（`<base>`, `<base>_index`, `<base>_size` を生成）
+- `-s`, `-e`: 取り込む `pos` 番号の開始・終了（**両端を含む**）
+
+補足:
+
+- 指定範囲の入力は `pos/<n>`, `pos/<n>_index`, `pos/<n>_size` を読みます。
+- `deletefile` を参照し、削除済みドキュメントの位置情報は除外して再生成します。
+- 範囲内の一部ファイルが欠けていても、読めるものだけで処理を継続します。
+
+主なエラー条件:
+
+- `-l` が存在しないディレクトリ
+- `-s` / `-e` が非数値、または `-s > -e`
+- `-d` の出力先に書き込めない
+
 ## 検索
 
 ### CLI
