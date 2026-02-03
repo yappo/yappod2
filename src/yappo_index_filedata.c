@@ -6,6 +6,8 @@
 #include "yappo_alloc.h"
 #include "yappo_io.h"
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 /*
  *fileindexをキーに検索をしてFILEDATAを取得
