@@ -4,11 +4,14 @@
  *
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <errno.h>
+#include <limits.h>
 #include <string.h>
 
 #include "yappo_db.h"
@@ -42,6 +45,28 @@ typedef struct {
   int seek_stop;
 } pos_t;
 
+static void YAP_print_usage(const char *progname) {
+  printf("Usage: %s -l input_index -d output_file -s start -e end\n", progname);
+}
+
+static int YAP_parse_nonnegative_int(const char *value, int *out) {
+  char *endptr;
+  long parsed;
+
+  if (value == NULL || value[0] == '\0') {
+    return -1;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &endptr, 10);
+  if (errno != 0 || endptr == value || *endptr != '\0' || parsed < 0 || parsed > INT_MAX) {
+    return -1;
+  }
+
+  *out = (int)parsed;
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   char *output_file = NULL, *input_dir = NULL;
 
@@ -71,15 +96,19 @@ int main(int argc, char *argv[]) {
       if (!strcmp(argv[i], "-s")) {
         /*まとめるDBの始め*/
         i++;
-        if (argc == i)
-          break;
-        start = atoi(argv[i]);
+        if (argc == i || YAP_parse_nonnegative_int(argv[i], &start) != 0) {
+          YAP_print_usage(argv[0]);
+          printf("Invalid start value: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(EXIT_FAILURE);
+        }
       } else if (!strcmp(argv[i], "-e")) {
         /*まとめるDBの終り*/
         i++;
-        if (argc == i)
-          break;
-        end = atoi(argv[i]);
+        if (argc == i || YAP_parse_nonnegative_int(argv[i], &end) != 0) {
+          YAP_print_usage(argv[0]);
+          printf("Invalid end value: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(EXIT_FAILURE);
+        }
       } else if (!strcmp(argv[i], "-l")) {
         /*入力を取得*/
         i++;
@@ -99,20 +128,20 @@ int main(int argc, char *argv[]) {
 
   num = end - start + 1;
   if (num < 1) {
-    printf("Usage: %s -l input_index -d output_file -s start -e end\n", argv[0]);
+    YAP_print_usage(argv[0]);
     printf("pos num error: %d - %d = %d\n", end, start, num);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   if (input_dir == NULL) {
-    printf("Usage: %s -l input_index -d output_file -s start -e end\n", argv[0]);
-    exit(-1);
+    YAP_print_usage(argv[0]);
+    exit(EXIT_FAILURE);
   }
 
   if (!YAP_is_dir(input_dir)) {
-    printf("Usage: %s -l input_index -d output_file -s start -e end\n", argv[0]);
+    YAP_print_usage(argv[0]);
     printf("Please specify an existing index directory.\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   /*
@@ -149,7 +178,7 @@ int main(int argc, char *argv[]) {
   output->size_fp = fopen(output->size, "w");
   if (output->data_fp == NULL || output->index_fp == NULL || output->size_fp == NULL) {
     fprintf(stderr, "fopen error: output files\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   for (i = 0; i < num; i++) {
@@ -171,7 +200,7 @@ int main(int argc, char *argv[]) {
   delete_fp = fopen(delete_file, "r");
   if (delete_fp == NULL) {
     fprintf(stderr, "fopen error: %s\n", delete_file);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   /*
@@ -182,11 +211,11 @@ int main(int argc, char *argv[]) {
   key_num_fp = fopen(key_num_file, "r");
   if (key_num_fp == NULL) {
     fprintf(stderr, "fopen error: %s\n", key_num_file);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
   if (YAP_fread_exact(key_num_fp, &key_num, sizeof(int), 1) != 0) {
     fprintf(stderr, "fread error: %s\n", key_num_file);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
   fclose(key_num_fp);
 
@@ -328,7 +357,7 @@ int main(int argc, char *argv[]) {
 
     free(bufs);
     if (key_pos > 10 && 0) {
-      exit(-1);
+      exit(EXIT_FAILURE);
     }
   }
 
@@ -346,6 +375,7 @@ int main(int argc, char *argv[]) {
     fclose(inputs[i]->index_fp);
     fclose(inputs[i]->size_fp);
   }
+  return EXIT_SUCCESS;
 }
 
 #ifdef AAAA
@@ -521,15 +551,19 @@ int main(int argc, char *argv[]) {
       if (!strcmp(argv[i], "-s")) {
         /*まとめるDBの始め*/
         i++;
-        if (argc == i)
-          break;
-        start = atoi(argv[i]);
+        if (argc == i || YAP_parse_nonnegative_int(argv[i], &start) != 0) {
+          printf("Usage: %s -l input_index -d output_index -s start -e end\n", argv[0]);
+          printf("Invalid start value: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(EXIT_FAILURE);
+        }
       } else if (!strcmp(argv[i], "-e")) {
         /*まとめるDBの終わり*/
         i++;
-        if (argc == i)
-          break;
-        end = atoi(argv[i]);
+        if (argc == i || YAP_parse_nonnegative_int(argv[i], &end) != 0) {
+          printf("Usage: %s -l input_index -d output_index -s start -e end\n", argv[0]);
+          printf("Invalid end value: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(EXIT_FAILURE);
+        }
       } else if (!strcmp(argv[i], "-l")) {
         /*入力先を取得*/
         i++;
@@ -550,17 +584,17 @@ int main(int argc, char *argv[]) {
   /*オプションが指定されていない*/
   if (in_index.base_dir == NULL || out_index.base_dir == NULL) {
     printf("Usage: %s -l input_index -d output_index -s start -e end\n", argv[0]);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   if (!YAP_is_dir(in_index.base_dir)) {
     printf("Please specify an existing index directory.\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   if (!YAP_is_dir(out_index.base_dir)) {
     printf("Please specify an existing index directory.\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   in_index.mode = YAPPO_DB_READ;
@@ -573,7 +607,7 @@ int main(int argc, char *argv[]) {
   core(&in_index, &out_index, start, end, 2);
 
   YAP_Db_base_close(&in_index);
-  exit(0);
+  return EXIT_SUCCESS;
 }
 
 #endif

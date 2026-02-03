@@ -4,6 +4,7 @@
   検索結果をまとめてクライアントに返す
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <signal.h>
 #include <string.h>
@@ -52,7 +53,7 @@ static const char *g_front_pidfile = "./front.pid";
 
 void YAP_Error(char *msg) {
   fprintf(stderr, "ERROR: %s\n", msg);
-  exit(-1);
+  exit(EXIT_FAILURE);
 }
 
 static void YAP_log_thread_error(int thread_id, const char *msg) {
@@ -647,13 +648,13 @@ int main(int argc, char *argv[]) {
 
   if (server_num == 0) {
     printf("server option -s\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
     perror("ERROR: invalid index dir");
     fprintf(stderr, "%s\n", indextexts_dirpath);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   count = 0;
@@ -682,7 +683,7 @@ int main(int argc, char *argv[]) {
       fprintf(pidf, "%d", pid);
       fclose(pidf);
     }
-    exit(0);
+    exit(EXIT_SUCCESS);
   }
 
   atexit(YAP_remove_pidfile);
@@ -695,4 +696,5 @@ int main(int argc, char *argv[]) {
   signal(SIGPIPE, SIG_IGN);
 
   start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
+  return EXIT_SUCCESS;
 }

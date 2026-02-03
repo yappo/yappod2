@@ -871,14 +871,14 @@ int main(int argc, char *argv[]) {
         i++;
         if (argc == i || YAP_parse_int_option(argv[i], &min_body_size) != 0) {
           printf("Invalid min body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
-          exit(-1);
+          exit(EXIT_FAILURE);
         }
       } else if (!strcmp(argv[i], "--max-body-size") || !strcmp(argv[i], "-M")) {
         /*最大本文サイズを取得*/
         i++;
         if (argc == i || YAP_parse_int_option(argv[i], &max_body_size) != 0) {
           printf("Invalid max body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
-          exit(-1);
+          exit(EXIT_FAILURE);
         }
       }
       i++;
@@ -891,17 +891,17 @@ int main(int argc, char *argv[]) {
     printf("Usage: %s [-f inputfile | -l inputfilesdir] -d outputdir [--min-body-size N] "
            "[--max-body-size N]\n",
            argv[0]);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
   if (min_body_size > max_body_size) {
     printf("Invalid size range: min_body_size(%d) > max_body_size(%d)\n", min_body_size,
            max_body_size);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   if (!YAP_is_dir(yappo_db_files.base_dir)) {
     printf("Please specify an existing index directory.\n");
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   /* pos ディレクトリが無いと落ちやすいので事前にチェック */
@@ -911,7 +911,7 @@ int main(int argc, char *argv[]) {
     if (!YAP_is_dir(pos_dir)) {
       fprintf(stderr, "Missing pos dir: %s (mkdir -p %s)\n", pos_dir, pos_dir);
       free(pos_dir);
-      exit(-1);
+      exit(EXIT_FAILURE);
     }
     free(pos_dir);
   }
@@ -932,7 +932,7 @@ int main(int argc, char *argv[]) {
     if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
       perror("ERROR: invalid input file");
       printf("Please specify an existing input file.\n");
-      exit(-1);
+      exit(EXIT_FAILURE);
     }
 
     /*圧縮ファイルの展開をしつつインデックスを行なう*/
@@ -944,7 +944,7 @@ int main(int argc, char *argv[]) {
     if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
       perror("ERROR: invalid input directory");
       printf("Please specify an existing input directory.\n");
-      exit(-1);
+      exit(EXIT_FAILURE);
     }
 
     /*ディレクトリを開く*/
@@ -960,7 +960,7 @@ int main(int argc, char *argv[]) {
         if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
           perror("ERROR: invalid input file");
           printf("Please specify an existing input file.\n");
-          exit(-1);
+          exit(EXIT_FAILURE);
         }
 
         indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size,
@@ -977,5 +977,5 @@ int main(int argc, char *argv[]) {
    */
   YAP_Db_base_close(&yappo_db_files);
 
-  exit(0);
+  return EXIT_SUCCESS;
 }

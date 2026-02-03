@@ -4,6 +4,7 @@
 
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -49,7 +50,7 @@ int count;
 
 void YAP_Error(char *msg) {
   fprintf(stderr, "ERROR: %s\n", msg);
-  exit(-1);
+  exit(EXIT_FAILURE);
 }
 
 static void YAP_log_thread_error(int thread_id, const char *msg) {
@@ -398,7 +399,7 @@ int main(int argc, char *argv[]) {
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
     perror("ERROR: invalid index dir");
     fprintf(stderr, "%s\n", indextexts_dirpath);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   count = 0;
@@ -426,7 +427,7 @@ int main(int argc, char *argv[]) {
       fprintf(pidf, "%d", pid);
       fclose(pidf);
     }
-    exit(0);
+    exit(EXIT_SUCCESS);
   }
 
   atexit(YAP_remove_pidfile);
@@ -443,4 +444,5 @@ int main(int argc, char *argv[]) {
   start_deamon_thread(indextexts_dirpath);
 
   YAP_Db_cache_destroy(&yappod_core_cache);
+  return EXIT_SUCCESS;
 }
