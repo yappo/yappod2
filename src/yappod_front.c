@@ -198,10 +198,14 @@ void *thread_server (void *ip)
 
 
     accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
-    socket = (FILE *) fdopen(accept_socket, "r+");
-    
     if (accept_socket == -1) {
       YAP_Error( "accept error");
+    }
+    socket = (FILE *) fdopen(accept_socket, "r+");
+    if (socket == NULL) {
+      perror("ERROR: fdopen");
+      close(accept_socket);
+      continue;
     }
 
         while (! feof(socket)) {

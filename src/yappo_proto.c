@@ -3,10 +3,14 @@
  */
 #include "yappo_proto.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+
+/* Safety cap against corrupted payloads that request huge allocations. */
+#define YAP_PROTO_MAX_DOCS (1024 * 1024)
 
 static int proto_read_string(FILE *socket, int max_payload, char **out)
 {
@@ -144,6 +148,14 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
   }
 
   if (keyword_docs_num < 0) {
+    free(p);
+    return NULL;
+  }
+  if (keyword_docs_num > YAP_PROTO_MAX_DOCS) {
+    free(p);
+    return NULL;
+  }
+  if ((size_t) keyword_docs_num > (SIZE_MAX / sizeof(SEARCH_DOCUMENT))) {
     free(p);
     return NULL;
   }

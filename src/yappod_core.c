@@ -196,10 +196,14 @@ void *thread_server (void *ip)
     int max_size;
 
     accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
-    socket = fdopen(accept_socket, "r+");
-    
     if (accept_socket == -1) {
       YAP_Error( "accept error");
+    }
+    socket = fdopen(accept_socket, "r+");
+    if (socket == NULL) {
+      perror("ERROR: fdopen");
+      close(accept_socket);
+      continue;
     }
 
     printf("accept: %d\n", p->id);
@@ -209,7 +213,7 @@ void *thread_server (void *ip)
       recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);
       if (recv_code <= 0) {
         if (recv_code < 0) {
-          fprintf(stderr, "ERROR: invalid query payload\n");
+          fprintf(stderr, "ERROR: core thread %d failed to receive query payload\n", p->id);
         }
         break;
       }
