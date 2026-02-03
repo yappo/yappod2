@@ -118,18 +118,65 @@ static void YAP_free_keyword_list(char **keyword_list, int keyword_list_num)
   free(keyword_list);
 }
 
+static char *YAP_decode_keyword_slice(const char *start, size_t len)
+{
+  char *buf;
+  char *decoded;
+
+  buf = (char *) YAP_malloc(len + 1);
+  memcpy(buf, start, len);
+  buf[len] = '\0';
+  decoded = urldecode(buf);
+  free(buf);
+  return decoded;
+}
+
+static int YAP_split_keyword_query(const char *keyword, char ***keyword_list_out, int *keyword_list_num_out)
+{
+  const char *p, *start;
+  int keyword_list_num = 1;
+  int i = 0;
+  char **keyword_list;
+
+  if (keyword == NULL) {
+    return -1;
+  }
+
+  p = keyword;
+  while (*p) {
+    if (*p == '&') {
+      keyword_list_num++;
+    }
+    p++;
+  }
+
+  keyword_list = (char **) YAP_malloc(sizeof(char *) * keyword_list_num);
+  start = keyword;
+  p = keyword;
+  while (*p) {
+    if (*p == '&') {
+      keyword_list[i] = YAP_decode_keyword_slice(start, (size_t) (p - start));
+      i++;
+      start = p + 1;
+    }
+    p++;
+  }
+  keyword_list[i] = YAP_decode_keyword_slice(start, (size_t) (p - start));
+
+  *keyword_list_out = keyword_list;
+  *keyword_list_num_out = keyword_list_num;
+  return 0;
+}
+
 /*
  *検索処理のメインルーチン
  */
 SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char *op, char *keyword)
 {
   int f_op;
-  char **keyword_list;
-  char *keyp, *keys, *keye;
-  char *buf;
+  char **keyword_list = NULL;
   SEARCH_RESULT *result;
-  int keyword_list_num = 1;
-  int i;
+  int keyword_list_num = 0;
   (void) dict;
 
   /*検索条件*/
@@ -141,39 +188,9 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
     f_op = 0;
   }
 
-  /*キーワードをリストに分割する
-   *&の数を数える
-   */
-  keyp = keyword;
-  while (*keyp) {
-    if (*keyp == '&') {
-      keyword_list_num++;
-    }
-    keyp++;
+  if (YAP_split_keyword_query(keyword, &keyword_list, &keyword_list_num) != 0) {
+    return NULL;
   }
-  /*キーワードを分割する*/
-  keyword_list = (char **) YAP_malloc(sizeof(char *) * keyword_list_num);
-  i = 0;
-  keys = keyword;
-  keye = keyword;
-  while (*keye) {
-    if (*keye == '&') {
-      buf = (char *) YAP_malloc(keye - keys + 1);
-      strncpy(buf, keys, keye - keys);
-      buf[keye - keys] = '\0';
-      keyword_list[i] = urldecode(buf);
-      keys = keye + 1;
-      i++;
-      free(buf);
-    }
-    keye++;
-  }
-  /*最後の1ワード*/
-  buf = (char *) YAP_malloc(keye - keys + 1);
-  strncpy(buf, keys, keye - keys);
-  buf[keye - keys] = '\0';
-  keyword_list[i] = urldecode(buf);
-  free(buf);
 
   printf( "max: %d\n", max_size);
 
