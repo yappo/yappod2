@@ -308,9 +308,16 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
 
   /*待避ファイル名の作成*/
   filedata_tmp = (char *)YAP_malloc(strlen(filedata) + 5);
-  sprintf(filedata_tmp, "%s_tmp", filedata);
+  if (snprintf(filedata_tmp, strlen(filedata) + 5, "%s_tmp", filedata) < 0) {
+    free(filedata_tmp);
+    return -1;
+  }
   filedata_index_tmp = (char *)YAP_malloc(strlen(filedata_index) + 5);
-  sprintf(filedata_index_tmp, "%s_tmp", filedata_index);
+  if (snprintf(filedata_index_tmp, strlen(filedata_index) + 5, "%s_tmp", filedata_index) < 0) {
+    free(filedata_tmp);
+    free(filedata_index_tmp);
+    return -1;
+  }
 
   /*ファイルを開く*/
   filedata_file = fopen(filedata, "r");
