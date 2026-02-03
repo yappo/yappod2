@@ -8,10 +8,9 @@
 /*
  *リンクリストを元にページのスコアリングを行なう
  */
-void YAP_Linklist_Score (YAPPO_DB_FILES *p, SEARCH_RESULT *result)
-{
-  (void) p;
-  (void) result;
+void YAP_Linklist_Score(YAPPO_DB_FILES *p, SEARCH_RESULT *result) {
+  (void)p;
+  (void)result;
   /*
    * Free版では配布されていません。
    */

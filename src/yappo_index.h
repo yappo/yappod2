@@ -6,7 +6,6 @@
 
 #include "yappo_db.h"
 
-
 #define FILEINDEX_NAME "fileindex.db"
 #define DOMAININDEX_NAME "domainindex.db"
 #define FILENUM_NAME "filenum"
@@ -21,7 +20,6 @@
 #define KEYWORD_DOCSNUM_NAME "keyword_docsnum"
 
 #define KEYWORD_1BYTE_NAME "keyword_1byte.db"
-
 
 /*
  *辞書ファイルの構造体
@@ -45,7 +43,6 @@ int YAP_Index_del_domainindex(YAPPO_DB_FILES *ydfp, char *domain);
 int YAP_Index_get_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id);
 int YAP_Index_put_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id);
 int YAP_Index_del_fileindex(YAPPO_DB_FILES *ydfp, char *url);
-
 
 unsigned char *YAP_Index_8bit_encode(int *list, int list_len, int *ret_len);
 int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len);

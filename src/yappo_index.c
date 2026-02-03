@@ -7,17 +7,15 @@
 #include <ctype.h>
 #include <string.h>
 
-
 /*
  *domainindexDBからURLをキーに検索をしてレコードIDを取得する
  */
-int YAP_Index_get_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id)
-{
+int YAP_Index_get_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id) {
   DBT key, value;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
 
   key.data = domain;
   key.size = strlen(domain);
@@ -35,13 +33,12 @@ int YAP_Index_get_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id
 /*
  *domainindexDBからURLをキーに検索をしてレコードIDを設定
  */
-int YAP_Index_put_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id)
-{
+int YAP_Index_put_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id) {
   DBT key, value;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
 
   key.data = domain;
   key.size = strlen(domain);
@@ -57,12 +54,11 @@ int YAP_Index_put_domainindex(YAPPO_DB_FILES *ydfp, char *domain, int *record_id
 /*
  *domainindexDBからURLをキーに検索をしてレコードを削除
  */
-int YAP_Index_del_domainindex(YAPPO_DB_FILES *ydfp, char *domain)
-{
+int YAP_Index_del_domainindex(YAPPO_DB_FILES *ydfp, char *domain) {
   DBT key;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
 
   key.data = domain;
   key.size = strlen(domain);
@@ -72,18 +68,15 @@ int YAP_Index_del_domainindex(YAPPO_DB_FILES *ydfp, char *domain)
   return ret;
 }
 
-
-
 /*
  *fileindexDBからURLをキーに検索をしてレコードIDを取得する
  */
-int YAP_Index_get_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id)
-{
+int YAP_Index_get_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id) {
   DBT key, value;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
 
   key.data = url;
   key.size = strlen(url);
@@ -101,13 +94,12 @@ int YAP_Index_get_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id)
 /*
  *fileindexDBからURLをキーに検索をしてレコードIDを設定
  */
-int YAP_Index_put_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id)
-{
+int YAP_Index_put_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id) {
   DBT key, value;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
 
   key.data = url;
   key.size = strlen(url);
@@ -123,12 +115,11 @@ int YAP_Index_put_fileindex(YAPPO_DB_FILES *ydfp, char *url, int *record_id)
 /*
  *fileindexDBからURLをキーに検索をしてレコードを削除
  */
-int YAP_Index_del_fileindex(YAPPO_DB_FILES *ydfp, char *url)
-{
+int YAP_Index_del_fileindex(YAPPO_DB_FILES *ydfp, char *url) {
   DBT key;
   int ret;
 
-  memset(&key, 0,sizeof(DBT));
+  memset(&key, 0, sizeof(DBT));
 
   key.data = url;
   key.size = strlen(url);
@@ -138,26 +129,22 @@ int YAP_Index_del_fileindex(YAPPO_DB_FILES *ydfp, char *url)
   return ret;
 }
 
-
-
 /*
  * キーワード辞書はUTF-8文字列をそのままキーとして扱う
  */
 
-
 /*
  *keywordDBからURLをキーに検索をしてレコードIDを取得する
  */
-int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id)
-{
+int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id) {
   DBT key, value;
 
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
-  
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
+
   key.data = keyword;
-  key.size = strlen((const char *) keyword);
-  
+  key.size = strlen((const char *)keyword);
+
   value.data = keyword_id;
   value.size = sizeof(long);
   value.ulen = sizeof(long);
@@ -169,69 +156,63 @@ int YAP_Index_get_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned
 /*
  *keywordDBからURLをキーに検索をしてレコードIDを設定
  */
-int YAP_Index_put_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id)
-{
+int YAP_Index_put_keyword(YAPPO_DB_FILES *ydfp, unsigned char *keyword, unsigned long *keyword_id) {
   DBT key, value;
-  
-  memset(&key, 0,sizeof(DBT));
-  memset(&value, 0,sizeof(DBT));
-  
+
+  memset(&key, 0, sizeof(DBT));
+  memset(&value, 0, sizeof(DBT));
+
   key.data = keyword;
-  key.size = strlen((const char *) keyword);
-  
+  key.size = strlen((const char *)keyword);
+
   value.data = keyword_id;
   value.size = sizeof(long);
-  
+
   return ydfp->key1byte_db->put(ydfp->key1byte_db, NULL, &key, &value, 0);
 }
-
-
 
 /*
  *8bit符号にエンコードする
  */
-unsigned char *YAP_Index_8bit_encode(int *list, int list_len, int *ret_len)
-{
+unsigned char *YAP_Index_8bit_encode(int *list, int list_len, int *ret_len) {
   int i;
   unsigned char *encode, *encode_p, *ret;
-  encode = (unsigned char *) YAP_malloc(sizeof(int) * ( list_len * 2));
+  encode = (unsigned char *)YAP_malloc(sizeof(int) * (list_len * 2));
   encode_p = encode;
 
   *ret_len = 0;
   for (i = 0; i < list_len; i++) {
     unsigned int bit8 = list[i];
     while (1) {
-      int bit7 = bit8 & 0x7f;/* 7bitだけ取りだす */
-      bit8 = bit8 >> 7;/* 元の数値を7bit分右にずらす */
+      int bit7 = bit8 & 0x7f; /* 7bitだけ取りだす */
+      bit8 = bit8 >> 7;       /* 元の数値を7bit分右にずらす */
 
-      if ( bit8 == 0) {
-	/* 最後の7bit */
-	*encode_p = (unsigned char) bit7;
-	encode_p++;
-	(*ret_len)++;
-	break;
+      if (bit8 == 0) {
+        /* 最後の7bit */
+        *encode_p = (unsigned char)bit7;
+        encode_p++;
+        (*ret_len)++;
+        break;
       } else {
-	/* 次の7bitも有る */
-	*encode_p = (unsigned char) (bit7 | 0x80);
-	encode_p++;
-	(*ret_len)++;
+        /* 次の7bitも有る */
+        *encode_p = (unsigned char)(bit7 | 0x80);
+        encode_p++;
+        (*ret_len)++;
       }
     }
   }
 
-  ret = (unsigned char *) YAP_malloc(*ret_len + 1);
+  ret = (unsigned char *)YAP_malloc(*ret_len + 1);
   memcpy(ret, encode, *ret_len);
   free(encode);
 
   return ret;
 }
 
-
 /*
  *8bit符号の文字列をデコードする
  */
-int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len)
-{
+int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len) {
   int i;
   int *list;
   unsigned char *encode_p;
@@ -240,7 +221,7 @@ int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len)
   *list_len = 0;
   bits = 0;
 
-  list = (int *) YAP_malloc(sizeof(int) * sizeof(int) * ( len + 1));
+  list = (int *)YAP_malloc(sizeof(int) * sizeof(int) * (len + 1));
   encode_p = encode;
 
   list[*list_len] = 0;

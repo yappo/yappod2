@@ -13,6 +13,6 @@
 /* 各URL毎のlinklistファイル中の位置 */
 #define LINKLIST_INDEX_NAME "linklist_index"
 
-void YAP_Linklist_Score (YAPPO_DB_FILES *p, SEARCH_RESULT *result);
+void YAP_Linklist_Score(YAPPO_DB_FILES *p, SEARCH_RESULT *result);
 
 #endif

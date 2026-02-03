@@ -10,29 +10,25 @@
 #include <string.h>
 #include "yappo_alloc.h"
 
-
 /*
  *btreeの初期化
  */
-MINIBTREE *YAP_Minibtree_init(void)
-{
-  MINIBTREE *p = (MINIBTREE *) YAP_malloc(sizeof(MINIBTREE));
-  p->key   = NULL;
-  p->data  = NULL;
-  p->left  = NULL;
+MINIBTREE *YAP_Minibtree_init(void) {
+  MINIBTREE *p = (MINIBTREE *)YAP_malloc(sizeof(MINIBTREE));
+  p->key = NULL;
+  p->data = NULL;
+  p->left = NULL;
   p->right = NULL;
-  p->top   = NULL;
-  p->id    = 0;
+  p->top = NULL;
+  p->id = 0;
 
   return p;
 }
 
-
 /*
  *rootをkeyで検索して一致するノードを返す
  */
-MINIBTREE *YAP_Minibtree_search( MINIBTREE *root, unsigned char *key)
-{
+MINIBTREE *YAP_Minibtree_search(MINIBTREE *root, unsigned char *key) {
   MINIBTREE *this;
 
   /*子ノードが存在しない*/
@@ -45,26 +41,26 @@ MINIBTREE *YAP_Minibtree_search( MINIBTREE *root, unsigned char *key)
   while (1) {
     int cmp = 0;
 
-    cmp = strcmp((const char *) this->key, (const char *) key);
+    cmp = strcmp((const char *)this->key, (const char *)key);
 
     if (cmp == 0) {
       /*一致*/
       return this;
-    } else if(cmp > 0){
+    } else if (cmp > 0) {
       /*左辺をチェック*/
       if (this->left == NULL) {
-	return NULL;
+        return NULL;
       } else {
-	/*左辺に移動*/
-	this = this->left;
+        /*左辺に移動*/
+        this = this->left;
       }
-    } else if(cmp < 0){
+    } else if (cmp < 0) {
       /*右辺をチェック*/
       if (this->right == NULL) {
-	return NULL;
+        return NULL;
       } else {
-	/*右辺に移動*/
-	this = this->right;
+        /*右辺に移動*/
+        this = this->right;
       }
     }
   }
@@ -75,10 +71,9 @@ MINIBTREE *YAP_Minibtree_search( MINIBTREE *root, unsigned char *key)
 /*
  *rootノードにaddノードを追加する
  */
-int YAP_Minibtree_add( MINIBTREE *root, MINIBTREE *add)
-{
+int YAP_Minibtree_add(MINIBTREE *root, MINIBTREE *add) {
   MINIBTREE *this;
-  
+
   /*子ノードが存在しないので左ノードに追加する*/
   if (root->left == NULL && root->right == NULL) {
     root->left = add;
@@ -91,32 +86,32 @@ int YAP_Minibtree_add( MINIBTREE *root, MINIBTREE *add)
   while (1) {
     int cmp = 0;
 
-    cmp = strcmp((const char *) this->key, (const char *) add->key);
+    cmp = strcmp((const char *)this->key, (const char *)add->key);
 
     if (cmp == 0) {
       /*一致してしまったら登録できない*/
       return 1;
-    } else if(cmp > 0){
+    } else if (cmp > 0) {
       /*左辺をチェック*/
       if (this->left == NULL) {
-	/*左辺に登録*/
-	this->left = add;
-	this->left->top = this->left;
-	return 0;
+        /*左辺に登録*/
+        this->left = add;
+        this->left->top = this->left;
+        return 0;
       } else {
-	/*左辺に移動*/
-	this = this->left;
+        /*左辺に移動*/
+        this = this->left;
       }
-    } else if(cmp < 0){
+    } else if (cmp < 0) {
       /*右辺をチェック*/
       if (this->right == NULL) {
-	/*右辺に登録*/
-	this->right = add;
-	this->right->top = this->right;
-	return 0;
+        /*右辺に登録*/
+        this->right = add;
+        this->right->top = this->right;
+        return 0;
       } else {
-	/*右辺に移動*/
-	this = this->right;
+        /*右辺に移動*/
+        this = this->right;
       }
     }
   }

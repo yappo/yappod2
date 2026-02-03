@@ -12,14 +12,13 @@
 /*
  *fileindexをキーに検索をしてFILEDATAを取得
  */
-int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata)
-{
+int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_size, filedata_index;
   int seek;
   int str_len;
   unsigned char *buf, *bufp;
 
-  if ((unsigned int) fileindex > ydfp->total_filenum) {
+  if ((unsigned int)fileindex > ydfp->total_filenum) {
     /*対象となるIDは存在していない*/
     return -1;
   }
@@ -48,7 +47,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   }
 
   /*データの読みこみ*/
-  buf = (unsigned char *) YAP_malloc(filedata_size);
+  buf = (unsigned char *)YAP_malloc(filedata_size);
   if (YAP_fseek_set(ydfp->filedata_file, filedata_index) != 0 ||
       YAP_fread_exact(ydfp->filedata_file, buf, 1, filedata_size) != 0) {
     free(buf);
@@ -63,49 +62,49 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   /*FIELDATAをシリアライズする
    * url\0title\0comment\0size\0keyword_num\0lastmod\0domainid\0other_len\0other
    */
-  str_len = *((size_t *) bufp);
+  str_len = *((size_t *)bufp);
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->url = (char *) YAP_malloc(str_len + 1);
+    filedata->url = (char *)YAP_malloc(str_len + 1);
     memcpy(filedata->url, bufp, str_len);
     bufp += str_len;
   } else {
     filedata->url = NULL;
   }
 
-  str_len = *((size_t *) bufp);
+  str_len = *((size_t *)bufp);
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->title = (char *) YAP_malloc(str_len + 1);
+    filedata->title = (char *)YAP_malloc(str_len + 1);
     memcpy(filedata->title, bufp, str_len);
     bufp += str_len;
   } else {
     filedata->title = NULL;
   }
 
-  str_len = *((size_t *) bufp);
+  str_len = *((size_t *)bufp);
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->comment = (char *) YAP_malloc(str_len + 1);
+    filedata->comment = (char *)YAP_malloc(str_len + 1);
     memcpy(filedata->comment, bufp, str_len);
     bufp += str_len;
   } else {
     filedata->comment = NULL;
   }
 
-  filedata->size = *((int *) bufp);
+  filedata->size = *((int *)bufp);
   bufp += sizeof(int);
-  filedata->keyword_num = *((int *) bufp);
+  filedata->keyword_num = *((int *)bufp);
   bufp += sizeof(int);
-  filedata->lastmod = *((time_t *) bufp);
+  filedata->lastmod = *((time_t *)bufp);
   bufp += sizeof(time_t);
-  filedata->domainid = *((int *) bufp);
+  filedata->domainid = *((int *)bufp);
   bufp += sizeof(int);
 
-  filedata->other_len = *((int *) bufp);
+  filedata->other_len = *((int *)bufp);
   bufp += sizeof(int);
   if (filedata->other_len > 0) {
-    filedata->other = (unsigned char *) YAP_malloc(filedata->other_len + 1);
+    filedata->other = (unsigned char *)YAP_malloc(filedata->other_len + 1);
     memcpy(filedata->other, bufp, filedata->other_len);
     bufp += filedata->other_len;
   } else {
@@ -120,8 +119,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
 /*
  *fileindexをキーに検索をしてFILEDATAを設定
  */
-int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata)
-{
+int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_index;
   int seek;
   char *buf, *bufp;
@@ -131,7 +129,6 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     /*読みこみモードではエラー*/
     return -1;
   }
-
 
   /*FIELDATAをシリアライズする
    *url\0title\0comment\0size\0keyword_num\0lastmod\0domainid\0other_len\0other
@@ -149,56 +146,56 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   if (filedata->comment != NULL) {
     buf_len += strlen(filedata->comment);
   }
-  buf_len += sizeof(filedata->size) + sizeof(filedata->keyword_num) + sizeof(filedata->lastmod)
-     + sizeof(filedata->domainid) + sizeof(filedata->other_len);
+  buf_len += sizeof(filedata->size) + sizeof(filedata->keyword_num) + sizeof(filedata->lastmod) +
+             sizeof(filedata->domainid) + sizeof(filedata->other_len);
   if (filedata->other != NULL) {
     buf_len += filedata->other_len;
   }
 
-  buf = (char *) YAP_malloc(buf_len);
+  buf = (char *)YAP_malloc(buf_len);
   bufp = buf;
 
   if (filedata->url != NULL) {
-    *((size_t *) bufp) = strlen(filedata->url);
+    *((size_t *)bufp) = strlen(filedata->url);
     bufp += sizeof(size_t);
     strcpy(bufp, filedata->url);
     bufp += strlen(filedata->url);
   } else {
-    *((size_t *) bufp) = 0;
+    *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
   }
   if (filedata->title != NULL) {
-    *((size_t *) bufp) = strlen(filedata->title);
+    *((size_t *)bufp) = strlen(filedata->title);
     bufp += sizeof(size_t);
     strcpy(bufp, filedata->title);
     bufp += strlen(filedata->title);
   } else {
-    *((size_t *) bufp) = 0;
+    *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
   }
   if (filedata->comment != NULL) {
-    *((size_t *) bufp) = strlen(filedata->comment);
+    *((size_t *)bufp) = strlen(filedata->comment);
     bufp += sizeof(size_t);
     strcpy(bufp, filedata->comment);
     bufp += strlen(filedata->comment);
   } else {
-    *((size_t *) bufp) = 0;
+    *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
   }
 
-  *((int *) bufp) = filedata->size;
+  *((int *)bufp) = filedata->size;
   bufp += sizeof(int);
-  *((int *) bufp) = filedata->keyword_num;
+  *((int *)bufp) = filedata->keyword_num;
   bufp += sizeof(int);
-  *((time_t *) bufp) = filedata->lastmod;
+  *((time_t *)bufp) = filedata->lastmod;
   bufp += sizeof(time_t);
-  *((int *) bufp) = filedata->domainid;
+  *((int *)bufp) = filedata->domainid;
   bufp += sizeof(int);
 
-  *((int *) bufp) = filedata->other_len;
+  *((int *)bufp) = filedata->other_len;
   bufp += sizeof(int);
-  if ( filedata->other != NULL) {
-    strcpy(bufp, (const char *) filedata->other);
+  if (filedata->other != NULL) {
+    strcpy(bufp, (const char *)filedata->other);
   }
 
   /*登録*/
@@ -238,8 +235,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
 /*
  *fileindexをキーに検索をしてFILEDATAを削除
  */
-int YAP_Index_Filedata_del(YAPPO_DB_FILES *ydfp, int fileindex)
-{
+int YAP_Index_Filedata_del(YAPPO_DB_FILES *ydfp, int fileindex) {
   int c = 0;
   int seek;
 
@@ -268,8 +264,7 @@ int YAP_Index_Filedata_del(YAPPO_DB_FILES *ydfp, int fileindex)
 /*
  *FILEDATAのメモリをクリアする
  */
-int YAP_Index_Filedata_free (FILEDATA *p)
-{
+int YAP_Index_Filedata_free(FILEDATA *p) {
   if (p->url != NULL) {
     free(p->url);
     p->url = NULL;
@@ -294,13 +289,12 @@ int YAP_Index_Filedata_free (FILEDATA *p)
   return 0;
 }
 
-
 /*
  *メタファイルのごみ整理を行なう
  *メタファイルをopenしているプロセスが無いことが前堤
  */
-int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_size, char *filedata_index)
-{
+int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_size,
+                          char *filedata_index) {
   int i;
   int seek, index, index_tmp, size;
   char *filedata_tmp, *filedata_index_tmp;
@@ -312,9 +306,9 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   printf("Start YAP_Index_Filedata_gc\n");
 
   /*待避ファイル名の作成*/
-  filedata_tmp = (char *) YAP_malloc(strlen(filedata) + 5);
+  filedata_tmp = (char *)YAP_malloc(strlen(filedata) + 5);
   sprintf(filedata_tmp, "%s_tmp", filedata);
-  filedata_index_tmp = (char *) YAP_malloc(strlen(filedata_index) + 5);
+  filedata_index_tmp = (char *)YAP_malloc(strlen(filedata_index) + 5);
   sprintf(filedata_index_tmp, "%s_tmp", filedata_index);
 
   /*ファイルを開く*/
@@ -323,22 +317,23 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   filedata_index_file = fopen(filedata_index, "r");
   filedata_tmp_file = fopen(filedata_tmp, "w");
   filedata_index_tmp_file = fopen(filedata_index_tmp, "w");
-  if (filedata_file == NULL ||
-      filedata_size_file == NULL ||
-      filedata_index_file == NULL ||
-      filedata_tmp_file == NULL ||
-      filedata_index_tmp_file == NULL) {
+  if (filedata_file == NULL || filedata_size_file == NULL || filedata_index_file == NULL ||
+      filedata_tmp_file == NULL || filedata_index_tmp_file == NULL) {
     fprintf(stderr, "fopen error: filedata files\n");
-    if (filedata_file != NULL) fclose(filedata_file);
-    if (filedata_size_file != NULL) fclose(filedata_size_file);
-    if (filedata_index_file != NULL) fclose(filedata_index_file);
-    if (filedata_tmp_file != NULL) fclose(filedata_tmp_file);
-    if (filedata_index_tmp_file != NULL) fclose(filedata_index_tmp_file);
+    if (filedata_file != NULL)
+      fclose(filedata_file);
+    if (filedata_size_file != NULL)
+      fclose(filedata_size_file);
+    if (filedata_index_file != NULL)
+      fclose(filedata_index_file);
+    if (filedata_tmp_file != NULL)
+      fclose(filedata_tmp_file);
+    if (filedata_index_tmp_file != NULL)
+      fclose(filedata_index_tmp_file);
     free(filedata_tmp);
     free(filedata_index_tmp);
     return -1;
   }
-
 
   if (YAP_fseek_set(filedata_size_file, sizeof(int)) != 0 ||
       YAP_fseek_set(filedata_index_file, sizeof(int)) != 0 ||
@@ -354,7 +349,7 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   }
 
   /*位置情報のコピー*/
-  for (i = 1; (unsigned int) i <= ydfp->total_filenum; i++) {
+  for (i = 1; (unsigned int)i <= ydfp->total_filenum; i++) {
     seek = sizeof(int) * i;
 
     /*サイズの読みこみ*/
@@ -373,8 +368,8 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
 
       /*データの読みこみ*/
       if (buf_len < size) {
-	buf = (char *) YAP_realloc(buf, size);
-	buf_len = size;
+        buf = (char *)YAP_realloc(buf, size);
+        buf_len = size;
       }
       if (YAP_fseek_set(filedata_file, index) != 0 ||
           YAP_fread_exact(filedata_file, buf, 1, size) != 0) {
@@ -398,7 +393,7 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   if (buf != NULL) {
     free(buf);
   }
-  
+
   /*ファイルを閉じる*/
   fclose(filedata_file);
   fclose(filedata_size_file);
@@ -407,12 +402,18 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   fclose(filedata_index_tmp_file);
 
   /*ファイルを入れ換える*/
-  if (fork()) { int s; wait(&s);} else {
-    execl("/bin/mv", "/bin/mv", filedata_tmp, filedata, (char *) 0);
+  if (fork()) {
+    int s;
+    wait(&s);
+  } else {
+    execl("/bin/mv", "/bin/mv", filedata_tmp, filedata, (char *)0);
     exit(0);
   }
-  if (fork()) { int s; wait(&s);} else {
-    execl("/bin/mv", "/bin/mv", filedata_index_tmp, filedata_index, (char *) 0);
+  if (fork()) {
+    int s;
+    wait(&s);
+  } else {
+    execl("/bin/mv", "/bin/mv", filedata_index_tmp, filedata_index, (char *)0);
     exit(0);
   }
 

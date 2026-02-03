@@ -22,14 +22,12 @@
 #include "yappo_stat.h"
 #include "yappo_ngram.h"
 
-static void YAP_Error(char *msg)
-{
+static void YAP_Error(char *msg) {
   perror(msg);
   exit(-1);
 }
 
-static FILE *yap_fopen_or_die(const char *path, const char *mode)
-{
+static FILE *yap_fopen_or_die(const char *path, const char *mode) {
   FILE *fp = fopen(path, mode);
   if (fp == NULL) {
     YAP_Error("fopen error");
@@ -37,8 +35,7 @@ static FILE *yap_fopen_or_die(const char *path, const char *mode)
   return fp;
 }
 
-static void yap_touch_file_if_missing(const char *path)
-{
+static void yap_touch_file_if_missing(const char *path) {
   FILE *fp;
   if (YAP_is_reg(path)) {
     return;
@@ -47,8 +44,7 @@ static void yap_touch_file_if_missing(const char *path)
   fclose(fp);
 }
 
-static FILE *yap_open_managed_file(const char *path, int db_mode, long write_seek)
-{
+static FILE *yap_open_managed_file(const char *path, int db_mode, long write_seek) {
   FILE *fp;
 
   yap_touch_file_if_missing(path);
@@ -63,8 +59,7 @@ static FILE *yap_open_managed_file(const char *path, int db_mode, long write_see
   return fp;
 }
 
-static int yap_read_int_or_zero(const char *path)
-{
+static int yap_read_int_or_zero(const char *path) {
   int value = 0;
   FILE *fp;
 
@@ -80,8 +75,7 @@ static int yap_read_int_or_zero(const char *path)
   return value;
 }
 
-static void yap_write_int_value(const char *path, int value)
-{
+static void yap_write_int_value(const char *path, int value) {
   FILE *fp = yap_fopen_or_die(path, "w");
   if (YAP_fwrite_exact(fp, &value, sizeof(int), 1) != 0) {
     fclose(fp);
@@ -93,114 +87,112 @@ static void yap_write_int_value(const char *path, int value)
 /*
  *YAPPO_DB_FILESに必要なファイル名をセットする
  */
-void YAP_Db_filename_set (YAPPO_DB_FILES *p)
-{
+void YAP_Db_filename_set(YAPPO_DB_FILES *p) {
   char *tmp;
   char *base = p->base_dir;
   int base_len = strlen(base) + 2;
 
-
   /* URLとIDの対比表 */
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEINDEX_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILEINDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEINDEX_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILEINDEX_NAME);
   p->fileindex = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEINDEX_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, FILEINDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEINDEX_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, FILEINDEX_NAME);
   p->fileindex_tmp = tmp;
 
   /* DOMAINとIDの対比表 */
-  tmp = (char *) YAP_malloc(base_len + strlen(DOMAININDEX_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, DOMAININDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DOMAININDEX_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, DOMAININDEX_NAME);
   p->domainindex = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(DOMAININDEX_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, DOMAININDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DOMAININDEX_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, DOMAININDEX_NAME);
   p->domainindex_tmp = tmp;
 
   /* 削除URL */
-  tmp = (char *) YAP_malloc(base_len + strlen(DELETEFILE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, DELETEFILE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DELETEFILE_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, DELETEFILE_NAME);
   p->deletefile = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(DELETEFILE_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, DELETEFILE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DELETEFILE_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, DELETEFILE_NAME);
   p->deletefile_tmp = tmp;
 
   /* URLメタデータ */
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILEDATA_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILEDATA_NAME);
   p->filedata = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, FILEDATA_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, FILEDATA_NAME);
   p->filedata_tmp = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_SIZE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILEDATA_SIZE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_SIZE_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILEDATA_SIZE_NAME);
   p->filedata_size = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_SIZE_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, FILEDATA_SIZE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_SIZE_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, FILEDATA_SIZE_NAME);
   p->filedata_size_tmp = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_INDEX_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILEDATA_INDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_INDEX_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILEDATA_INDEX_NAME);
   p->filedata_index = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEDATA_INDEX_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, FILEDATA_INDEX_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEDATA_INDEX_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, FILEDATA_INDEX_NAME);
   p->filedata_index_tmp = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_1BYTE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, KEYWORD_1BYTE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(KEYWORD_1BYTE_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, KEYWORD_1BYTE_NAME);
   p->key1byte = tmp;
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_1BYTE_NAME) + 5);
-  sprintf( tmp, "%s/%s_tmp", base, KEYWORD_1BYTE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(KEYWORD_1BYTE_NAME) + 5);
+  sprintf(tmp, "%s/%s_tmp", base, KEYWORD_1BYTE_NAME);
   p->key1byte_tmp = tmp;
 
   /* 登録URL数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(FILENUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILENUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILENUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILENUM_NAME);
   p->filenum = tmp;
 
   /* 登録DOMAIN数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(DOMAINNUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, DOMAINNUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DOMAINNUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, DOMAINNUM_NAME);
   p->domainnum = tmp;
 
   /* 登録キーワード数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORDNUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, KEYWORDNUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(KEYWORDNUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, KEYWORDNUM_NAME);
   p->keywordnum = tmp;
 
   /* 各URLのサイズ */
-  tmp = (char *) YAP_malloc(base_len + strlen(SIZE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, SIZE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(SIZE_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, SIZE_NAME);
   p->size = tmp;
 
   /* 各URLのDOMAIN ID */
-  tmp = (char *) YAP_malloc(base_len + strlen(DOMAINID_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, DOMAINID_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(DOMAINID_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, DOMAINID_NAME);
   p->domainid = tmp;
 
   /* 各URLのスコア */
-  tmp = (char *) YAP_malloc(base_len + strlen(SCORE_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, SCORE_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(SCORE_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, SCORE_NAME);
   p->score = tmp;
 
   /* 各URLのキーワード数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(FILEKEYWORDNUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, FILEKEYWORDNUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(FILEKEYWORDNUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, FILEKEYWORDNUM_NAME);
   p->filekeywordnum = tmp;
 
   /* URLの長さ */
-  tmp = (char *) YAP_malloc(base_len + strlen(URLLEN_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, URLLEN_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(URLLEN_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, URLLEN_NAME);
   p->urllen = tmp;
 
   /* キーワードの総出現数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_TOTALNUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, KEYWORD_TOTALNUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(KEYWORD_TOTALNUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, KEYWORD_TOTALNUM_NAME);
   p->keyword_totalnum = tmp;
 
   /* キーワードの総出現URL数 */
-  tmp = (char *) YAP_malloc(base_len + strlen(KEYWORD_DOCSNUM_NAME) + 1);
-  sprintf( tmp, "%s/%s", base, KEYWORD_DOCSNUM_NAME);
+  tmp = (char *)YAP_malloc(base_len + strlen(KEYWORD_DOCSNUM_NAME) + 1);
+  sprintf(tmp, "%s/%s", base, KEYWORD_DOCSNUM_NAME);
   p->keyword_docsnum = tmp;
 }
 
@@ -208,9 +200,8 @@ void YAP_Db_filename_set (YAPPO_DB_FILES *p)
  *baseファイルが存在していたら、destファイルにコピーする
  *destが存在していたらなにもしない
  */
-void _tmp_copy (char *base, char *dest)
-{
- 
+void _tmp_copy(char *base, char *dest) {
+
   printf("%s/%s\n", base, dest);
   if (YAP_is_reg(dest)) {
     return;
@@ -221,7 +212,7 @@ void _tmp_copy (char *base, char *dest)
       int s;
       wait(&s);
     } else {
-      execl("/bin/cp", "/bin/cp", base, dest, (char *) 0);
+      execl("/bin/cp", "/bin/cp", base, dest, (char *)0);
       exit(0);
     }
   }
@@ -230,8 +221,7 @@ void _tmp_copy (char *base, char *dest)
 /*
  *常時開いておくDBを開く
  */
-void YAP_Db_base_open (YAPPO_DB_FILES *p)
-{
+void YAP_Db_base_open(YAPPO_DB_FILES *p) {
   u_int32_t mode = DB_RDONLY;
   char *fileindex, *domainindex, *deletefile, *key1byte;
   char *filedata, *filedata_size, *filedata_index;
@@ -270,17 +260,14 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
   /* URLとIDの対比表 */
   db_create(&(p->fileindex_db), NULL, 0);
-  p->fileindex_db->open(p->fileindex_db, NULL, fileindex, NULL,
-                    DB_BTREE, mode, 0);
+  p->fileindex_db->open(p->fileindex_db, NULL, fileindex, NULL, DB_BTREE, mode, 0);
 
   /* DOMAINとIDの対比表 */
   db_create(&(p->domainindex_db), NULL, 0);
-  p->domainindex_db->open(p->domainindex_db, NULL, domainindex, NULL,
-                    DB_BTREE, mode, 0);
+  p->domainindex_db->open(p->domainindex_db, NULL, domainindex, NULL, DB_BTREE, mode, 0);
 
   /* 削除URL */
   p->deletefile_file = yap_open_managed_file(deletefile, p->mode, -1);
-
 
   /* URLメタデータ */
   p->filedata_file = yap_open_managed_file(filedata, p->mode, -1);
@@ -289,10 +276,7 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
   /* 辞書ファイル 1byte */
   db_create(&(p->key1byte_db), NULL, 0);
-  p->key1byte_db->open(p->key1byte_db, NULL, key1byte, NULL,
-                    DB_BTREE, mode, 0);
-
-
+  p->key1byte_db->open(p->key1byte_db, NULL, key1byte, NULL, DB_BTREE, mode, 0);
 
   /* 登録URL数 */
   p->total_filenum = yap_read_int_or_zero(p->filenum);
@@ -303,7 +287,6 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
 
   printf("url=%d:key=%d\n", p->total_filenum, p->total_keywordnum);
 
-
   /* 各URLのサイズ */
   p->size_file = yap_open_managed_file(p->size, p->mode, sizeof(int) * p->total_filenum);
   /* 各URLのDOMAIN ID */
@@ -311,7 +294,8 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   /* 各URLのスコア */
   p->score_file = yap_open_managed_file(p->score, p->mode, sizeof(double) * p->total_filenum);
   /* 各URLのキーワード数 */
-  p->filekeywordnum_file = yap_open_managed_file(p->filekeywordnum, p->mode, sizeof(int) * p->total_filenum);
+  p->filekeywordnum_file =
+    yap_open_managed_file(p->filekeywordnum, p->mode, sizeof(int) * p->total_filenum);
   /* URLの長さ */
   p->urllen_file = yap_open_managed_file(p->urllen, p->mode, sizeof(int) * p->total_filenum);
   /* キーワードの総出現数 */
@@ -320,12 +304,10 @@ void YAP_Db_base_open (YAPPO_DB_FILES *p)
   p->keyword_docsnum_file = yap_open_managed_file(p->keyword_docsnum, p->mode, -1);
 }
 
-
 /*
  *常時開いておくDBを閉じる
  */
-void YAP_Db_base_close (YAPPO_DB_FILES *p)
-{
+void YAP_Db_base_close(YAPPO_DB_FILES *p) {
 
   /* URLとIDの対比表 */
   p->fileindex_db->close(p->fileindex_db, 0);
@@ -383,7 +365,7 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
     char *dir_path;
 
     /* tmpファイルを元にもどす */
-    dir_path = (char *) YAP_malloc(strlen(p->base_dir) + 1);
+    dir_path = (char *)YAP_malloc(strlen(p->base_dir) + 1);
     sprintf(dir_path, "%s", p->base_dir);
     pos_dir = opendir(dir_path);
     while ((direntp = readdir(pos_dir)) != NULL) {
@@ -394,26 +376,27 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
       len = strlen(name);
 
       printf("name: %s\n", name);
-      if (name[len-4] == '_' && name[len-3] == 't' && name[len-2] == 'm' && name[len-1] == 'p') {
-	char *new_name = (char *) YAP_malloc(len + 1);
-	strcpy(new_name, name);
-	new_name[len-4] = 0;
-	printf("/bin/mv %s %s\n", name, new_name);
-	if (fork()) {
-	  int s;
-	  wait(&s);
-	} else {
-	  execl("/bin/mv", "/bin/mv", name, new_name, (char *) 0);
-	  exit(0);
-	}
-	free(new_name);
+      if (name[len - 4] == '_' && name[len - 3] == 't' && name[len - 2] == 'm' &&
+          name[len - 1] == 'p') {
+        char *new_name = (char *)YAP_malloc(len + 1);
+        strcpy(new_name, name);
+        new_name[len - 4] = 0;
+        printf("/bin/mv %s %s\n", name, new_name);
+        if (fork()) {
+          int s;
+          wait(&s);
+        } else {
+          execl("/bin/mv", "/bin/mv", name, new_name, (char *)0);
+          exit(0);
+        }
+        free(new_name);
       }
     }
     closedir(pos_dir);
     free(dir_path);
 
     /* 位置情報ファイルも元にもどす */
-    dir_path = (char *) YAP_malloc(strlen(p->base_dir) + 5);
+    dir_path = (char *)YAP_malloc(strlen(p->base_dir) + 5);
     sprintf(dir_path, "%s/pos", p->base_dir);
     pos_dir = opendir(dir_path);
     while ((direntp = readdir(pos_dir)) != NULL) {
@@ -424,20 +407,21 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
       len = strlen(name);
 
       printf("name: %s\n", name);
-      if (name[len-4] == '_' && name[len-3] == 't' && name[len-2] == 'm' && name[len-1] == 'p') {
-	char *new_name = (char *) YAP_malloc(len + 1);
-	strcpy(new_name, name);
-	new_name[len-4] = 0;
-	new_name = (char *) YAP_realloc(new_name, strlen(new_name) + 1);
-	printf("/bin/mv %s %s\n", name, new_name);
-	if (fork()) {
-	  int s;
-	  wait(&s);
-	} else {
-	  execl("/bin/mv", "/bin/mv", name, new_name, (char *) 0);
-	  exit(0);
-	}
-	free(new_name);
+      if (name[len - 4] == '_' && name[len - 3] == 't' && name[len - 2] == 'm' &&
+          name[len - 1] == 'p') {
+        char *new_name = (char *)YAP_malloc(len + 1);
+        strcpy(new_name, name);
+        new_name[len - 4] = 0;
+        new_name = (char *)YAP_realloc(new_name, strlen(new_name) + 1);
+        printf("/bin/mv %s %s\n", name, new_name);
+        if (fork()) {
+          int s;
+          wait(&s);
+        } else {
+          execl("/bin/mv", "/bin/mv", name, new_name, (char *)0);
+          exit(0);
+        }
+        free(new_name);
       }
     }
     closedir(pos_dir);
@@ -501,17 +485,15 @@ void YAP_Db_base_close (YAPPO_DB_FILES *p)
   p->keyword_docsnum = NULL;
 }
 
-
 /*
  *linklistファイルを開く
  */
-void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
-{
+void YAP_Db_linklist_open(YAPPO_DB_FILES *p) {
   char *base = p->base_dir;
   int base_len = strlen(base);
   int ret;
 
-  p->linklist = (char *) YAP_malloc(base_len + strlen(LINKLIST_NAME) + 2);
+  p->linklist = (char *)YAP_malloc(base_len + strlen(LINKLIST_NAME) + 2);
   sprintf(p->linklist, "%s/%s", base, LINKLIST_NAME);
   if (!YAP_is_reg(p->linklist)) {
     free(p->linklist);
@@ -525,7 +507,7 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
 
-  p->linklist_size = (char *) YAP_malloc(base_len + strlen(LINKLIST_SIZE_NAME) + 2);
+  p->linklist_size = (char *)YAP_malloc(base_len + strlen(LINKLIST_SIZE_NAME) + 2);
   sprintf(p->linklist_size, "%s/%s", base, LINKLIST_SIZE_NAME);
   if (!YAP_is_reg(p->linklist_size)) {
     free(p->linklist);
@@ -546,7 +528,7 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
     return;
   }
 
-  p->linklist_index = (char *) YAP_malloc(base_len + strlen(LINKLIST_INDEX_NAME) + 2);
+  p->linklist_index = (char *)YAP_malloc(base_len + strlen(LINKLIST_INDEX_NAME) + 2);
   sprintf(p->linklist_index, "%s/%s", base, LINKLIST_INDEX_NAME);
   if (!YAP_is_reg(p->linklist_index)) {
     free(p->linklist);
@@ -582,30 +564,28 @@ void YAP_Db_linklist_open (YAPPO_DB_FILES *p)
 /*
  *linklistファイルを閉じる
  */
-void YAP_Db_linklist_close (YAPPO_DB_FILES *p)
-{
+void YAP_Db_linklist_close(YAPPO_DB_FILES *p) {
   if (p->linklist != NULL) {
     fclose(p->linklist_file);
     free(p->linklist);
     p->linklist = NULL;
-    
+
     fclose(p->linklist_size_file);
     free(p->linklist_size);
     p->linklist_size = NULL;
-    
+
     fclose(p->linklist_index_file);
     free(p->linklist_index);
     p->linklist_index = NULL;
-    
+
     p->linklist_num = 0;
   }
 }
-  
+
 /*
  *位置情報DBを開く
  */
-int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
-{
+int YAP_Db_pos_open(YAPPO_DB_FILES *p, int pos_id) {
   char *tmp;
   char *base = p->base_dir;
   int base_len = strlen(base) + 2;
@@ -613,8 +593,8 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
   int ret;
 
   /* ファイル名作成 */
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_NAME) + 1);
-  sprintf( tmp, "%s/"POSTINGS_NAME, base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_NAME) + 1);
+  sprintf(tmp, "%s/" POSTINGS_NAME, base, pos_id);
 
   if (p->mode == YAPPO_DB_READ) {
     /*
@@ -630,26 +610,25 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
 
   p->pos = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_NAME) + 5);
-  sprintf( tmp, "%s/"POSTINGS_NAME"_tmp", base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_NAME) + 5);
+  sprintf(tmp, "%s/" POSTINGS_NAME "_tmp", base, pos_id);
   p->pos_tmp = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_SIZE_NAME) + 1);
-  sprintf( tmp, "%s/"POSTINGS_SIZE_NAME, base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_SIZE_NAME) + 1);
+  sprintf(tmp, "%s/" POSTINGS_SIZE_NAME, base, pos_id);
   p->pos_size = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_SIZE_NAME) + 5);
-  sprintf( tmp, "%s/"POSTINGS_SIZE_NAME"_tmp", base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_SIZE_NAME) + 5);
+  sprintf(tmp, "%s/" POSTINGS_SIZE_NAME "_tmp", base, pos_id);
   p->pos_size_tmp = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_INDEX_NAME) + 1);
-  sprintf( tmp, "%s/"POSTINGS_INDEX_NAME, base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_INDEX_NAME) + 1);
+  sprintf(tmp, "%s/" POSTINGS_INDEX_NAME, base, pos_id);
   p->pos_index = tmp;
 
-  tmp = (char *) YAP_malloc(base_len + strlen(POSTINGS_INDEX_NAME) + 5);
-  sprintf( tmp, "%s/"POSTINGS_INDEX_NAME"_tmp", base, pos_id);
+  tmp = (char *)YAP_malloc(base_len + strlen(POSTINGS_INDEX_NAME) + 5);
+  sprintf(tmp, "%s/" POSTINGS_INDEX_NAME "_tmp", base, pos_id);
   p->pos_index_tmp = tmp;
-
 
   /*
    *DBを開く
@@ -673,7 +652,6 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
     pos_size = p->pos_size;
     pos_index = p->pos_index;
   }
-
 
   if (p->mode == YAPPO_DB_WRITE) {
     /* 書き込み時 */
@@ -705,7 +683,7 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
       }
       fclose(p->pos_index_file);
     }
-    
+
     p->pos_file = fopen(pos, "r+");
     p->pos_size_file = fopen(pos_size, "r+");
     p->pos_index_file = fopen(pos_index, "r+");
@@ -742,9 +720,7 @@ int YAP_Db_pos_open (YAPPO_DB_FILES *p, int pos_id)
 /*
  *位置情報DBを閉じる
  */
-void YAP_Db_pos_close (YAPPO_DB_FILES *p)
-{
-
+void YAP_Db_pos_close(YAPPO_DB_FILES *p) {
 
   /* 各種情報を書きこむ */
   if (p->mode == YAPPO_DB_WRITE) {
@@ -794,8 +770,7 @@ void YAP_Db_pos_close (YAPPO_DB_FILES *p)
 /*
  *キャッシュの初期化
  */
-void YAP_Db_cache_init (YAPPO_CACHE *p) 
-{
+void YAP_Db_cache_init(YAPPO_CACHE *p) {
   memset(p, 0, sizeof(YAPPO_CACHE));
 
   pthread_mutex_init(&(p->score_mutex), NULL);
@@ -827,8 +802,7 @@ void YAP_Db_cache_init (YAPPO_CACHE *p)
 /*
  *キャッシュの破棄
  */
-void YAP_Db_cache_destroy (YAPPO_CACHE *p) 
-{
+void YAP_Db_cache_destroy(YAPPO_CACHE *p) {
   pthread_mutex_destroy(&(p->score_mutex));
   pthread_mutex_destroy(&(p->size_mutex));
   pthread_mutex_destroy(&(p->urllen_mutex));
@@ -876,11 +850,9 @@ void YAP_Db_cache_destroy (YAPPO_CACHE *p)
 /*
  *必要ならば各ファイルをメモリ上にキャッシュする
  */
-void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) 
-{
+void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) {
 
-  if (ydfp->total_filenum != p->total_filenum ||
-      ydfp->total_domainnum != p->total_domainnum ||
+  if (ydfp->total_filenum != p->total_filenum || ydfp->total_domainnum != p->total_domainnum ||
       ydfp->total_keywordnum != p->total_keywordnum) {
     /*
      *キャッシュ上の数値と実際の数値が食い違っている
@@ -891,7 +863,7 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* スコアファイルキャッシュ */
     pthread_mutex_lock(&(p->score_mutex));
-    p->score = (double *) YAP_realloc(p->score, sizeof(double) * ydfp->total_filenum);
+    p->score = (double *)YAP_realloc(p->score, sizeof(double) * ydfp->total_filenum);
     if (YAP_fseek_set(ydfp->score_file, 0L) != 0 ||
         YAP_fread_exact(ydfp->score_file, p->score, sizeof(double), ydfp->total_filenum) != 0) {
       p->score_num = 0;
@@ -902,7 +874,7 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* ファイルサイズキャッシュ */
     pthread_mutex_lock(&(p->size_mutex));
-    p->size = (int *) YAP_realloc(p->size, sizeof(int) * ydfp->total_filenum);
+    p->size = (int *)YAP_realloc(p->size, sizeof(int) * ydfp->total_filenum);
     if (YAP_fseek_set(ydfp->size_file, 0L) != 0 ||
         YAP_fread_exact(ydfp->size_file, p->size, sizeof(int), ydfp->total_filenum) != 0) {
       p->size_num = 0;
@@ -913,7 +885,7 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* URL文字数ファイルキャッシュ */
     pthread_mutex_lock(&(p->urllen_mutex));
-    p->urllen = (int *) YAP_realloc(p->urllen, sizeof(int) * ydfp->total_filenum);
+    p->urllen = (int *)YAP_realloc(p->urllen, sizeof(int) * ydfp->total_filenum);
     if (YAP_fseek_set(ydfp->urllen_file, 0L) != 0 ||
         YAP_fread_exact(ydfp->urllen_file, p->urllen, sizeof(int), ydfp->total_filenum) != 0) {
       p->urllen_num = 0;
@@ -922,22 +894,22 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
     }
     pthread_mutex_unlock(&(p->urllen_mutex));
 
-
     /* 各URLのキーワード数ファイルキャッシュ */
     pthread_mutex_lock(&(p->filekeywordnum_mutex));
-    p->filekeywordnum = (unsigned int *) YAP_realloc(p->filekeywordnum, sizeof(int) * ydfp->total_filenum);
+    p->filekeywordnum =
+      (unsigned int *)YAP_realloc(p->filekeywordnum, sizeof(int) * ydfp->total_filenum);
     if (YAP_fseek_set(ydfp->filekeywordnum_file, 0L) != 0 ||
-        YAP_fread_exact(ydfp->filekeywordnum_file, p->filekeywordnum, sizeof(int), ydfp->total_filenum) != 0) {
+        YAP_fread_exact(ydfp->filekeywordnum_file, p->filekeywordnum, sizeof(int),
+                        ydfp->total_filenum) != 0) {
       p->filekeywordnum_num = 0;
     } else {
       p->filekeywordnum_num = ydfp->total_filenum;
     }
     pthread_mutex_unlock(&(p->filekeywordnum_mutex));
-    
 
     /* domain idファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
-    p->domainid = (int *) YAP_realloc(p->domainid, sizeof(int) * ydfp->total_filenum);
+    p->domainid = (int *)YAP_realloc(p->domainid, sizeof(int) * ydfp->total_filenum);
     if (YAP_fseek_set(ydfp->domainid_file, 0L) != 0 ||
         YAP_fread_exact(ydfp->domainid_file, p->domainid, sizeof(int), ydfp->total_filenum) != 0) {
       p->domainid_num = 0;
@@ -948,13 +920,14 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
 
     /* 削除URLファイルキャッシュ */
     pthread_mutex_lock(&(p->domainid_mutex));
-    p->deletefile = (unsigned char *) YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
+    p->deletefile = (unsigned char *)YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
     memset(p->deletefile, 0, (ydfp->total_filenum / 8) + 1);
     if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0) {
       p->deletefile_num = 0;
     } else {
-      size_t got = YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1);
-      p->deletefile_num = (int) got;
+      size_t got =
+        YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1);
+      p->deletefile_num = (int)got;
     }
     pthread_mutex_unlock(&(p->domainid_mutex));
 
@@ -964,5 +937,4 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
     p->total_domainnum = ydfp->total_domainnum;
     p->total_keywordnum = ydfp->total_keywordnum;
   }
-
 }

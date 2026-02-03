@@ -31,23 +31,21 @@
 #define DEFAULT_MAX_BODY_SIZE 102400
 
 /*ファイル毎のキーワードインデックス情報を保存する構造体*/
-typedef struct{
+typedef struct {
   FILEDATA filedata;
-  NGRAM_LIST * ngram;
+  NGRAM_LIST *ngram;
   int fileindex;
-}INDEX_STACK;
-
+} INDEX_STACK;
 
 /*minibtreeのdataメンバに保存するキーワードインデックスの一次データ用の構造体*/
-typedef struct{ 
+typedef struct {
   int keyword_total_num;
   int keyword_docs_num;
   int data_len;
-  unsigned char *data;/*エンコードされた出現位置情報*/
-}BTREE_DATA;
+  unsigned char *data; /*エンコードされた出現位置情報*/
+} BTREE_DATA;
 
-static int YAP_extract_domain_range(const char *url, const char **start_out, int *len_out)
-{
+static int YAP_extract_domain_range(const char *url, const char **start_out, int *len_out) {
   const char *start;
   const char *end;
 
@@ -66,17 +64,16 @@ static int YAP_extract_domain_range(const char *url, const char **start_out, int
   end = strchr(start, '/');
   if (end == NULL) {
     *start_out = start;
-    *len_out = (int) strlen(start);
+    *len_out = (int)strlen(start);
     return (*len_out > 0) ? 0 : -1;
   }
 
   *start_out = start;
-  *len_out = (int) (end - start);
+  *len_out = (int)(end - start);
   return (*len_out > 0) ? 0 : -1;
 }
 
-static int YAP_parse_int_option(const char *value, int *out)
-{
+static int YAP_parse_int_option(const char *value, int *out) {
   char *endptr;
   long parsed;
 
@@ -90,12 +87,12 @@ static int YAP_parse_int_option(const char *value, int *out)
     return -1;
   }
 
-  *out = (int) parsed;
+  *out = (int)parsed;
   return 0;
 }
 
-static int YAP_parse_index_line(char *line, char **url, char **command, char **title, int *body_size, char **body)
-{
+static int YAP_parse_index_line(char *line, char **url, char **command, char **title,
+                                int *body_size, char **body) {
   char *fields[5];
   char *tab;
   int i;
@@ -131,8 +128,8 @@ static int YAP_parse_index_line(char *line, char **url, char **command, char **t
   return 0;
 }
 
-static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int *keyword_total_num, int *keyword_docs_num)
-{
+static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
+                               int *keyword_total_num, int *keyword_docs_num) {
   if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
       YAP_fread_exact(ydfp->keyword_totalnum_file, keyword_total_num, sizeof(int), 1) != 0 ||
       YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
@@ -142,8 +139,8 @@ static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, i
   return 0;
 }
 
-static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int keyword_total_num, int keyword_docs_num)
-{
+static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
+                               int keyword_total_num, int keyword_docs_num) {
   if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
       YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
       YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
@@ -153,12 +150,10 @@ static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, i
   return 0;
 }
 
-
 /*
  *URL情報を登録する
  */
-int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp)
-{
+int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp) {
   int i;
   int len, seek;
   double score = 1.0;
@@ -168,7 +163,7 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
       /*削除済なのでキーワードの索引は行なわない*/
       continue;
     }
-    YAP_Index_Filedata_put(ydfp, index_stack[i].fileindex, &index_stack[i].filedata);      
+    YAP_Index_Filedata_put(ydfp, index_stack[i].fileindex, &index_stack[i].filedata);
 
     seek = sizeof(int) * index_stack[i].fileindex;
 
@@ -178,7 +173,8 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
     }
 
     if (YAP_fseek_set(ydfp->domainid_file, seek) != 0 ||
-        YAP_fwrite_exact(ydfp->domainid_file, &(index_stack[i].filedata.domainid), sizeof(int), 1) != 0) {
+        YAP_fwrite_exact(ydfp->domainid_file, &(index_stack[i].filedata.domainid), sizeof(int),
+                         1) != 0) {
       return -1;
     }
 
@@ -188,7 +184,8 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
     }
 
     if (YAP_fseek_set(ydfp->filekeywordnum_file, seek) != 0 ||
-        YAP_fwrite_exact(ydfp->filekeywordnum_file, &(index_stack[i].filedata.keyword_num), sizeof(int), 1) != 0) {
+        YAP_fwrite_exact(ydfp->filekeywordnum_file, &(index_stack[i].filedata.keyword_num),
+                         sizeof(int), 1) != 0) {
       return -1;
     }
 
@@ -204,14 +201,12 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
   return 0;
 }
 
-
 /*
  *キーワードを辞書に登録する
  *主にbtreeからDBに登録し、btreeのメモリを解放する
  *再帰的に処理される
  */
-int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
-{
+int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp) {
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
   unsigned char *postings_buf;
@@ -226,72 +221,74 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
     /*キーワードの登録開始*/
     keyword_id = 0;
 
-    
     /*辞書に登録されているか調べる*/
     if (YAP_Index_get_keyword(ydfp, btree_this->key, &keyword_id)) {
       /*登録されていない
-	キーワードの新規登録
+  キーワードの新規登録
       */
-        ydfp->total_keywordnum++;
-	keyword_id = ydfp->total_keywordnum;
+      ydfp->total_keywordnum++;
+      keyword_id = ydfp->total_keywordnum;
 
-	keyword_total_num = ((BTREE_DATA *) btree_this->data)->keyword_total_num;
-	keyword_docs_num = ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
+      keyword_total_num = ((BTREE_DATA *)btree_this->data)->keyword_total_num;
+      keyword_docs_num = ((BTREE_DATA *)btree_this->data)->keyword_docs_num;
 
-	if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
-	    YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-	    YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
-	    YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
-	  return -1;
-	}
-
-	YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
-
-	/*出現リストの新規登録*/
-	YAP_Index_Pos_put(ydfp, keyword_id, ((BTREE_DATA *) btree_this->data)->data, ((BTREE_DATA *) btree_this->data)->data_len);
-
-	/*出現位置ファイルの登録数を加算*/
-	ydfp->pos_num++;
-      } else {
-	/*登録されていた*/
-	int ret;
-	int postings_buf_len;
-
-	/*数値の加算*/
-		if (YAP_KeywordStat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num) != 0) {
-		  return -1;
-		}
-
-	keyword_total_num += ((BTREE_DATA *) btree_this->data)->keyword_total_num;
-	keyword_docs_num += ((BTREE_DATA *) btree_this->data)->keyword_docs_num;
-
-		if (YAP_KeywordStat_put(ydfp, keyword_id, keyword_total_num, keyword_docs_num) != 0) {
-		  return -1;
-		}
-
-	YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
-
-	/*出現リストを取得*/
-	ret = YAP_Index_Pos_get(ydfp, keyword_id, &postings_buf, &postings_buf_len);
-
-	if (ret) {
-	  /*出現リストの新規登録*/
-	  YAP_Index_Pos_put(ydfp,  keyword_id, ((BTREE_DATA *) btree_this->data)->data, ((BTREE_DATA *) btree_this->data)->data_len);
-
-	  /*出現位置ファイルの登録数を加算*/
-	  ydfp->pos_num++;
-	} else {
-	  /*出現リストの末尾に追加*/
-	  postings_buf = (unsigned char *) YAP_realloc(postings_buf,
-						       ((BTREE_DATA *) btree_this->data)->data_len + postings_buf_len);
-	  memcpy(postings_buf + postings_buf_len, ((BTREE_DATA *) btree_this->data)->data, ((BTREE_DATA *) btree_this->data)->data_len);
-	  YAP_Index_Pos_put(ydfp, keyword_id, postings_buf, ((BTREE_DATA *) btree_this->data)->data_len + postings_buf_len);
-	  
-	  free(postings_buf);
-	  postings_buf = NULL;
-	}
+      if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+          YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
+          YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+          YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+        return -1;
       }
 
+      YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
+
+      /*出現リストの新規登録*/
+      YAP_Index_Pos_put(ydfp, keyword_id, ((BTREE_DATA *)btree_this->data)->data,
+                        ((BTREE_DATA *)btree_this->data)->data_len);
+
+      /*出現位置ファイルの登録数を加算*/
+      ydfp->pos_num++;
+    } else {
+      /*登録されていた*/
+      int ret;
+      int postings_buf_len;
+
+      /*数値の加算*/
+      if (YAP_KeywordStat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num) != 0) {
+        return -1;
+      }
+
+      keyword_total_num += ((BTREE_DATA *)btree_this->data)->keyword_total_num;
+      keyword_docs_num += ((BTREE_DATA *)btree_this->data)->keyword_docs_num;
+
+      if (YAP_KeywordStat_put(ydfp, keyword_id, keyword_total_num, keyword_docs_num) != 0) {
+        return -1;
+      }
+
+      YAP_Index_put_keyword(ydfp, btree_this->key, &keyword_id);
+
+      /*出現リストを取得*/
+      ret = YAP_Index_Pos_get(ydfp, keyword_id, &postings_buf, &postings_buf_len);
+
+      if (ret) {
+        /*出現リストの新規登録*/
+        YAP_Index_Pos_put(ydfp, keyword_id, ((BTREE_DATA *)btree_this->data)->data,
+                          ((BTREE_DATA *)btree_this->data)->data_len);
+
+        /*出現位置ファイルの登録数を加算*/
+        ydfp->pos_num++;
+      } else {
+        /*出現リストの末尾に追加*/
+        postings_buf = (unsigned char *)YAP_realloc(
+          postings_buf, ((BTREE_DATA *)btree_this->data)->data_len + postings_buf_len);
+        memcpy(postings_buf + postings_buf_len, ((BTREE_DATA *)btree_this->data)->data,
+               ((BTREE_DATA *)btree_this->data)->data_len);
+        YAP_Index_Pos_put(ydfp, keyword_id, postings_buf,
+                          ((BTREE_DATA *)btree_this->data)->data_len + postings_buf_len);
+
+        free(postings_buf);
+        postings_buf = NULL;
+      }
+    }
   }
 
   add_keyword_dict_set(btree_this->left, ydfp);
@@ -301,9 +298,9 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
    *メモリクリア
    */
   if (btree_this->data != NULL) {
-    if (((BTREE_DATA *) btree_this->data)->data != NULL) {
-      free(((BTREE_DATA *) btree_this->data)->data);
-      ((BTREE_DATA *) btree_this->data)->data = NULL;
+    if (((BTREE_DATA *)btree_this->data)->data != NULL) {
+      free(((BTREE_DATA *)btree_this->data)->data);
+      ((BTREE_DATA *)btree_this->data)->data = NULL;
     }
 
     free(btree_this->data);
@@ -333,8 +330,7 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp)
  *キーワードを辞書に登録する
  *主にbtreeにINDEX_STACKを整形
  */
-int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp)
-{
+int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp) {
   int i, ii;
   int *index_list, index_last;
   NGRAM_LIST *this, *next;
@@ -342,7 +338,6 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
   MINIBTREE *btree_root, *btree_add, *btree_result;
   int btree_id = 0;
   int encode_8bit_len;
-
 
   ydfp->pos_fileindex_start_w = ydfp->pos_fileindex_end_w = 0;
 
@@ -366,82 +361,84 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
       ydfp->pos_fileindex_end_w = index_stack[i].fileindex;
     }
 
-    next= index_stack[i].ngram->next;
+    next = index_stack[i].ngram->next;
     /*printf("insert keyword: %d\n", index_stack[i].fileindex);*/
     while (1) {
 
-      if ( next == NULL) {
-	break;
+      if (next == NULL) {
+        break;
       }
       this = next;
       next = this->next;
 
       /*出現位置リストの整形 出現位置リストを差分表記にする*/
-      index_list = (int *) YAP_malloc(sizeof(int) * (this->index_count + 2));
+      index_list = (int *)YAP_malloc(sizeof(int) * (this->index_count + 2));
       index_last = 0;
       for (ii = 0; ii < this->index_count; ii++) {
-	/*index_list[ii+2] = this->index[ii] - index_last + 1;//なぜ+1してしまったのかが分からない*/
+        /*index_list[ii+2] = this->index[ii] - index_last + 1;//なぜ+1してしまったのかが分からない*/
 
-	index_list[ii+2] = this->index[ii] - index_last;
-	index_last = this->index[ii];
+        index_list[ii + 2] = this->index[ii] - index_last;
+        index_last = this->index[ii];
       }
-      
+
       /*文書idと文書中の単語出現数の記録*/
       index_list[0] = index_stack[i].fileindex;
       index_list[1] = this->index_count;
 
       /*8bitエンコード*/
-      encode_8bit = (unsigned char *) YAP_Index_8bit_encode(index_list, this->index_count + 2, &encode_8bit_len);
-
+      encode_8bit =
+        (unsigned char *)YAP_Index_8bit_encode(index_list, this->index_count + 2, &encode_8bit_len);
 
       /*
        *キーワードインデックスのbtreeへの登録
        */
-      btree_result = YAP_Minibtree_search( btree_root, this->keyword);
+      btree_result = YAP_Minibtree_search(btree_root, this->keyword);
       if (btree_result == NULL) {
-	/*登録されていない
-	//ノードを新規作成
-	*/
-	btree_id++;
-	btree_add = NULL;
-	btree_add = YAP_Minibtree_init();
-	btree_add->id = btree_id;
+        /*登録されていない
+  //ノードを新規作成
+  */
+        btree_id++;
+        btree_add = NULL;
+        btree_add = YAP_Minibtree_init();
+        btree_add->id = btree_id;
         {
-          size_t key_len = strlen((const char *) this->keyword);
-	  btree_add->key = (unsigned char *) YAP_malloc(key_len + 1);
-	  memcpy(btree_add->key, this->keyword, key_len + 1);
+          size_t key_len = strlen((const char *)this->keyword);
+          btree_add->key = (unsigned char *)YAP_malloc(key_len + 1);
+          memcpy(btree_add->key, this->keyword, key_len + 1);
         }
 
-	/*データの登録*/
-	btree_add->data = (BTREE_DATA *) YAP_malloc(sizeof(BTREE_DATA));
-	((BTREE_DATA *) btree_add->data)->keyword_total_num = this->index_count;
-	((BTREE_DATA *) btree_add->data)->keyword_docs_num = 1;
+        /*データの登録*/
+        btree_add->data = (BTREE_DATA *)YAP_malloc(sizeof(BTREE_DATA));
+        ((BTREE_DATA *)btree_add->data)->keyword_total_num = this->index_count;
+        ((BTREE_DATA *)btree_add->data)->keyword_docs_num = 1;
 
-	((BTREE_DATA *) btree_add->data)->data_len = encode_8bit_len;
+        ((BTREE_DATA *)btree_add->data)->data_len = encode_8bit_len;
 
-	((BTREE_DATA *) btree_add->data)->data = (unsigned char *) YAP_malloc(((BTREE_DATA *) btree_add->data)->data_len + 1);
+        ((BTREE_DATA *)btree_add->data)->data =
+          (unsigned char *)YAP_malloc(((BTREE_DATA *)btree_add->data)->data_len + 1);
 
-	memcpy(((BTREE_DATA *) btree_add->data)->data, encode_8bit, encode_8bit_len);
+        memcpy(((BTREE_DATA *)btree_add->data)->data, encode_8bit, encode_8bit_len);
 
-	/*ノードに登録*/
-	YAP_Minibtree_add( btree_root, btree_add);
+        /*ノードに登録*/
+        YAP_Minibtree_add(btree_root, btree_add);
 
       } else {
-	/*登録されていた
-	//数値の加算
-	*/
-	((BTREE_DATA *) btree_result->data)->keyword_total_num += this->index_count;
-	((BTREE_DATA *) btree_result->data)->keyword_docs_num++;
+        /*登録されていた
+  //数値の加算
+  */
+        ((BTREE_DATA *)btree_result->data)->keyword_total_num += this->index_count;
+        ((BTREE_DATA *)btree_result->data)->keyword_docs_num++;
 
-	/*出現リストの末尾に追加*/
-	((BTREE_DATA *) btree_result->data)->data =
-	  (unsigned char *) YAP_realloc(((BTREE_DATA *) btree_result->data)->data,
-					((BTREE_DATA *) btree_result->data)->data_len + encode_8bit_len + 1);
+        /*出現リストの末尾に追加*/
+        ((BTREE_DATA *)btree_result->data)->data = (unsigned char *)YAP_realloc(
+          ((BTREE_DATA *)btree_result->data)->data,
+          ((BTREE_DATA *)btree_result->data)->data_len + encode_8bit_len + 1);
 
-	memcpy(((BTREE_DATA *) btree_result->data)->data + ((BTREE_DATA *) btree_result->data)->data_len
-	       , encode_8bit, encode_8bit_len);
+        memcpy(((BTREE_DATA *)btree_result->data)->data +
+                 ((BTREE_DATA *)btree_result->data)->data_len,
+               encode_8bit, encode_8bit_len);
 
-	((BTREE_DATA *) btree_result->data)->data_len += encode_8bit_len;
+        ((BTREE_DATA *)btree_result->data)->data_len += encode_8bit_len;
       }
 
       free(encode_8bit);
@@ -480,36 +477,35 @@ int add_keyword_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *
   return 0;
 }
 
-
 /*
  *入力されたファイルをgz展開してインデックスを行なう
  */
-int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, int min_body_size, int max_body_size)
-{
+int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, int min_body_size,
+                 int max_body_size) {
   char *gz_in, *line_buf;
   gzFile gz_file;
   INDEX_STACK index_stack[MAX_STACK_SIZE];
   FILEDATA old_filedata;
-  int stack_count = 0;/*メモリに確保されている処理済のurl数*/
+  int stack_count = 0; /*メモリに確保されている処理済のurl数*/
   int input_line_count = 0;
   int malformed_line_count = 0;
 
-  gz_in = (char *) YAP_malloc(GZ_BUF_SIZE);
-  line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+  gz_in = (char *)YAP_malloc(GZ_BUF_SIZE);
+  line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
   line_buf[0] = '\0';
 
   /*gzファイルを開く*/
-  gz_file = gzopen(gz_filepath, "r"); 
+  gz_file = gzopen(gz_filepath, "r");
   if (gz_file == NULL) {
     free(gz_in);
     free(line_buf);
     return -1;
   }
-  while (! gzeof(gz_file)) { 
-    memset(gz_in, 0, GZ_BUF_SIZE);/*ゼロクリア*/
+  while (!gzeof(gz_file)) {
+    memset(gz_in, 0, GZ_BUF_SIZE); /*ゼロクリア*/
 
     /*読みこみ*/
-    if ( gzgets(gz_file, gz_in, GZ_BUF_SIZE) == Z_NULL) {
+    if (gzgets(gz_file, gz_in, GZ_BUF_SIZE) == Z_NULL) {
       /*エラー*/
       break;
     }
@@ -517,12 +513,12 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
     if (line_buf[0] != '\0') {
       /*追記*/
       int new_buf_len = strlen(line_buf) + strlen(gz_in) + 1;
-      line_buf = (char *) YAP_realloc(line_buf, new_buf_len);
+      line_buf = (char *)YAP_realloc(line_buf, new_buf_len);
     }
 
-    line_buf = (char *) strcat(line_buf, gz_in);
+    line_buf = (char *)strcat(line_buf, gz_in);
 
-    if ( gz_in[GZ_BUF_SIZE-2] == '\n' || strlen(gz_in) < GZ_BUF_SIZE - 1) {
+    if (gz_in[GZ_BUF_SIZE - 2] == '\n' || strlen(gz_in) < GZ_BUF_SIZE - 1) {
       /*一行分取得できたので、ファイル毎の処理を行なう*/
       char *url, *command, *title, *body, *body_tmp;
       int line_buf_len = strlen(line_buf);
@@ -532,59 +528,57 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
       input_line_count++;
       if (line_buf_len == 0) {
-	free(line_buf);
-	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
-	continue;
+        free(line_buf);
+        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        continue;
       }
       if (line_buf[line_buf_len - 1] == '\n') {
-	line_buf[--line_buf_len] = '\0';
+        line_buf[--line_buf_len] = '\0';
       }
       if (line_buf_len > 0 && line_buf[line_buf_len - 1] == '\r') {
-	line_buf[--line_buf_len] = '\0';
+        line_buf[--line_buf_len] = '\0';
       }
       if (line_buf[0] == '\0') {
-	free(line_buf);
-	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
-	continue;
+        free(line_buf);
+        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        continue;
       }
       if (YAP_parse_index_line(line_buf, &url, &command, &title, &body_size, &body) != 0) {
-	malformed_line_count++;
-	fprintf(stderr, "WARN: skip malformed input line: %s:%d\n", gz_filepath, input_line_count);
-	free(line_buf);
-	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
-	continue;
+        malformed_line_count++;
+        fprintf(stderr, "WARN: skip malformed input line: %s:%d\n", gz_filepath, input_line_count);
+        free(line_buf);
+        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        continue;
       }
-
 
       if (body_size < min_body_size || body_size > max_body_size) {
-	/*ファイルサイズが小さすぎるか大きすぎるので索引に加えない
-	
-	  //行バッファをクリア
-	  */
-	  free(line_buf);
-	  body = NULL;
-	  line_buf = NULL;
-	  line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
-	  continue;
+        /*ファイルサイズが小さすぎるか大きすぎるので索引に加えない
+
+    //行バッファをクリア
+    */
+        free(line_buf);
+        body = NULL;
+        line_buf = NULL;
+        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        continue;
       }
 
-
       /*bodyだけメモリ確保*/
-      body_tmp = (char *) YAP_malloc(strlen(body) + 1);
+      body_tmp = (char *)YAP_malloc(strlen(body) + 1);
       strcpy(body_tmp, body);
       body = body_tmp;
 
       /*titleを牽引に加える*/
       if (strlen(title)) {
-	body = (char *) YAP_realloc(body, strlen(body) + strlen(title) + 2);
-	strcat(body, " ");
-	strcat(body, title);
+        body = (char *)YAP_realloc(body, strlen(body) + strlen(title) + 2);
+        strcat(body, " ");
+        strcat(body, title);
       }
       /*URLを牽引に加える*/
       if (strlen(url)) {
-	body = (char *) YAP_realloc(body, strlen(body) + strlen(url) + 2);
-	strcat(body, " ");
-	strcat(body, url);
+        body = (char *)YAP_realloc(body, strlen(body) + strlen(url) + 2);
+        strcat(body, " ");
+        strcat(body, url);
       }
       /*
       //printf("%s|/|%s|/|%s|/|%s/%d\n", url, title, command, body_size_c, body_size);
@@ -593,138 +587,136 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
       /*
        *現在のurlが登録済か調べる
        */
-      if ( YAP_Index_get_fileindex(ydfp, url, &fileindex) != 0) {
-	/*登録されていないので新規登録をする*/
-	if (! strcmp( command, "DELETE")) {
-	  int pending_i;
-	  /* 同一バッチ内の未反映ADDを取り消す */
-	  for (pending_i = 0; pending_i < stack_count; pending_i++) {
-	    if (index_stack[pending_i].filedata.url != NULL &&
-	        strcmp(index_stack[pending_i].filedata.url, url) == 0) {
-	      YAP_Index_Deletefile_put(ydfp, index_stack[pending_i].fileindex);
-	      YAP_Index_del_fileindex(ydfp, url);
-	    }
-	  }
-	  /*削除扱いなので終了する
+      if (YAP_Index_get_fileindex(ydfp, url, &fileindex) != 0) {
+        /*登録されていないので新規登録をする*/
+        if (!strcmp(command, "DELETE")) {
+          int pending_i;
+          /* 同一バッチ内の未反映ADDを取り消す */
+          for (pending_i = 0; pending_i < stack_count; pending_i++) {
+            if (index_stack[pending_i].filedata.url != NULL &&
+                strcmp(index_stack[pending_i].filedata.url, url) == 0) {
+              YAP_Index_Deletefile_put(ydfp, index_stack[pending_i].fileindex);
+              YAP_Index_del_fileindex(ydfp, url);
+            }
+          }
+          /*削除扱いなので終了する
 
-	  //行バッファをクリア*/
-	  free(body);
-	  body = NULL;
-	  free(line_buf);
-	  line_buf = NULL;
-	  line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+    //行バッファをクリア*/
+          free(body);
+          body = NULL;
+          free(line_buf);
+          line_buf = NULL;
+          line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
 
-	  continue;
-	}
+          continue;
+        }
       } else {
-	/*登録されていたら、登録されているデータを削除扱いにする*/
-	time_t old_mtime;
-	int old_body_size, ret;
+        /*登録されていたら、登録されているデータを削除扱いにする*/
+        time_t old_mtime;
+        int old_body_size, ret;
 
-	/*その前に現在の登録情報の方が新しいかを調べる*/
-	ret = YAP_Index_Filedata_get(ydfp, fileindex, &old_filedata);
+        /*その前に現在の登録情報の方が新しいかを調べる*/
+        ret = YAP_Index_Filedata_get(ydfp, fileindex, &old_filedata);
 
-	if (ret == 0) {
-	  old_mtime = old_filedata.lastmod;
-	  old_body_size = old_filedata.size;
+        if (ret == 0) {
+          old_mtime = old_filedata.lastmod;
+          old_body_size = old_filedata.size;
 
-	  /*メモリの解放&初期化*/
-	  YAP_Index_Filedata_free(&old_filedata);
-	  
-	  if (strcmp(command, "DELETE") != 0 &&
-	      (old_mtime > gz_file_mtime ||
-	       (old_mtime == gz_file_mtime && old_body_size == body_size))) {
-	    /*現在の登録情報の更新日時が新しいか、本文が同じならスキップ
-	    
-	    //行バッファをクリア
-	    */
-	    free(body);
-	    body = NULL;
-	    free(line_buf);
-	    line_buf = NULL;
-	    line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
-	    
-	    continue;
-	  }
-	} else {
-	  /*現在索引中のデータ（まだFiledata未反映） */
-	  if (! strcmp(command, "DELETE")) {
-	    /* 同一バッチ内ADDの取り消しを許可する */
-	    YAP_Index_del_fileindex(ydfp, url);
-	    YAP_Index_Deletefile_put(ydfp, fileindex);
-	  } else {
-	    /* ADDは同一バッチ内で重複登録しない */
-	    continue;
-	  }
-	}
+          /*メモリの解放&初期化*/
+          YAP_Index_Filedata_free(&old_filedata);
 
-	/*昔のレコードを削除*/
-	if (ret == 0) {
-	  YAP_Index_del_fileindex(ydfp, url);
-	  YAP_Index_Filedata_del(ydfp, fileindex);
-	  YAP_Index_Deletefile_put(ydfp, fileindex);
-	}
+          if (strcmp(command, "DELETE") != 0 &&
+              (old_mtime > gz_file_mtime ||
+               (old_mtime == gz_file_mtime && old_body_size == body_size))) {
+            /*現在の登録情報の更新日時が新しいか、本文が同じならスキップ
+
+      //行バッファをクリア
+      */
+            free(body);
+            body = NULL;
+            free(line_buf);
+            line_buf = NULL;
+            line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+
+            continue;
+          }
+        } else {
+          /*現在索引中のデータ（まだFiledata未反映） */
+          if (!strcmp(command, "DELETE")) {
+            /* 同一バッチ内ADDの取り消しを許可する */
+            YAP_Index_del_fileindex(ydfp, url);
+            YAP_Index_Deletefile_put(ydfp, fileindex);
+          } else {
+            /* ADDは同一バッチ内で重複登録しない */
+            continue;
+          }
+        }
+
+        /*昔のレコードを削除*/
+        if (ret == 0) {
+          YAP_Index_del_fileindex(ydfp, url);
+          YAP_Index_Filedata_del(ydfp, fileindex);
+          YAP_Index_Deletefile_put(ydfp, fileindex);
+        }
       }
-    
-      if (! strcmp( command, "DELETE")) {
-	/*削除処理なので、登録処理を行なわない*/
-	printf("delete\n");
+
+      if (!strcmp(command, "DELETE")) {
+        /*削除処理なので、登録処理を行なわない*/
+        printf("delete\n");
       } else {
-	/*登録処理*/
-	int keyword_num = 0;
+        /*登録処理*/
+        int keyword_num = 0;
 
-	/*urlとfileindexの対応をDBに登録*/
-	ydfp->total_filenum++;
-	fileindex = ydfp->total_filenum;
-	YAP_Index_put_fileindex(ydfp, url, &fileindex);
+        /*urlとfileindexの対応をDBに登録*/
+        ydfp->total_filenum++;
+        fileindex = ydfp->total_filenum;
+        YAP_Index_put_fileindex(ydfp, url, &fileindex);
 
-	/*FILEDATAに追加する*/
-	index_stack[stack_count].filedata.url = (char *) YAP_malloc(strlen(url) + 1);
-	strcpy(index_stack[stack_count].filedata.url, url);
-	index_stack[stack_count].filedata.title = (char *) YAP_malloc(strlen(title) + 1);
-	strcpy(index_stack[stack_count].filedata.title, title);
-	index_stack[stack_count].filedata.lastmod = gz_file_mtime;
-	index_stack[stack_count].filedata.size = body_size;
+        /*FILEDATAに追加する*/
+        index_stack[stack_count].filedata.url = (char *)YAP_malloc(strlen(url) + 1);
+        strcpy(index_stack[stack_count].filedata.url, url);
+        index_stack[stack_count].filedata.title = (char *)YAP_malloc(strlen(title) + 1);
+        strcpy(index_stack[stack_count].filedata.title, title);
+        index_stack[stack_count].filedata.lastmod = gz_file_mtime;
+        index_stack[stack_count].filedata.size = body_size;
 
-	/*コメント作成機能は未実装*/
-	index_stack[stack_count].filedata.comment = NULL;
+        /*コメント作成機能は未実装*/
+        index_stack[stack_count].filedata.comment = NULL;
 
-	/*その外は未実装*/
-	index_stack[stack_count].filedata.other = NULL;
-	index_stack[stack_count].filedata.other_len = 0;
+        /*その外は未実装*/
+        index_stack[stack_count].filedata.other = NULL;
+        index_stack[stack_count].filedata.other_len = 0;
 
-	
-		domainid = 0;
-		{
-		  const char *domain_start;
-		  int domain_len;
-		  if (YAP_extract_domain_range(url, &domain_start, &domain_len) == 0) {
-		    char *domain = (char *) YAP_malloc((size_t) domain_len + 1);
-		    memcpy(domain, domain_start, (size_t) domain_len);
-		    domain[domain_len] = '\0';
+        domainid = 0;
+        {
+          const char *domain_start;
+          int domain_len;
+          if (YAP_extract_domain_range(url, &domain_start, &domain_len) == 0) {
+            char *domain = (char *)YAP_malloc((size_t)domain_len + 1);
+            memcpy(domain, domain_start, (size_t)domain_len);
+            domain[domain_len] = '\0';
 
-		    if (YAP_Index_get_domainindex(ydfp, domain, &domainid)) {
-		      /*ドメインの新規登録*/
-		      ydfp->total_domainnum++;
-		      domainid = ydfp->total_domainnum;
-		      YAP_Index_put_domainindex(ydfp, domain, &domainid);
-		    }
-		    free(domain);
-		  }
-		}
-		index_stack[stack_count].filedata.domainid = domainid;
+            if (YAP_Index_get_domainindex(ydfp, domain, &domainid)) {
+              /*ドメインの新規登録*/
+              ydfp->total_domainnum++;
+              domainid = ydfp->total_domainnum;
+              YAP_Index_put_domainindex(ydfp, domain, &domainid);
+            }
+            free(domain);
+          }
+        }
+        index_stack[stack_count].filedata.domainid = domainid;
 
+        /*N-gramで文字列の切り出し*/
+        index_stack[stack_count].ngram = YAP_Ngram_tokenize(body, &keyword_num);
 
-	/*N-gramで文字列の切り出し*/
-	index_stack[stack_count].ngram = YAP_Ngram_tokenize(body, &keyword_num);
+        index_stack[stack_count].filedata.keyword_num = keyword_num;
 
-	index_stack[stack_count].filedata.keyword_num = keyword_num;
+        index_stack[stack_count].fileindex = fileindex;
 
-	index_stack[stack_count].fileindex = fileindex;
+        stack_count++;
 
-	stack_count++;
-
-	printf("Stack: %d/%d(%d)\n", stack_count, fileindex, body_size);
+        printf("Stack: %d/%d(%d)\n", stack_count, fileindex, body_size);
       }
 
       /*行バッファをクリア*/
@@ -732,11 +724,10 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
       body = NULL;
       free(line_buf);
       line_buf = NULL;
-      line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+      line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
     }
 
-
-    if ( stack_count >= MAX_STACK_SIZE) {
+    if (stack_count >= MAX_STACK_SIZE) {
       /*スタックの最大数に達したので、DBファイルへの反映を行なう*/
       int i;
 
@@ -744,43 +735,41 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
       add_keyword_dict(index_stack, stack_count, ydfp);
       add_url_dict(index_stack, stack_count, ydfp);
-      
+
       for (i = 0; i < MAX_STACK_SIZE; i++) {
 
-	/*メモリの解放&初期化*/
-	if (index_stack[i].filedata.url != NULL) {
-	  free(index_stack[i].filedata.url);
-	  index_stack[i].filedata.url = NULL;
-	}
-	if (index_stack[i].filedata.title != NULL) {
-	  free(index_stack[i].filedata.title);
-	  index_stack[i].filedata.title = NULL;
-	}
-	if (index_stack[i].filedata.comment != NULL) {
-	  free(index_stack[i].filedata.comment);
-	  index_stack[i].filedata.comment = NULL;
-	}
-	if (index_stack[i].filedata.other != NULL) {
-	  free(index_stack[i].filedata.other);
-	  index_stack[i].filedata.other = NULL;
-	}
-	index_stack[i].filedata.lastmod = 0;
-	index_stack[i].filedata.size = 0;
-	index_stack[i].filedata.keyword_num = 0;
-	index_stack[i].filedata.other_len = 0;
+        /*メモリの解放&初期化*/
+        if (index_stack[i].filedata.url != NULL) {
+          free(index_stack[i].filedata.url);
+          index_stack[i].filedata.url = NULL;
+        }
+        if (index_stack[i].filedata.title != NULL) {
+          free(index_stack[i].filedata.title);
+          index_stack[i].filedata.title = NULL;
+        }
+        if (index_stack[i].filedata.comment != NULL) {
+          free(index_stack[i].filedata.comment);
+          index_stack[i].filedata.comment = NULL;
+        }
+        if (index_stack[i].filedata.other != NULL) {
+          free(index_stack[i].filedata.other);
+          index_stack[i].filedata.other = NULL;
+        }
+        index_stack[i].filedata.lastmod = 0;
+        index_stack[i].filedata.size = 0;
+        index_stack[i].filedata.keyword_num = 0;
+        index_stack[i].filedata.other_len = 0;
 
-	YAP_Ngram_List_free(index_stack[i].ngram);
-	index_stack[i].ngram = NULL;
+        YAP_Ngram_List_free(index_stack[i].ngram);
+        index_stack[i].ngram = NULL;
 
-	index_stack[i].fileindex = 0;
+        index_stack[i].fileindex = 0;
 
-	stack_count = 0;
+        stack_count = 0;
       }
- 
-  printf("SLEEPING\n");
 
+      printf("SLEEPING\n");
     }
-
   }
   gzclose(gz_file);
 
@@ -796,25 +785,25 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
     int i;
     add_keyword_dict(index_stack, stack_count, ydfp);
     add_url_dict(index_stack, stack_count, ydfp);
-    
+
     for (i = 0; i < stack_count; i++) {
 
       /*メモリの解放&初期化*/
       if (index_stack[i].filedata.url != NULL) {
-	free(index_stack[i].filedata.url);
-	index_stack[i].filedata.url = NULL;
+        free(index_stack[i].filedata.url);
+        index_stack[i].filedata.url = NULL;
       }
       if (index_stack[i].filedata.title != NULL) {
-	free(index_stack[i].filedata.title);
-	index_stack[i].filedata.title = NULL;
+        free(index_stack[i].filedata.title);
+        index_stack[i].filedata.title = NULL;
       }
       if (index_stack[i].filedata.comment != NULL) {
-	free(index_stack[i].filedata.comment);
-	index_stack[i].filedata.comment = NULL;
+        free(index_stack[i].filedata.comment);
+        index_stack[i].filedata.comment = NULL;
       }
       if (index_stack[i].filedata.other != NULL) {
-	free(index_stack[i].filedata.other);
-	index_stack[i].filedata.other = NULL;
+        free(index_stack[i].filedata.other);
+        index_stack[i].filedata.other = NULL;
       }
       index_stack[i].filedata.lastmod = 0;
       index_stack[i].filedata.size = 0;
@@ -831,15 +820,14 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
   printf("SLEEPING END\n");
   if (malformed_line_count > 0) {
-    fprintf(stderr, "WARN: skipped malformed input lines: %s: %d\n", gz_filepath, malformed_line_count);
+    fprintf(stderr, "WARN: skipped malformed input lines: %s: %d\n", gz_filepath,
+            malformed_line_count);
   }
 
   return 0;
 }
 
-
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   YAPPO_DB_FILES yappo_db_files;
   int i;
   int min_body_size = DEFAULT_MIN_BODY_SIZE;
@@ -857,54 +845,57 @@ int main(int argc, char *argv[])
   if (argc > 1) {
     i = 1;
     while (1) {
-      if ( argc == i)
-	break;
+      if (argc == i)
+        break;
 
-      if (! strcmp(argv[i], "-f")) {
-	/*入力ファイルを取得*/
-	i++;
-	if (argc == i)
-	  break;
-	indextext_filepath = argv[i];
-      } else if (! strcmp(argv[i], "-l")) {
-	/*入力先を取得*/
-	i++;
-	if (argc == i)
-	  break;
-	indextexts_dirpath = argv[i];
-      } else if (! strcmp(argv[i], "-d")) {
-	/*出力先を取得*/
-	i++;
-	if (argc == i)
-	  break;
-	yappo_db_files.base_dir = argv[i];
-      } else if (! strcmp(argv[i], "--min-body-size") || ! strcmp(argv[i], "-m")) {
-	/*最小本文サイズを取得*/
-	i++;
-	if (argc == i || YAP_parse_int_option(argv[i], &min_body_size) != 0) {
-	  printf("Invalid min body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
-	  exit(-1);
-	}
-      } else if (! strcmp(argv[i], "--max-body-size") || ! strcmp(argv[i], "-M")) {
-	/*最大本文サイズを取得*/
-	i++;
-	if (argc == i || YAP_parse_int_option(argv[i], &max_body_size) != 0) {
-	  printf("Invalid max body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
-	  exit(-1);
-	}
+      if (!strcmp(argv[i], "-f")) {
+        /*入力ファイルを取得*/
+        i++;
+        if (argc == i)
+          break;
+        indextext_filepath = argv[i];
+      } else if (!strcmp(argv[i], "-l")) {
+        /*入力先を取得*/
+        i++;
+        if (argc == i)
+          break;
+        indextexts_dirpath = argv[i];
+      } else if (!strcmp(argv[i], "-d")) {
+        /*出力先を取得*/
+        i++;
+        if (argc == i)
+          break;
+        yappo_db_files.base_dir = argv[i];
+      } else if (!strcmp(argv[i], "--min-body-size") || !strcmp(argv[i], "-m")) {
+        /*最小本文サイズを取得*/
+        i++;
+        if (argc == i || YAP_parse_int_option(argv[i], &min_body_size) != 0) {
+          printf("Invalid min body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(-1);
+        }
+      } else if (!strcmp(argv[i], "--max-body-size") || !strcmp(argv[i], "-M")) {
+        /*最大本文サイズを取得*/
+        i++;
+        if (argc == i || YAP_parse_int_option(argv[i], &max_body_size) != 0) {
+          printf("Invalid max body size: %s\n", (argc == i) ? "(missing)" : argv[i]);
+          exit(-1);
+        }
       }
       i++;
     }
   }
 
   /*入力ファイルが指定されていない*/
-  if (( indextext_filepath == NULL && indextexts_dirpath == NULL) || 
+  if ((indextext_filepath == NULL && indextexts_dirpath == NULL) ||
       yappo_db_files.base_dir == NULL) {
-    printf("Usage: %s [-f inputfile | -l inputfilesdir] -d outputdir [--min-body-size N] [--max-body-size N]\n", argv[0]);
+    printf("Usage: %s [-f inputfile | -l inputfilesdir] -d outputdir [--min-body-size N] "
+           "[--max-body-size N]\n",
+           argv[0]);
     exit(-1);
   }
   if (min_body_size > max_body_size) {
-    printf("Invalid size range: min_body_size(%d) > max_body_size(%d)\n", min_body_size, max_body_size);
+    printf("Invalid size range: min_body_size(%d) > max_body_size(%d)\n", min_body_size,
+           max_body_size);
     exit(-1);
   }
 
@@ -915,7 +906,7 @@ int main(int argc, char *argv[])
 
   /* pos ディレクトリが無いと落ちやすいので事前にチェック */
   {
-    char *pos_dir = (char *) YAP_malloc(strlen(yappo_db_files.base_dir) + 5);
+    char *pos_dir = (char *)YAP_malloc(strlen(yappo_db_files.base_dir) + 5);
     sprintf(pos_dir, "%s/pos", yappo_db_files.base_dir);
     if (!YAP_is_dir(pos_dir)) {
       fprintf(stderr, "Missing pos dir: %s (mkdir -p %s)\n", pos_dir, pos_dir);
@@ -925,14 +916,12 @@ int main(int argc, char *argv[])
     free(pos_dir);
   }
 
-
   /*
    *データベースの準備
    */
   yappo_db_files.mode = YAPPO_DB_WRITE;
   YAP_Db_filename_set(&yappo_db_files);
   YAP_Db_base_open(&yappo_db_files);
-
 
   if (indextext_filepath != NULL) {
     /*
@@ -947,7 +936,8 @@ int main(int argc, char *argv[])
     }
 
     /*圧縮ファイルの展開をしつつインデックスを行なう*/
-    indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size, max_body_size);
+    indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size,
+                 max_body_size);
   } else {
     struct dirent *direntp;
     /*ディレクトリ中の.gzファイルを処理*/
@@ -962,25 +952,25 @@ int main(int argc, char *argv[])
     while ((direntp = readdir(input_dir)) != NULL) {
       char *name = direntp->d_name;
       int len = strlen(name);
-      if (name[len-3] == '.' && name[len-2] == 'g' && name[len-1] == 'z') {
-	/*.gzファイルのみを処理*/
-	indextext_filepath = (char *) YAP_malloc(strlen(indextexts_dirpath) + strlen(name) + 2);
-	sprintf(indextext_filepath, "%s/%s", indextexts_dirpath, name);
+      if (name[len - 3] == '.' && name[len - 2] == 'g' && name[len - 1] == 'z') {
+        /*.gzファイルのみを処理*/
+        indextext_filepath = (char *)YAP_malloc(strlen(indextexts_dirpath) + strlen(name) + 2);
+        sprintf(indextext_filepath, "%s/%s", indextexts_dirpath, name);
 
- 	if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
-	  perror("ERROR: invalid input file");
-	  printf("Please specify an existing input file.\n");
-	  exit(-1);
-	}
+        if (YAP_stat(indextext_filepath, &f_stats) != 0 || !S_ISREG(f_stats.st_mode)) {
+          perror("ERROR: invalid input file");
+          printf("Please specify an existing input file.\n");
+          exit(-1);
+        }
 
-		indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size, max_body_size);
-	printf("%s\n", indextext_filepath);
-	free(indextext_filepath);
+        indexer_core(indextext_filepath, f_stats.st_mtime, &yappo_db_files, min_body_size,
+                     max_body_size);
+        printf("%s\n", indextext_filepath);
+        free(indextext_filepath);
       }
     }
     closedir(input_dir);
   }
-
 
   /*
    *データベースを閉じる

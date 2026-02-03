@@ -7,15 +7,12 @@
 #include <string.h>
 #include <unistd.h>
 
-static void yap_net_log_errno(const char *label, int thread_id, const char *op)
-{
-  fprintf(stderr, "ERROR: %s thread %d %s failed: %s\n",
-          label, thread_id, op, strerror(errno));
+static void yap_net_log_errno(const char *label, int thread_id, const char *op) {
+  fprintf(stderr, "ERROR: %s thread %d %s failed: %s\n", label, thread_id, op, strerror(errno));
 }
 
 int YAP_Net_accept_stream(int listen_socket, struct sockaddr *addr, socklen_t *addrlen,
-                          FILE **stream_out, int *fd_out, const char *label, int thread_id)
-{
+                          FILE **stream_out, int *fd_out, const char *label, int thread_id) {
   int fd;
   FILE *stream;
 
@@ -40,8 +37,7 @@ int YAP_Net_accept_stream(int listen_socket, struct sockaddr *addr, socklen_t *a
   return 0;
 }
 
-void YAP_Net_close_stream(FILE **stream_io, int *fd_io)
-{
+void YAP_Net_close_stream(FILE **stream_io, int *fd_io) {
   if (stream_io != NULL && *stream_io != NULL) {
     fclose(*stream_io);
     *stream_io = NULL;
@@ -57,12 +53,11 @@ void YAP_Net_close_stream(FILE **stream_io, int *fd_io)
   }
 }
 
-int YAP_Net_write_all(int fd, const void *buf, size_t len, const char *label, int thread_id)
-{
+int YAP_Net_write_all(int fd, const void *buf, size_t len, const char *label, int thread_id) {
   const char *p;
   size_t left;
 
-  p = (const char *) buf;
+  p = (const char *)buf;
   left = len;
   while (left > 0) {
     ssize_t n = write(fd, p, left);
@@ -75,7 +70,7 @@ int YAP_Net_write_all(int fd, const void *buf, size_t len, const char *label, in
       return -1;
     }
     p += n;
-    left -= (size_t) n;
+    left -= (size_t)n;
   }
   return 0;
 }
