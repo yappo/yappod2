@@ -17,6 +17,7 @@
 
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_net.h"
 #include "yappo_stat.h"
 #include "yappo_search.h"
 #include "yappo_db.h"
@@ -189,20 +190,14 @@ void *thread_server (void *ip)
   while (1) {
     SEARCH_RESULT *result;
     socklen_t sockaddr_len = sizeof(yap_sin);
-    int accept_socket;
-    FILE *socket;
+    int accept_socket = -1;
+    FILE *socket = NULL;
     char *dict, *op, *keyword;/*リクエスト*/
     int recv_code;
     int max_size;
 
-    accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
-    if (accept_socket == -1) {
-      YAP_Error( "accept error");
-    }
-    socket = fdopen(accept_socket, "r+");
-    if (socket == NULL) {
-      perror("ERROR: fdopen");
-      close(accept_socket);
+    if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len,
+                              &socket, &accept_socket, "core", p->id) != 0) {
       continue;
     }
 
@@ -254,8 +249,7 @@ void *thread_server (void *ip)
     }
 
     fflush(stdout);
-    fclose(socket);
-    close(accept_socket);
+    YAP_Net_close_stream(&socket, &accept_socket);
   }
 
   return NULL;

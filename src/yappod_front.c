@@ -16,6 +16,7 @@
 
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_net.h"
 #include "yappo_stat.h"
 #include "yappo_search.h"
 #include "yappo_index.h"
@@ -51,6 +52,17 @@ int count;
 void YAP_Error( char *msg){
   fprintf(stderr, "ERROR: %s\n", msg);
   exit(-1);
+}
+
+static int YAP_send_bad_request(int fd, int thread_id)
+{
+  const char *msg =
+      "HTTP/1.0 400 Bad Request\r\n"
+      "Server: Yappo Search/1.0\r\n"
+      "Content-Type: text/html\r\n"
+      "\r\n"
+      "Bad Search Request<br>By Yappo Search";
+  return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
 }
 
 
@@ -182,6 +194,11 @@ void *thread_server (void *ip)
     }
 
     p->server_socket[i] = (FILE *) fdopen(p->server_fd[i], "r+");
+    if (p->server_socket[i] == NULL) {
+      perror("ERROR: front core fdopen");
+      close(p->server_fd[i]);
+      YAP_Error("client fdopen error");
+    }
   }
 
   printf("GO\n");
@@ -189,22 +206,16 @@ void *thread_server (void *ip)
   while (1) {
     SEARCH_RESULT *result, *left, *right;
     socklen_t sockaddr_len = sizeof(yap_sin);
-    int accept_socket;
+    int accept_socket = -1;
     char *line, *line_buf;
-    FILE *socket;
+    FILE *socket = NULL;
     char *dict, *op, *keyword;/* リクエスト */
     int max_size;
     int start, end;
 
 
-    accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
-    if (accept_socket == -1) {
-      YAP_Error( "accept error");
-    }
-    socket = (FILE *) fdopen(accept_socket, "r+");
-    if (socket == NULL) {
-      perror("ERROR: fdopen");
-      close(accept_socket);
+    if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len,
+                              &socket, &accept_socket, "front", p->id) != 0) {
       continue;
     }
 
@@ -230,9 +241,7 @@ void *thread_server (void *ip)
 
 	if (strlen(dict) == 0 || max_size == 0 || strlen(op) == 0 || strlen(keyword) == 0) {
 	  /* バッドリクエスト */
-	  char buf[BUF_SIZE];
-	  sprintf( buf, "HTTP/1.0 400 Bad Request\r\nServer: Yappo Search/1.0\r\nContent-Type: text/html\r\n\r\nBad Search Request<br>By Yappo Search");
-	  write(accept_socket, buf, strlen(buf));
+	  YAP_send_bad_request(accept_socket, p->id);
 	  printf("bad:%d:\n", p->id);
 	} else {
 
@@ -257,6 +266,7 @@ void *thread_server (void *ip)
 	   */
 	  for (i = 0; i < p->server_num; i++) {
 	    if (YAP_Proto_send_query(p->server_socket[i], dict, max_size, op, keyword) != 0) {
+              fprintf(stderr, "ERROR: front thread %d failed to send query to core[%d]\n", p->id, i);
 	      continue;
 	    }
 
@@ -326,9 +336,7 @@ void *thread_server (void *ip)
 	free(dict); free(op); free(keyword); free(line);
 	break;
       } else {
-	char buf[BUF_SIZE];
-	sprintf( buf, "HTTP/1.0 400 Bad Request\r\nServer: Yappo Search/1.0\r\nContent-Type: text/html\r\n\r\nBad Search Request<br>By Yappo Search");
-	write(accept_socket, buf, strlen(buf));
+	YAP_send_bad_request(accept_socket, p->id);
 	printf("bad:%d:\n", p->id);
 	
 	free(dict); free(op); free(keyword); free(line);
@@ -339,17 +347,17 @@ void *thread_server (void *ip)
 
     fflush(stdout);
     fflush(socket);
-    fclose(socket);
-    close(accept_socket);
+    YAP_Net_close_stream(&socket, &accept_socket);
   }
   
   /*
    *各サーバとの接続を閉じる
    */
   for (i = 0; i < p->server_num; i++) {
-    YAP_Proto_send_shutdown(p->server_socket[i]);
-    fclose(p->server_socket[i]);
-    close(p->server_fd[i]);
+    if (YAP_Proto_send_shutdown(p->server_socket[i]) != 0) {
+      fprintf(stderr, "ERROR: front thread %d failed to send shutdown to core[%d]\n", p->id, i);
+    }
+    YAP_Net_close_stream(&(p->server_socket[i]), &(p->server_fd[i]));
   }
 
   return NULL;
