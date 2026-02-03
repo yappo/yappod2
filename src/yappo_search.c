@@ -20,6 +20,18 @@
 #include "yappo_search.h"
 
 
+static int YAP_Search_keyword_stat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
+                                       int *keyword_total_num, int *keyword_docs_num)
+{
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fread_exact(ydfp->keyword_totalnum_file, keyword_total_num, sizeof(int), 1) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fread_exact(ydfp->keyword_docsnum_file, keyword_docs_num, sizeof(int), 1) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
 
 /*
  *SEARCH_RESULTの中身のメモリを解放
@@ -883,10 +895,7 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
       result = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));
       ret = YAP_Index_get_keyword(ydfp, key_list[0], &keyword_id);
 
-      YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id);
-      YAP_fread_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1);
-      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id);
-      YAP_fread_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1);
+      YAP_Search_keyword_stat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num);
       result->keyword_id = keyword_id;
       result->keyword_total_num = keyword_total_num;
       result->keyword_docs_num = keyword_docs_num;
@@ -906,10 +915,7 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
 	  right = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));
 	  ret = YAP_Index_get_keyword(ydfp, key_list[i], &keyword_id);
 	  
-	  YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id);
-	  YAP_fread_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1);
-	  YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id);
-	  YAP_fread_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1);
+	  YAP_Search_keyword_stat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num);
 	  right->keyword_id = keyword_id;
 	  right->keyword_total_num = keyword_total_num;
 	  right->keyword_docs_num = keyword_docs_num;
@@ -964,10 +970,7 @@ SEARCH_RESULT *YAP_Search_gram (YAPPO_DB_FILES *ydfp, unsigned char *key)
   if (ret == 0) {
     /* キーワードが有った */
 
-    if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
-        YAP_fread_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-        YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
-        YAP_fread_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
+    if (YAP_Search_keyword_stat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num) != 0) {
       free(result);
       return NULL;
     }
