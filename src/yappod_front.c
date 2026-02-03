@@ -32,7 +32,7 @@
 /*
  *スレッド毎の構造
  */
-typedef struct{
+typedef struct {
   int id;
   int socket;
   int server_num;
@@ -40,53 +40,42 @@ typedef struct{
   int *server_fd;
   char **server_addr;
   char *base_dir;
-}YAP_THREAD_DATA;
-
+} YAP_THREAD_DATA;
 
 /* スレッドの数 */
 #define MAX_THREAD 5
-
 
 int count;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_front_pidfile = "./front.pid";
 
-
-void YAP_Error( char *msg){
+void YAP_Error(char *msg) {
   fprintf(stderr, "ERROR: %s\n", msg);
   exit(-1);
 }
 
-static void YAP_log_thread_error(int thread_id, const char *msg)
-{
+static void YAP_log_thread_error(int thread_id, const char *msg) {
   fprintf(stderr, "ERROR: front thread %d %s\n", thread_id, msg);
 }
 
-static void YAP_request_shutdown(int sig)
-{
+static void YAP_request_shutdown(int sig) {
   g_shutdown_signal = sig;
   g_shutdown_requested = 1;
 }
 
-static void YAP_remove_pidfile(void)
-{
-  unlink(g_front_pidfile);
-}
+static void YAP_remove_pidfile(void) { unlink(g_front_pidfile); }
 
-static int YAP_send_bad_request(int fd, int thread_id)
-{
-  const char *msg =
-      "HTTP/1.0 400 Bad Request\r\n"
-      "Server: Yappo Search/1.0\r\n"
-      "Content-Type: text/html\r\n"
-      "\r\n"
-      "Bad Search Request<br>By Yappo Search";
+static int YAP_send_bad_request(int fd, int thread_id) {
+  const char *msg = "HTTP/1.0 400 Bad Request\r\n"
+                    "Server: Yappo Search/1.0\r\n"
+                    "Content-Type: text/html\r\n"
+                    "\r\n"
+                    "Bad Search Request<br>By Yappo Search";
   return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
 }
 
-static int YAP_writef(FILE *socket, const char *fmt, ...)
-{
+static int YAP_writef(FILE *socket, const char *fmt, ...) {
   int rc;
   va_list ap;
   va_start(ap, fmt);
@@ -99,8 +88,8 @@ static int YAP_writef(FILE *socket, const char *fmt, ...)
   return 0;
 }
 
-static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_out, int thread_id)
-{
+static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_out,
+                                   int thread_id) {
   struct addrinfo hints;
   struct addrinfo *res = NULL, *rp;
   char port_str[16];
@@ -118,8 +107,8 @@ static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_
   snprintf(port_str, sizeof(port_str), "%d", CORE_PORT);
   gai_rc = getaddrinfo(host, port_str, &hints, &res);
   if (gai_rc != 0) {
-    fprintf(stderr, "ERROR: front thread %d resolve %s failed: %s\n",
-            thread_id, host, gai_strerror(gai_rc));
+    fprintf(stderr, "ERROR: front thread %d resolve %s failed: %s\n", thread_id, host,
+            gai_strerror(gai_rc));
     return -1;
   }
 
@@ -141,7 +130,7 @@ static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_
     return -1;
   }
 
-  stream = (FILE *) fdopen(fd, "r+");
+  stream = (FILE *)fdopen(fd, "r+");
   if (stream == NULL) {
     perror("ERROR: front core fdopen");
     close(fd);
@@ -153,8 +142,7 @@ static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_
   return 0;
 }
 
-static int YAP_flush_or_log(FILE *socket)
-{
+static int YAP_flush_or_log(FILE *socket) {
   if (fflush(socket) != 0) {
     perror("ERROR: front response flush");
     return -1;
@@ -162,17 +150,17 @@ static int YAP_flush_or_log(FILE *socket)
   return 0;
 }
 
-
 /*
  *検索結果を標示
  */
-void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, int start, int end)
-{
+void search_result_print(YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, int start, int end) {
   int i;
   FILEDATA filedata;
   char *title;
 
-  if (YAP_writef(socket, "HTTP/1.0 200 OK\r\nServer: Yappo Search/1.0\r\nContent-Type: text/plain\r\n\r\n") != 0 ||
+  if (YAP_writef(
+        socket,
+        "HTTP/1.0 200 OK\r\nServer: Yappo Search/1.0\r\nContent-Type: text/plain\r\n\r\n") != 0 ||
       YAP_flush_or_log(socket) != 0) {
     return;
   }
@@ -194,43 +182,40 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
 
     for (i = start; i < end; i++) {
       if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
-	title = filedata.title;
-	if (title == NULL) {
-	  title = filedata.url;
-	}
-        if (YAP_writef(socket, "%s\t%s\t%d\t%ld\t%.2f\n",
-                       filedata.url, title, filedata.size, (long) filedata.lastmod,
-                       p->docs_list[i].score) != 0 ||
+        title = filedata.title;
+        if (title == NULL) {
+          title = filedata.url;
+        }
+        if (YAP_writef(socket, "%s\t%s\t%d\t%ld\t%.2f\n", filedata.url, title, filedata.size,
+                       (long)filedata.lastmod, p->docs_list[i].score) != 0 ||
             YAP_flush_or_log(socket) != 0) {
           YAP_Index_Filedata_free(&filedata);
           return;
         }
 
-	YAP_Index_Filedata_free(&filedata);
+        YAP_Index_Filedata_free(&filedata);
       } else {
-	if (YAP_writef(socket, "%d\t%.2f\n", p->docs_list[i].fileindex, p->docs_list[i].score) != 0 ||
+        if (YAP_writef(socket, "%d\t%.2f\n", p->docs_list[i].fileindex, p->docs_list[i].score) !=
+              0 ||
             YAP_flush_or_log(socket) != 0) {
           return;
         }
-
       }
     }
   }
   YAP_flush_or_log(socket);
 }
 
-
 /*
  *ファイルポインタから一行分読み込みメモリを割り当てて返す
  */
-static int YAP_readline_alloc(FILE *socket, char **line_out)
-{
+static int YAP_readline_alloc(FILE *socket, char **line_out) {
   char *socket_buf, *line_buf;
   size_t line_len = 0;
 
   *line_out = NULL;
-  socket_buf = (char *) YAP_malloc(BUF_SIZE);
-  line_buf = (char *) YAP_malloc(BUF_SIZE);
+  socket_buf = (char *)YAP_malloc(BUF_SIZE);
+  line_buf = (char *)YAP_malloc(BUF_SIZE);
   line_buf[0] = '\0';
 
   while (1) {
@@ -246,11 +231,11 @@ static int YAP_readline_alloc(FILE *socket, char **line_out)
     }
 
     chunk_len = strlen(socket_buf);
-    line_buf = (char *) YAP_realloc(line_buf, line_len + chunk_len + 1);
+    line_buf = (char *)YAP_realloc(line_buf, line_len + chunk_len + 1);
     memcpy(line_buf + line_len, socket_buf, chunk_len + 1);
     line_len += chunk_len;
 
-    if (chunk_len < (size_t) (BUF_SIZE - 1) || socket_buf[chunk_len - 1] == '\n') {
+    if (chunk_len < (size_t)(BUF_SIZE - 1) || socket_buf[chunk_len - 1] == '\n') {
       break;
     }
   }
@@ -264,8 +249,8 @@ static int YAP_readline_alloc(FILE *socket, char **line_out)
   return 1;
 }
 
-static int YAP_parse_request_target(const char *target, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
-{
+static int YAP_parse_request_target(const char *target, char *dict, int *max_size, char *op,
+                                    int *start, int *end, char *keyword) {
   char path[BUF_SIZE];
   const char *query;
   const char *path_start;
@@ -295,13 +280,13 @@ static int YAP_parse_request_target(const char *target, char *dict, int *max_siz
     return -1;
   }
 
-  path_len = (int) (query - path_start);
-  keyword_len = (int) strlen(query + 1);
+  path_len = (int)(query - path_start);
+  keyword_len = (int)strlen(query + 1);
   if (path_len <= 0 || path_len >= BUF_SIZE || keyword_len <= 0 || keyword_len >= BUF_SIZE) {
     return -1;
   }
 
-  memcpy(path, path_start, (size_t) path_len);
+  memcpy(path, path_start, (size_t)path_len);
   path[path_len] = '\0';
   strcpy(keyword, query + 1);
 
@@ -319,8 +304,8 @@ static int YAP_parse_request_target(const char *target, char *dict, int *max_siz
   return 0;
 }
 
-static int YAP_parse_request_line(const char *line, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
-{
+static int YAP_parse_request_line(const char *line, char *dict, int *max_size, char *op, int *start,
+                                  int *end, char *keyword) {
   char method[16];
   char target[BUF_SIZE];
   char version[32];
@@ -337,8 +322,7 @@ static int YAP_parse_request_line(const char *line, char *dict, int *max_size, c
   return -1;
 }
 
-static int YAP_drain_http_headers(FILE *socket)
-{
+static int YAP_drain_http_headers(FILE *socket) {
   while (1) {
     char *line = NULL;
     int read_rc = YAP_readline_alloc(socket, &line);
@@ -356,26 +340,25 @@ static int YAP_drain_http_headers(FILE *socket)
 /*
  *サーバの本体
  */
-void *thread_server (void *ip) 
-{
- struct sockaddr_in *yap_sin;
- YAPPO_DB_FILES yappo_db_files;
- YAP_THREAD_DATA *p = (YAP_THREAD_DATA *) ip;
- int i;
+void *thread_server(void *ip) {
+  struct sockaddr_in *yap_sin;
+  YAPPO_DB_FILES yappo_db_files;
+  YAP_THREAD_DATA *p = (YAP_THREAD_DATA *)ip;
+  int i;
 
   /*
    *データベースの準備
    */
-  memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES)); 
+  memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
   yappo_db_files.base_dir = p->base_dir;
   yappo_db_files.mode = YAPPO_DB_READ;
-
 
   /*
    *各サーバとの接続を開始する
    */
   for (i = 0; i < p->server_num; i++) {
-    if (YAP_connect_core_stream(p->server_addr[i], &(p->server_socket[i]), &(p->server_fd[i]), p->id) != 0) {
+    if (YAP_connect_core_stream(p->server_addr[i], &(p->server_socket[i]), &(p->server_fd[i]),
+                                p->id) != 0) {
       YAP_Error("client connect error");
     }
   }
@@ -390,16 +373,15 @@ void *thread_server (void *ip)
     int header_rc;
     char *line = NULL;
     FILE *socket = NULL;
-    char *dict, *op, *keyword;/* リクエスト */
+    char *dict, *op, *keyword; /* リクエスト */
     int max_size;
     int start, end;
-
 
     if (g_shutdown_requested) {
       break;
     }
-    if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len,
-                              &socket, &accept_socket, "front", p->id) != 0) {
+    if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len, &socket,
+                              &accept_socket, "front", p->id) != 0) {
       if (g_shutdown_requested) {
         break;
       }
@@ -416,9 +398,9 @@ void *thread_server (void *ip)
     }
 
     /* バッファの初期化 */
-    dict = (char *) YAP_malloc(BUF_SIZE);
-    op = (char *) YAP_malloc(BUF_SIZE);
-    keyword = (char *) YAP_malloc(BUF_SIZE);
+    dict = (char *)YAP_malloc(BUF_SIZE);
+    op = (char *)YAP_malloc(BUF_SIZE);
+    keyword = (char *)YAP_malloc(BUF_SIZE);
     dict[0] = '\0';
     op[0] = '\0';
     keyword[0] = '\0';
@@ -426,7 +408,10 @@ void *thread_server (void *ip)
     if (YAP_parse_request_line(line, dict, &max_size, op, &start, &end, keyword) != 0) {
       YAP_send_bad_request(accept_socket, p->id);
       printf("bad:%d:\n", p->id);
-      free(dict); free(op); free(keyword); free(line);
+      free(dict);
+      free(op);
+      free(keyword);
+      free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
     }
@@ -436,7 +421,10 @@ void *thread_server (void *ip)
     if (strlen(dict) == 0 || max_size == 0 || strlen(op) == 0 || strlen(keyword) == 0) {
       YAP_send_bad_request(accept_socket, p->id);
       printf("bad:%d:\n", p->id);
-      free(dict); free(op); free(keyword); free(line);
+      free(dict);
+      free(op);
+      free(keyword);
+      free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
     }
@@ -446,7 +434,10 @@ void *thread_server (void *ip)
       if (header_rc < 0) {
         YAP_log_thread_error(p->id, "read headers failed");
       }
-      free(dict); free(op); free(keyword); free(line);
+      free(dict);
+      free(op);
+      free(keyword);
+      free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
     }
@@ -509,7 +500,7 @@ void *thread_server (void *ip)
     search_result_print(&yappo_db_files, socket, result, start, end);
 
     if (result != NULL) {
-      printf( "hit %d\n", result->keyword_docs_num);
+      printf("hit %d\n", result->keyword_docs_num);
       YAP_Search_result_free(result);
       free(result);
     }
@@ -517,13 +508,16 @@ void *thread_server (void *ip)
     YAP_Db_linklist_close(&yappo_db_files);
     YAP_Db_base_close(&yappo_db_files);
 
-    free(dict); free(op); free(keyword); free(line);
+    free(dict);
+    free(op);
+    free(keyword);
+    free(line);
 
     fflush(stdout);
     fflush(socket);
     YAP_Net_close_stream(&socket, &accept_socket);
   }
-  
+
   /*
    *各サーバとの接続を閉じる
    */
@@ -537,25 +531,24 @@ void *thread_server (void *ip)
   return NULL;
 }
 
-void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_socket, char **server_addr) 
-{
+void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_socket,
+                         char **server_addr) {
   int sock_optval = 1;
   int yap_socket;
   struct sockaddr_in yap_sin;
   int i;
   pthread_t *pthread;
   YAP_THREAD_DATA *thread_data;
-  (void) server_socket;
+  (void)server_socket;
 
   /* ソケットの作成 */
-  yap_socket = socket( AF_INET, SOCK_STREAM, 0);
+  yap_socket = socket(AF_INET, SOCK_STREAM, 0);
   if (yap_socket == -1)
-    YAP_Error( "socket open error");
+    YAP_Error("socket open error");
 
   /* ソケットの設定 */
-  if (setsockopt(yap_socket, SOL_SOCKET, SO_REUSEADDR,
-		&sock_optval, sizeof(sock_optval)) == -1) {
-    YAP_Error( "setsockopt error");
+  if (setsockopt(yap_socket, SOL_SOCKET, SO_REUSEADDR, &sock_optval, sizeof(sock_optval)) == -1) {
+    YAP_Error("setsockopt error");
   }
 
   /* bindする */
@@ -563,45 +556,45 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
   yap_sin.sin_port = htons(PORT);
   yap_sin.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(yap_socket, (struct sockaddr *)&yap_sin, sizeof(yap_sin)) < 0) {
-    YAP_Error( "bind error");
+    YAP_Error("bind error");
   }
 
   /* listen */
   if (listen(yap_socket, SOMAXCONN) == -1) {
-    YAP_Error( "listen error");
+    YAP_Error("listen error");
   }
 
   /* スレッドの準備 */
-  pthread = (pthread_t *) YAP_malloc(sizeof(pthread_t) * MAX_THREAD);
-  thread_data  = (YAP_THREAD_DATA *) YAP_malloc(sizeof(YAP_THREAD_DATA) * MAX_THREAD);
+  pthread = (pthread_t *)YAP_malloc(sizeof(pthread_t) * MAX_THREAD);
+  thread_data = (YAP_THREAD_DATA *)YAP_malloc(sizeof(YAP_THREAD_DATA) * MAX_THREAD);
   for (i = 0; i < MAX_THREAD; i++) {
     int ii;
 
     /* 起動準備 */
     thread_data[i].id = i;
-    thread_data[i].base_dir = (char *) YAP_malloc(strlen(indextexts_dirpath) + 1);
+    thread_data[i].base_dir = (char *)YAP_malloc(strlen(indextexts_dirpath) + 1);
     strcpy(thread_data[i].base_dir, indextexts_dirpath);
     thread_data[i].socket = dup(yap_socket);
 
     thread_data[i].server_num = server_num;
-    thread_data[i].server_socket = (FILE **) YAP_malloc(sizeof(FILE **) * server_num);
-    thread_data[i].server_fd = (int *) YAP_malloc(sizeof(int) * server_num);
-    thread_data[i].server_addr = (char **) YAP_malloc(sizeof(char **) * server_num);
+    thread_data[i].server_socket = (FILE **)YAP_malloc(sizeof(FILE **) * server_num);
+    thread_data[i].server_fd = (int *)YAP_malloc(sizeof(int) * server_num);
+    thread_data[i].server_addr = (char **)YAP_malloc(sizeof(char **) * server_num);
     for (ii = 0; ii < server_num; ii++) {
-      thread_data[i].server_addr[ii] = (char *) YAP_malloc(strlen(server_addr[ii]) + 1);
+      thread_data[i].server_addr[ii] = (char *)YAP_malloc(strlen(server_addr[ii]) + 1);
       strcpy(thread_data[i].server_addr[ii], server_addr[ii]);
     }
 
-    printf( "start: %d:%s\n", i, thread_data[i].base_dir);
-    pthread_create(&(pthread[i]), NULL, thread_server, (void *) &(thread_data[i]));
+    printf("start: %d:%s\n", i, thread_data[i].base_dir);
+    pthread_create(&(pthread[i]), NULL, thread_server, (void *)&(thread_data[i]));
 
-    printf( "GO: %d\n", i);
+    printf("GO: %d\n", i);
   }
 
   /*
    *メインループ
    */
-  while(!g_shutdown_requested){
+  while (!g_shutdown_requested) {
     sleep(1);
   }
 
@@ -612,10 +605,7 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
   printf("end\n");
 }
 
-
-
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   int i, pid;
   char *indextexts_dirpath = NULL;
   struct stat f_stats;
@@ -623,38 +613,37 @@ int main(int argc, char *argv[])
   int *server_socket = NULL;
   char **server_addr = NULL;
 
-
   /*
    *オプションを取得
    */
   if (argc > 1) {
     i = 1;
     while (1) {
-      if ( argc == i)
-	break;
+      if (argc == i)
+        break;
 
-      if (! strcmp(argv[i], "-l")) {
-	/* インデックスディレクトリを取得 */
-	i++;
-	if (argc == i)
-	  break;
-	indextexts_dirpath = argv[i];
-      } else if(! strcmp(argv[i], "-s")) {
-	/* 検索サーバ指定 */
-	i++;
-	if (argc == i)
-	  break;
-	server_addr = (char **) YAP_realloc(server_addr, sizeof(char **) * (server_num + 1));
-	server_addr[server_num] = (char *) YAP_malloc(strlen(argv[i]) + 1);
-	strcpy(server_addr[server_num], argv[i]);
-	server_num++;
+      if (!strcmp(argv[i], "-l")) {
+        /* インデックスディレクトリを取得 */
+        i++;
+        if (argc == i)
+          break;
+        indextexts_dirpath = argv[i];
+      } else if (!strcmp(argv[i], "-s")) {
+        /* 検索サーバ指定 */
+        i++;
+        if (argc == i)
+          break;
+        server_addr = (char **)YAP_realloc(server_addr, sizeof(char **) * (server_num + 1));
+        server_addr[server_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
+        strcpy(server_addr[server_num], argv[i]);
+        server_num++;
       }
 
       i++;
     }
   }
 
-  server_socket = (int *) YAP_malloc(sizeof(int) * server_num);
+  server_socket = (int *)YAP_malloc(sizeof(int) * server_num);
 
   if (server_num == 0) {
     printf("server option -s\n");
@@ -674,7 +663,7 @@ int main(int argc, char *argv[])
   /*
    *デーモン化
    */
-  
+
   fclose(stdin);
   fclose(stdout);
   fclose(stderr);
@@ -697,7 +686,7 @@ int main(int argc, char *argv[])
   }
 
   atexit(YAP_remove_pidfile);
-  
+
   /*
    *シグナル処理
    */
@@ -706,5 +695,4 @@ int main(int argc, char *argv[])
   signal(SIGPIPE, SIG_IGN);
 
   start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
-
 }

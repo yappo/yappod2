@@ -13,8 +13,7 @@
 #define YAP_PROTO_MAX_DOCS (1024 * 1024)
 #define YAP_PROTO_MAX_POS_PER_DOC (1024 * 1024)
 
-static int proto_read_string(FILE *socket, int max_payload, char **out)
-{
+static int proto_read_string(FILE *socket, int max_payload, char **out) {
   int len;
   *out = NULL;
   if (YAP_fread_exact(socket, &len, sizeof(int), 1) != 0) {
@@ -23,7 +22,7 @@ static int proto_read_string(FILE *socket, int max_payload, char **out)
   if (len <= 0 || len > max_payload) {
     return -1;
   }
-  *out = (char *) YAP_malloc((size_t) len + 1);
+  *out = (char *)YAP_malloc((size_t)len + 1);
   if (YAP_fread_exact(socket, *out, sizeof(char), len) != 0) {
     free(*out);
     *out = NULL;
@@ -33,25 +32,25 @@ static int proto_read_string(FILE *socket, int max_payload, char **out)
   return 0;
 }
 
-int YAP_Proto_send_query(FILE *socket, const char *dict, int max_size, const char *op, const char *keyword)
-{
+int YAP_Proto_send_query(FILE *socket, const char *dict, int max_size, const char *op,
+                         const char *keyword) {
   int cmd = 1;
   int len;
 
-  len = (int) strlen(dict);
+  len = (int)strlen(dict);
   if (YAP_fwrite_exact(socket, &cmd, sizeof(int), 1) != 0 ||
       YAP_fwrite_exact(socket, &len, sizeof(int), 1) != 0 ||
       YAP_fwrite_exact(socket, dict, sizeof(char), len) != 0) {
     return -1;
   }
 
-  len = (int) strlen(op);
+  len = (int)strlen(op);
   if (YAP_fwrite_exact(socket, &len, sizeof(int), 1) != 0 ||
       YAP_fwrite_exact(socket, op, sizeof(char), len) != 0) {
     return -1;
   }
 
-  len = (int) strlen(keyword);
+  len = (int)strlen(keyword);
   if (YAP_fwrite_exact(socket, &len, sizeof(int), 1) != 0 ||
       YAP_fwrite_exact(socket, keyword, sizeof(char), len) != 0 ||
       YAP_fwrite_exact(socket, &max_size, sizeof(int), 1) != 0) {
@@ -60,8 +59,8 @@ int YAP_Proto_send_query(FILE *socket, const char *dict, int max_size, const cha
   return 0;
 }
 
-int YAP_Proto_recv_query(FILE *socket, int max_payload, char **dict, int *max_size, char **op, char **keyword)
-{
+int YAP_Proto_recv_query(FILE *socket, int max_payload, char **dict, int *max_size, char **op,
+                         char **keyword) {
   int cmd = 0;
   *dict = NULL;
   *op = NULL;
@@ -81,9 +80,12 @@ int YAP_Proto_recv_query(FILE *socket, int max_payload, char **dict, int *max_si
       proto_read_string(socket, max_payload, op) != 0 ||
       proto_read_string(socket, max_payload, keyword) != 0 ||
       YAP_fread_exact(socket, max_size, sizeof(int), 1) != 0) {
-    if (*dict != NULL) free(*dict);
-    if (*op != NULL) free(*op);
-    if (*keyword != NULL) free(*keyword);
+    if (*dict != NULL)
+      free(*dict);
+    if (*op != NULL)
+      free(*op);
+    if (*keyword != NULL)
+      free(*keyword);
     *dict = NULL;
     *op = NULL;
     *keyword = NULL;
@@ -93,14 +95,12 @@ int YAP_Proto_recv_query(FILE *socket, int max_payload, char **dict, int *max_si
   return 1;
 }
 
-int YAP_Proto_send_shutdown(FILE *socket)
-{
+int YAP_Proto_send_shutdown(FILE *socket) {
   int cmd = 0;
   return YAP_fwrite_exact(socket, &cmd, sizeof(int), 1);
 }
 
-int YAP_Proto_send_result(FILE *socket, const SEARCH_RESULT *result)
-{
+int YAP_Proto_send_result(FILE *socket, const SEARCH_RESULT *result) {
   int i, code;
 
   if (result == NULL || result->keyword_docs_num == 0) {
@@ -113,12 +113,14 @@ int YAP_Proto_send_result(FILE *socket, const SEARCH_RESULT *result)
       YAP_fwrite_exact(socket, &(result->keyword_id), sizeof(unsigned long), 1) != 0 ||
       YAP_fwrite_exact(socket, &(result->keyword_total_num), sizeof(int), 1) != 0 ||
       YAP_fwrite_exact(socket, &(result->keyword_docs_num), sizeof(int), 1) != 0 ||
-      YAP_fwrite_exact(socket, result->docs_list, sizeof(SEARCH_DOCUMENT), result->keyword_docs_num) != 0) {
+      YAP_fwrite_exact(socket, result->docs_list, sizeof(SEARCH_DOCUMENT),
+                       result->keyword_docs_num) != 0) {
     return -1;
   }
 
   for (i = 0; i < result->keyword_docs_num; i++) {
-    if (YAP_fwrite_exact(socket, result->docs_list[i].pos, sizeof(int), result->docs_list[i].pos_len) != 0) {
+    if (YAP_fwrite_exact(socket, result->docs_list[i].pos, sizeof(int),
+                         result->docs_list[i].pos_len) != 0) {
       return -1;
     }
   }
@@ -126,8 +128,7 @@ int YAP_Proto_send_result(FILE *socket, const SEARCH_RESULT *result)
   return 0;
 }
 
-SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
-{
+SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket) {
   int i, code;
   unsigned long keyword_id;
   int keyword_total_num, keyword_docs_num;
@@ -141,7 +142,7 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
     return NULL;
   }
 
-  p = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));
+  p = (SEARCH_RESULT *)YAP_malloc(sizeof(SEARCH_RESULT));
   if (YAP_fread_exact(socket, &keyword_id, sizeof(unsigned long), 1) != 0 ||
       YAP_fread_exact(socket, &keyword_total_num, sizeof(int), 1) != 0 ||
       YAP_fread_exact(socket, &keyword_docs_num, sizeof(int), 1) != 0) {
@@ -161,7 +162,7 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
     free(p);
     return NULL;
   }
-  if ((size_t) keyword_docs_num > (SIZE_MAX / sizeof(SEARCH_DOCUMENT))) {
+  if ((size_t)keyword_docs_num > (SIZE_MAX / sizeof(SEARCH_DOCUMENT))) {
     free(p);
     return NULL;
   }
@@ -169,7 +170,7 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
   p->keyword_id = keyword_id;
   p->keyword_total_num = keyword_total_num;
   p->keyword_docs_num = keyword_docs_num;
-  p->docs_list = (SEARCH_DOCUMENT *) YAP_malloc(sizeof(SEARCH_DOCUMENT) * p->keyword_docs_num);
+  p->docs_list = (SEARCH_DOCUMENT *)YAP_malloc(sizeof(SEARCH_DOCUMENT) * p->keyword_docs_num);
 
   if (YAP_fread_exact(socket, p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num) != 0) {
     free(p->docs_list);
@@ -180,46 +181,52 @@ SEARCH_RESULT *YAP_Proto_recv_result(FILE *socket)
   for (i = 0; i < p->keyword_docs_num; i++) {
     if (p->docs_list[i].pos_len < 0) {
       int j;
-      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      for (j = 0; j < i; j++)
+        free(p->docs_list[j].pos);
       free(p->docs_list);
       free(p);
       return NULL;
     }
     if (p->docs_list[i].pos_len > YAP_PROTO_MAX_POS_PER_DOC) {
       int j;
-      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      for (j = 0; j < i; j++)
+        free(p->docs_list[j].pos);
       free(p->docs_list);
       free(p);
       return NULL;
     }
-    total_pos_count += (uint64_t) p->docs_list[i].pos_len;
-    if (total_pos_count > (uint64_t) keyword_total_num) {
+    total_pos_count += (uint64_t)p->docs_list[i].pos_len;
+    if (total_pos_count > (uint64_t)keyword_total_num) {
       int j;
-      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      for (j = 0; j < i; j++)
+        free(p->docs_list[j].pos);
       free(p->docs_list);
       free(p);
       return NULL;
     }
-    if ((size_t) p->docs_list[i].pos_len > (SIZE_MAX / sizeof(int))) {
+    if ((size_t)p->docs_list[i].pos_len > (SIZE_MAX / sizeof(int))) {
       int j;
-      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      for (j = 0; j < i; j++)
+        free(p->docs_list[j].pos);
       free(p->docs_list);
       free(p);
       return NULL;
     }
-    p->docs_list[i].pos = (int *) YAP_malloc(sizeof(int) * p->docs_list[i].pos_len);
+    p->docs_list[i].pos = (int *)YAP_malloc(sizeof(int) * p->docs_list[i].pos_len);
     if (YAP_fread_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
       int j;
       free(p->docs_list[i].pos);
-      for (j = 0; j < i; j++) free(p->docs_list[j].pos);
+      for (j = 0; j < i; j++)
+        free(p->docs_list[j].pos);
       free(p->docs_list);
       free(p);
       return NULL;
     }
   }
-  if (total_pos_count != (uint64_t) keyword_total_num) {
+  if (total_pos_count != (uint64_t)keyword_total_num) {
     int j;
-    for (j = 0; j < p->keyword_docs_num; j++) free(p->docs_list[j].pos);
+    for (j = 0; j < p->keyword_docs_num; j++)
+      free(p->docs_list[j].pos);
     free(p->docs_list);
     free(p);
     return NULL;

@@ -15,15 +15,14 @@ typedef unsigned long u_long;
 /* 1つの出現位置ファイルで扱うURL数 */
 #define MAX_POS_URL 10000
 
-
 /* DBを開くときのオプション */
 #define YAPPO_DB_WRITE 0
 #define YAPPO_DB_READ 1
 
-/* 
+/*
  *  検索時に使用される各種キャッシュ
 */
-typedef struct{ 
+typedef struct {
   /* 総URL数 */
   unsigned int total_filenum;
 
@@ -62,16 +61,15 @@ typedef struct{
   unsigned char *deletefile;
   unsigned int deletefile_num;
   pthread_mutex_t deletefile_mutex;
-}YAPPO_CACHE;
-
+} YAPPO_CACHE;
 
 /*
  *DBのファイルハンドル
  */
-typedef struct{
-  int  mode;/* dbを開くときのオプション */
+typedef struct {
+  int mode; /* dbを開くときのオプション */
 
-  char *base_dir;/* dbの基本ディレクトリ */
+  char *base_dir; /* dbの基本ディレクトリ */
 
   char *keyword_1byte_name, *postings_1byte_name;
   char *filedata_name;
@@ -183,24 +181,23 @@ typedef struct{
   char *deletefile_tmp;
   FILE *deletefile_file;
 
-
   /* 検索時に使用される各種キャッシュ */
   YAPPO_CACHE *cache;
-}YAPPO_DB_FILES;
+} YAPPO_DB_FILES;
 
-void YAP_Db_filename_set (YAPPO_DB_FILES *p);
+void YAP_Db_filename_set(YAPPO_DB_FILES *p);
 
-void YAP_Db_base_open (YAPPO_DB_FILES *p);
-void YAP_Db_base_close (YAPPO_DB_FILES *p);
+void YAP_Db_base_open(YAPPO_DB_FILES *p);
+void YAP_Db_base_close(YAPPO_DB_FILES *p);
 
-void YAP_Db_linklist_open (YAPPO_DB_FILES *p);
-void YAP_Db_linklist_close (YAPPO_DB_FILES *p);
+void YAP_Db_linklist_open(YAPPO_DB_FILES *p);
+void YAP_Db_linklist_close(YAPPO_DB_FILES *p);
 
-int YAP_Db_pos_open (YAPPO_DB_FILES *p, int id);
-void YAP_Db_pos_close (YAPPO_DB_FILES *p);
+int YAP_Db_pos_open(YAPPO_DB_FILES *p, int id);
+void YAP_Db_pos_close(YAPPO_DB_FILES *p);
 
-void YAP_Db_cache_init (YAPPO_CACHE *p);
-void YAP_Db_cache_destroy (YAPPO_CACHE *p);
-void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p);
+void YAP_Db_cache_init(YAPPO_CACHE *p);
+void YAP_Db_cache_destroy(YAPPO_CACHE *p);
+void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p);
 
 #endif

@@ -24,8 +24,7 @@ YAPPO_CACHE yappod_core_cache;
 /*
  *検索結果を標示
  */
-void search_result_print (YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p)
-{
+void search_result_print(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) {
   int i;
   FILEDATA filedata;
 
@@ -35,35 +34,34 @@ void search_result_print (YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p)
     printf("Hit num: %d\n\n", p->keyword_docs_num);
     for (i = 0; i < p->keyword_docs_num; i++) {
       if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
-	struct tm *last_tm = localtime(&(filedata.lastmod));
-	
-	printf("----------------------------------------\n");
-        printf("List: %d/%d\t[%d]\t(domainid:%d)\n", i, p->keyword_docs_num, p->docs_list[i].fileindex, filedata.domainid);
-	printf("%s(SCORE:%.1f)\n", filedata.title, p->docs_list[i].score);
-	printf("URL:%s\n", filedata.url);
-	printf("(size:%d)(date:%d/%d/%d)\n", filedata.size, last_tm->tm_year + 1900, last_tm->tm_mon + 1, last_tm->tm_mday);
-	printf("\n");
-	
-	YAP_Index_Filedata_free(&filedata);
-      }else{
-	printf("\nError: %d\n", p->docs_list[i].fileindex);
+        struct tm *last_tm = localtime(&(filedata.lastmod));
+
+        printf("----------------------------------------\n");
+        printf("List: %d/%d\t[%d]\t(domainid:%d)\n", i, p->keyword_docs_num,
+               p->docs_list[i].fileindex, filedata.domainid);
+        printf("%s(SCORE:%.1f)\n", filedata.title, p->docs_list[i].score);
+        printf("URL:%s\n", filedata.url);
+        printf("(size:%d)(date:%d/%d/%d)\n", filedata.size, last_tm->tm_year + 1900,
+               last_tm->tm_mon + 1, last_tm->tm_mday);
+        printf("\n");
+
+        YAP_Index_Filedata_free(&filedata);
+      } else {
+        printf("\nError: %d\n", p->docs_list[i].fileindex);
       }
     }
   }
-
 }
 
 /*メイン*/
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   YAPPO_DB_FILES yappo_db_files;
   int i;
   char **keyword_list = NULL;
-  int op = 0;/*0=AND 1=OR*/
+  int op = 0; /*0=AND 1=OR*/
   int keyword_list_num = 0;
 
   memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
-
 
   /*
    *オプションを取得
@@ -71,27 +69,27 @@ int main(int argc, char *argv[])
   if (argc > 1) {
     i = 1;
     while (1) {
-      if ( argc == i)
-	break;
+      if (argc == i)
+        break;
 
-      if (! strcmp(argv[i], "-l")) {
-	/*インデックスディレクトリを取得*/
-	i++;
-	if (argc == i)
-	  break;
+      if (!strcmp(argv[i], "-l")) {
+        /*インデックスディレクトリを取得*/
+        i++;
+        if (argc == i)
+          break;
         yappo_db_files.base_dir = argv[i];
-      } else if (! strcmp(argv[i], "-a")) {
-	/*AND*/
-	op = 0;
-      } else if (! strcmp(argv[i], "-o")) {
-	/*OR*/
-	op = 1;
+      } else if (!strcmp(argv[i], "-a")) {
+        /*AND*/
+        op = 0;
+      } else if (!strcmp(argv[i], "-o")) {
+        /*OR*/
+        op = 1;
       } else {
-	/*キーワードを取得*/
-	keyword_list = (char **) YAP_realloc(keyword_list, sizeof(char *) * (keyword_list_num + 1));
-	keyword_list[keyword_list_num] = (char *) YAP_malloc( strlen(argv[i]) + 1);
-	strcpy( keyword_list[keyword_list_num], argv[i]);
-	keyword_list_num++;
+        /*キーワードを取得*/
+        keyword_list = (char **)YAP_realloc(keyword_list, sizeof(char *) * (keyword_list_num + 1));
+        keyword_list[keyword_list_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
+        strcpy(keyword_list[keyword_list_num], argv[i]);
+        keyword_list_num++;
       }
 
       i++;
@@ -113,11 +111,11 @@ int main(int argc, char *argv[])
   YAP_Db_base_open(&yappo_db_files);
   YAP_Db_cache_load(&yappo_db_files, &yappod_core_cache);
   YAP_Db_linklist_open(&yappo_db_files);
-  
-  if(0){
+
+  if (0) {
     int *list, list_len;
     /*    YAP_Index_get_keyword2( keyword_list[0], &list, &list_len);*/
-    printf("address %p = %d = %d\n", (void *) list, list_len, list[0]);
+    printf("address %p = %d = %d\n", (void *)list, list_len, list[0]);
     exit(-1);
   }
 
@@ -139,6 +137,5 @@ int main(int argc, char *argv[])
   YAP_Db_linklist_close(&yappo_db_files);
   YAP_Db_base_close(&yappo_db_files);
 
-  YAP_Db_cache_destroy(&yappod_core_cache); 
-
+  YAP_Db_cache_destroy(&yappod_core_cache);
 }

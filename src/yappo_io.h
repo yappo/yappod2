@@ -60,7 +60,8 @@ int __YAP_fseek_end(char *filename, int line, FILE *fp, long offset);
  */
 int __YAP_fread_exact(char *filename, int line, FILE *fp, void *ptr, size_t size, size_t nmemb);
 /** @brief 呼び出し位置情報付きの `__YAP_fread_exact` ラッパー。通常はこちらを使います。 */
-#define YAP_fread_exact(fp, ptr, size, nmemb) (__YAP_fread_exact(__FILE__, __LINE__, fp, ptr, size, nmemb))
+#define YAP_fread_exact(fp, ptr, size, nmemb)                                                      \
+  (__YAP_fread_exact(__FILE__, __LINE__, fp, ptr, size, nmemb))
 
 /**
  * @brief 指定要素数を上限に、読めた分だけ読み込みます。
@@ -77,7 +78,8 @@ int __YAP_fread_exact(char *filename, int line, FILE *fp, void *ptr, size_t size
  */
 size_t __YAP_fread_try(char *filename, int line, FILE *fp, void *ptr, size_t size, size_t nmemb);
 /** @brief 呼び出し位置情報付きの `__YAP_fread_try` ラッパー。通常はこちらを使います。 */
-#define YAP_fread_try(fp, ptr, size, nmemb) (__YAP_fread_try(__FILE__, __LINE__, fp, ptr, size, nmemb))
+#define YAP_fread_try(fp, ptr, size, nmemb)                                                        \
+  (__YAP_fread_try(__FILE__, __LINE__, fp, ptr, size, nmemb))
 
 /**
  * @brief 指定要素数を「必ず」書き込みます。
@@ -88,8 +90,10 @@ size_t __YAP_fread_try(char *filename, int line, FILE *fp, void *ptr, size_t siz
  * @param nmemb 要素数
  * @return 0:成功 / -1:失敗
  */
-int __YAP_fwrite_exact(char *filename, int line, FILE *fp, const void *ptr, size_t size, size_t nmemb);
+int __YAP_fwrite_exact(char *filename, int line, FILE *fp, const void *ptr, size_t size,
+                       size_t nmemb);
 /** @brief 呼び出し位置情報付きの `__YAP_fwrite_exact` ラッパー。通常はこちらを使います。 */
-#define YAP_fwrite_exact(fp, ptr, size, nmemb) (__YAP_fwrite_exact(__FILE__, __LINE__, fp, ptr, size, nmemb))
+#define YAP_fwrite_exact(fp, ptr, size, nmemb)                                                     \
+  (__YAP_fwrite_exact(__FILE__, __LINE__, fp, ptr, size, nmemb))
 
 #endif

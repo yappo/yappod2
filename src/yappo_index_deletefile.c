@@ -6,8 +6,7 @@
 #include "yappo_io.h"
 #include "yappo_index_deletefile.h"
 
-static int YAP_Deletefile_read_flag_byte(YAPPO_DB_FILES *ydfp, int seek, unsigned char *out)
-{
+static int YAP_Deletefile_read_flag_byte(YAPPO_DB_FILES *ydfp, int seek, unsigned char *out) {
   size_t got;
 
   *out = 0;
@@ -27,18 +26,17 @@ static int YAP_Deletefile_read_flag_byte(YAPPO_DB_FILES *ydfp, int seek, unsigne
 /*
  *
  */
-int YAP_Index_Deletefile_get(YAPPO_DB_FILES *ydfp, int fileindex)
-{
+int YAP_Index_Deletefile_get(YAPPO_DB_FILES *ydfp, int fileindex) {
   int seek, bit;
   unsigned char c = 0;
 
-  if ((unsigned int) fileindex > ydfp->total_filenum) {
+  if ((unsigned int)fileindex > ydfp->total_filenum) {
     /*対象となるIDは存在していない*/
     return -1;
   }
 
   seek = fileindex / 8;
-  bit  = fileindex % 8;
+  bit = fileindex % 8;
 
   if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;
@@ -56,8 +54,7 @@ int YAP_Index_Deletefile_get(YAPPO_DB_FILES *ydfp, int fileindex)
 /*
  *
  */
-int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex)
-{
+int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex) {
   int seek, bit;
   unsigned char c = 0;
 
@@ -67,7 +64,7 @@ int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex)
   }
 
   seek = fileindex / 8;
-  bit  = fileindex % 8;
+  bit = fileindex % 8;
 
   if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;
@@ -92,8 +89,7 @@ int YAP_Index_Deletefile_put(YAPPO_DB_FILES *ydfp, int fileindex)
 /*
  *
  */
-int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex)
-{
+int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex) {
   int seek, bit;
   unsigned char c = 0;
 
@@ -103,7 +99,7 @@ int YAP_Index_Deletefile_del(YAPPO_DB_FILES *ydfp, int fileindex)
   }
 
   seek = fileindex / 8;
-  bit  = fileindex % 8;
+  bit = fileindex % 8;
 
   if (YAP_Deletefile_read_flag_byte(ydfp, seek, &c) != 0) {
     return -1;

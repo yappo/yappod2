@@ -7,10 +7,9 @@
 #include <errno.h>
 #include <stddef.h>
 
-int __YAP_stat(char *filename, int line, const char *path, struct stat *st)
-{
-  (void) filename;
-  (void) line;
+int __YAP_stat(char *filename, int line, const char *path, struct stat *st) {
+  (void)filename;
+  (void)line;
 
   if (path == NULL || st == NULL) {
     errno = EINVAL;
@@ -22,8 +21,7 @@ int __YAP_stat(char *filename, int line, const char *path, struct stat *st)
   return 0;
 }
 
-int __YAP_is_reg(char *filename, int line, const char *path)
-{
+int __YAP_is_reg(char *filename, int line, const char *path) {
   struct stat st;
   if (__YAP_stat(filename, line, path, &st) != 0) {
     return 0;
@@ -31,8 +29,7 @@ int __YAP_is_reg(char *filename, int line, const char *path)
   return S_ISREG(st.st_mode) ? 1 : 0;
 }
 
-int __YAP_is_dir(char *filename, int line, const char *path)
-{
+int __YAP_is_dir(char *filename, int line, const char *path) {
   struct stat st;
   if (__YAP_stat(filename, line, path, &st) != 0) {
     return 0;

@@ -11,14 +11,11 @@
 #include "yappo_alloc.h"
 #include "yappo_io.h"
 
-
-
 /*
  *keyword_idをキーに検索をして位置リストを取得
  */
-int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
-		      unsigned char **postings_buf, int *postings_buf_len)
-{
+int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned char **postings_buf,
+                      int *postings_buf_len) {
   int ret;
   int pos_size, pos_index;
   int seek;
@@ -44,7 +41,6 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
     return -1;
   }
 
-
   /*indexの読みこみ*/
   if (YAP_fseek_set(ydfp->pos_index_file, seek) != 0) {
     return -1;
@@ -54,9 +50,8 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
     return -1;
   }
 
-
   /*データの読みこみ*/
-  *postings_buf = (unsigned char *) YAP_malloc(pos_size);
+  *postings_buf = (unsigned char *)YAP_malloc(pos_size);
   if (YAP_fseek_set(ydfp->pos_file, pos_index) != 0 ||
       YAP_fread_exact(ydfp->pos_file, *postings_buf, 1, pos_size) != 0) {
     free(*postings_buf);
@@ -72,9 +67,8 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
  *keyword_idをキーに検索をして位置リストを設定
  *常にファイルの末尾に追加する
  */
-int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
-		      unsigned char *postings_buf, int postings_buf_len)
-{
+int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned char *postings_buf,
+                      int postings_buf_len) {
   int pos_index;
   int seek;
 
@@ -112,8 +106,7 @@ int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
 /*
  *keyword_idをキーに検索をして位置リストを削除
  */
-int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id)
-{
+int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id) {
   int c = 0;
   int seek;
 
@@ -139,13 +132,11 @@ int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id)
   return 0;
 }
 
-
 /*
  *位置情報ファイルのごみ整理を行なう
  *位置情報ファイルをopenしているプロセスが無いことが前堤
  */
-int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_index)
-{
+int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_index) {
   int i;
   long pos_num;
   int seek, index, index_tmp, size, tmp;
@@ -158,9 +149,9 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   printf("Start YAP_Index_Pos_gc\n");
 
   /*待避ファイル名の作成*/
-  pos_tmp = (char *) YAP_malloc(strlen(pos) + 5);
+  pos_tmp = (char *)YAP_malloc(strlen(pos) + 5);
   sprintf(pos_tmp, "%s_tmp", pos);
-  pos_index_tmp = (char *) YAP_malloc(strlen(pos_index) + 5);
+  pos_index_tmp = (char *)YAP_malloc(strlen(pos_index) + 5);
   sprintf(pos_index_tmp, "%s_tmp", pos_index);
 
   /*ファイルを開く*/
@@ -169,22 +160,23 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   pos_index_file = fopen(pos_index, "r");
   pos_tmp_file = fopen(pos_tmp, "w");
   pos_index_tmp_file = fopen(pos_index_tmp, "w");
-  if (pos_file == NULL ||
-      pos_size_file == NULL ||
-      pos_index_file == NULL ||
-      pos_tmp_file == NULL ||
+  if (pos_file == NULL || pos_size_file == NULL || pos_index_file == NULL || pos_tmp_file == NULL ||
       pos_index_tmp_file == NULL) {
     fprintf(stderr, "fopen error: pos files\n");
-    if (pos_file != NULL) fclose(pos_file);
-    if (pos_size_file != NULL) fclose(pos_size_file);
-    if (pos_index_file != NULL) fclose(pos_index_file);
-    if (pos_tmp_file != NULL) fclose(pos_tmp_file);
-    if (pos_index_tmp_file != NULL) fclose(pos_index_tmp_file);
+    if (pos_file != NULL)
+      fclose(pos_file);
+    if (pos_size_file != NULL)
+      fclose(pos_size_file);
+    if (pos_index_file != NULL)
+      fclose(pos_index_file);
+    if (pos_tmp_file != NULL)
+      fclose(pos_tmp_file);
+    if (pos_index_tmp_file != NULL)
+      fclose(pos_index_tmp_file);
     free(pos_tmp);
     free(pos_index_tmp);
     return -1;
   }
-
 
   /*基本情報をコピーする*/
   if (YAP_fread_exact(pos_file, &pos_num, sizeof(long), 1) != 0 ||
@@ -203,7 +195,6 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
     return -1;
   }
 
-
   if (YAP_fseek_set(pos_size_file, sizeof(int)) != 0 ||
       YAP_fseek_set(pos_index_file, sizeof(int)) != 0 ||
       YAP_fseek_set(pos_index_tmp_file, sizeof(int)) != 0) {
@@ -218,7 +209,7 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   }
 
   /*位置情報のコピー*/
-  for (i = 1; (unsigned int) i <= ydfp->total_keywordnum; i++) {
+  for (i = 1; (unsigned int)i <= ydfp->total_keywordnum; i++) {
     seek = sizeof(int) * i;
 
     /*サイズの読みこみ*/
@@ -237,11 +228,10 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
 
       /*データの読みこみ*/
       if (buf_len < size) {
-	buf = (char *) YAP_realloc(buf, size);
-	buf_len = size;
+        buf = (char *)YAP_realloc(buf, size);
+        buf_len = size;
       }
-      if (YAP_fseek_set(pos_file, index) != 0 ||
-          YAP_fread_exact(pos_file, buf, 1, size) != 0) {
+      if (YAP_fseek_set(pos_file, index) != 0 || YAP_fread_exact(pos_file, buf, 1, size) != 0) {
         break;
       }
 
@@ -263,7 +253,7 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   if (buf != NULL) {
     free(buf);
   }
-  
+
   /*ファイルを閉じる*/
   fclose(pos_file);
   fclose(pos_size_file);
@@ -272,12 +262,18 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
   fclose(pos_index_tmp_file);
 
   /*ファイルを入れ換える*/
-  if (fork()) { int s; wait(&s);} else {
-    execl("/bin/mv", "/bin/mv", pos_tmp, pos, (char *) 0);
+  if (fork()) {
+    int s;
+    wait(&s);
+  } else {
+    execl("/bin/mv", "/bin/mv", pos_tmp, pos, (char *)0);
     exit(0);
   }
-  if (fork()) { int s; wait(&s);} else {
-    execl("/bin/mv", "/bin/mv", pos_index_tmp, pos_index, (char *) 0);
+  if (fork()) {
+    int s;
+    wait(&s);
+  } else {
+    execl("/bin/mv", "/bin/mv", pos_index_tmp, pos_index, (char *)0);
     exit(0);
   }
 
