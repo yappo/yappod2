@@ -4,3 +4,5 @@ http://example.com/doc3	ADD	別の文書	100	サンプル本文です。URLも�
 http://example.com/doc4	ADD	削除対象	100	この文書は後で削除されます。
 http://example.com/doc4	DELETE	削除対象	100	この文書は削除されます。
 http://example.com/skip	ADD	短い	10	小さすぎて無視される
+http://example.com/doc5	ADD	混在文書	120	日本語とabc123の混在テキストです。連絡先は foo+bar@example.com です。
+http://example.com/doc6	ADD	記号文書	120	token-A token_B token/C を含む記号境界テストです。
