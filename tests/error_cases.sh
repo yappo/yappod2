@@ -16,6 +16,7 @@ INDEX_DIR_OK7="${TMP_ROOT}/ok7"
 INDEX_DIR_OK8="${TMP_ROOT}/ok8"
 INDEX_DIR_OK9="${TMP_ROOT}/ok9"
 INDEX_DIR_OK10="${TMP_ROOT}/ok10"
+INDEX_DIR_OK11="${TMP_ROOT}/ok11"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -111,13 +112,35 @@ s.close()
 PY
 }
 
+send_http_capture() {
+  local payload="$1"
+  python3 - "$payload" <<'PY'
+import socket, sys
+payload = sys.argv[1].encode("utf-8")
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+s.shutdown(socket.SHUT_WR)
+chunks = []
+while True:
+    try:
+        chunk = s.recv(4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    chunks.append(chunk)
+s.close()
+sys.stdout.buffer.write(b"".join(chunks))
+PY
+}
+
 send_http_long_query() {
   local length="$1"
   python3 - "$length" <<'PY'
 import socket, sys
 length = int(sys.argv[1])
 query = "A" * length
-payload = f"GET / d/100/OR/0-10?{query} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode("utf-8")
+payload = f"GET /d/100/OR/0-10?{query} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode("utf-8")
 s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
 s.sendall(payload)
 try:
@@ -220,7 +243,7 @@ make_index "${INDEX_DIR_OK8}"
 truncate -s 1 "${INDEX_DIR_OK8}/score"
 start_daemons "${INDEX_DIR_OK8}"
 send_http_raw $'GET / bad\r\n\r\n'
-send_http_raw $'GET / d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
+send_http_raw $'GET /d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
 assert_daemons_alive "malformed or broken-index request"
 stop_daemons
 
@@ -229,7 +252,7 @@ make_index "${INDEX_DIR_OK9}"
 start_daemons "${INDEX_DIR_OK9}"
 kill "${CORE_PID}" 2>/dev/null || true
 sleep 0.2
-send_http_raw $'GET / d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
+send_http_raw $'GET /d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n'
 if ! kill -0 "${FRONT_PID}" 2>/dev/null; then
   echo "front daemon crashed after core disconnect." >&2
   exit 1
@@ -246,15 +269,23 @@ stop_daemons
 # Case 2-11: 不正UTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
 make_index "${INDEX_DIR_OK10}"
 start_daemons "${INDEX_DIR_OK10}"
-send_http_raw_hex "474554202f20642f3130302f4f522f302d31303fffFE20485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
+send_http_raw_hex "474554202f642f3130302f4f522f302d31303ffffe20485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
 assert_daemons_alive "invalid utf-8 query bytes"
 stop_daemons
 
 # Case 2-12: 途中で切れたUTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
 make_index "${INDEX_DIR_OK10}"
 start_daemons "${INDEX_DIR_OK10}"
-send_http_raw_hex "474554202f20642f3130302f4f522f302d31303fe38120485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
+send_http_raw_hex "474554202f642f3130302f4f522f302d31303fe38120485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
 assert_daemons_alive "truncated utf-8 query bytes"
+stop_daemons
+
+# Case 2-13: 標準HTTPパス形式(/dict/...)でも検索できること
+make_index "${INDEX_DIR_OK11}"
+start_daemons "${INDEX_DIR_OK11}"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+echo "${RESP}" | grep -q "http://example.com/doc1"
+assert_daemons_alive "standard-path request"
 stop_daemons
 
 exit 0

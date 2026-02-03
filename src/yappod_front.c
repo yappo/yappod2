@@ -264,17 +264,76 @@ static int YAP_readline_alloc(FILE *socket, char **line_out)
   return 1;
 }
 
-static int YAP_parse_request_line(const char *line, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
+static int YAP_parse_request_target(const char *target, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
 {
-  char fmt[128];
+  char path[BUF_SIZE];
+  const char *query;
+  const char *path_start;
+  int path_len;
+  int keyword_len;
+  int n = 0;
+  char fmt[96];
   int w = BUF_SIZE - 1;
 
-  snprintf(fmt, sizeof(fmt),
-           "GET / %%%d[a-zA-Z]/%%d/%%%d[a-zA-Z]/%%d-%%d?%%%ds HTTP/1.0",
-           w, w, w);
-  if (sscanf(line, fmt, dict, max_size, op, start, end, keyword) == 6) {
-    return 0;
+  if (target == NULL || target[0] == '\0') {
+    return -1;
   }
+
+  path_start = target;
+  while (*path_start == ' ') {
+    path_start++;
+  }
+  while (*path_start == '/') {
+    path_start++;
+  }
+  if (*path_start == '\0') {
+    return -1;
+  }
+
+  query = strchr(path_start, '?');
+  if (query == NULL) {
+    return -1;
+  }
+
+  path_len = (int) (query - path_start);
+  keyword_len = (int) strlen(query + 1);
+  if (path_len <= 0 || path_len >= BUF_SIZE || keyword_len <= 0 || keyword_len >= BUF_SIZE) {
+    return -1;
+  }
+
+  memcpy(path, path_start, (size_t) path_len);
+  path[path_len] = '\0';
+  strcpy(keyword, query + 1);
+
+  snprintf(fmt, sizeof(fmt), "%%%d[^/]/%%d/%%%d[^/]/%%d-%%d%%n", w, w);
+  if (sscanf(path, fmt, dict, max_size, op, start, end, &n) != 5) {
+    return -1;
+  }
+  if (path[n] != '\0') {
+    return -1;
+  }
+  if (dict[0] == '\0' || op[0] == '\0' || keyword[0] == '\0') {
+    return -1;
+  }
+
+  return 0;
+}
+
+static int YAP_parse_request_line(const char *line, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
+{
+  char method[16];
+  char target[BUF_SIZE];
+  char version[32];
+
+  if (sscanf(line, "%15s %1023s %31s", method, target, version) == 3) {
+    if (strcmp(method, "GET") != 0 || strncmp(version, "HTTP/", 5) != 0) {
+      return -1;
+    }
+    if (YAP_parse_request_target(target, dict, max_size, op, start, end, keyword) == 0) {
+      return 0;
+    }
+  }
+
   return -1;
 }
 
