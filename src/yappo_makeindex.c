@@ -94,6 +94,43 @@ static int YAP_parse_int_option(const char *value, int *out)
   return 0;
 }
 
+static int YAP_parse_index_line(char *line, char **url, char **command, char **title, int *body_size, char **body)
+{
+  char *fields[5];
+  char *tab;
+  int i;
+
+  if (line == NULL || line[0] == '\0') {
+    return -1;
+  }
+
+  fields[0] = line;
+  for (i = 0; i < 4; i++) {
+    tab = strchr(fields[i], '\t');
+    if (tab == NULL) {
+      return -1;
+    }
+    *tab = '\0';
+    fields[i + 1] = tab + 1;
+  }
+
+  if (fields[0][0] == '\0' || fields[1][0] == '\0' || fields[3][0] == '\0') {
+    return -1;
+  }
+  if (strcmp(fields[1], "ADD") != 0 && strcmp(fields[1], "DELETE") != 0) {
+    return -1;
+  }
+  if (YAP_parse_int_option(fields[3], body_size) != 0) {
+    return -1;
+  }
+
+  *url = fields[0];
+  *command = fields[1];
+  *title = fields[2];
+  *body = fields[4];
+  return 0;
+}
+
 static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, int *keyword_total_num, int *keyword_docs_num)
 {
   if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
@@ -454,6 +491,8 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
   INDEX_STACK index_stack[MAX_STACK_SIZE];
   FILEDATA old_filedata;
   int stack_count = 0;/*メモリに確保されている処理済のurl数*/
+  int input_line_count = 0;
+  int malformed_line_count = 0;
 
   gz_in = (char *) YAP_malloc(GZ_BUF_SIZE);
   line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
@@ -485,67 +524,36 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
     if ( gz_in[GZ_BUF_SIZE-2] == '\n' || strlen(gz_in) < GZ_BUF_SIZE - 1) {
       /*一行分取得できたので、ファイル毎の処理を行なう*/
-      char *url, *command, *title, *body_size_c, *body, *tokp_start, *tokp_end, *body_tmp;
+      char *url, *command, *title, *body, *body_tmp;
       int line_buf_len = strlen(line_buf);
       int domainid = 0;
       int body_size;
       int fileindex;
 
-      /*最後の\nを削除する*/
-      line_buf[line_buf_len-1] = '\0';
-
-      /*URLタイトル本文の取得
-      //url\tcommand\ttitle\tbody_size\tbody\n
-      */
-      tokp_start = line_buf;
-      tokp_end = line_buf;
-
-      url = tokp_start;
-      while (*tokp_end) {
-	if (*tokp_end == '\t') {
-	  *tokp_end = '\0';
-	  tokp_end++;
-	  tokp_start = tokp_end;
-	  break;
-	}
-	tokp_end++;
+      input_line_count++;
+      if (line_buf_len == 0) {
+	free(line_buf);
+	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+	continue;
       }
-
-      command = tokp_start;
-      while (*tokp_end) {
-	if (*tokp_end == '\t') {
-	  *tokp_end = '\0';
-	  tokp_end++;
-	  tokp_start = tokp_end;
-	  break;
-	}
-	tokp_end++;
+      if (line_buf[line_buf_len - 1] == '\n') {
+	line_buf[--line_buf_len] = '\0';
       }
-
-      title = tokp_start;
-      while (*tokp_end) {
-	if (*tokp_end == '\t') {
-	  *tokp_end = '\0';
-	  tokp_end++;
-	  tokp_start = tokp_end;
-	  break;
-	}
-	tokp_end++;
+      if (line_buf_len > 0 && line_buf[line_buf_len - 1] == '\r') {
+	line_buf[--line_buf_len] = '\0';
       }
-
-      body_size_c = tokp_start;
-      while (*tokp_end) {
-	if (*tokp_end == '\t') {
-	  *tokp_end = '\0';
-	  tokp_end++;
-	  tokp_start = tokp_end;
-	  break;
-	}
-	tokp_end++;
+      if (line_buf[0] == '\0') {
+	free(line_buf);
+	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+	continue;
       }
-      body_size = atoi(body_size_c);
-
-      body = tokp_start;
+      if (YAP_parse_index_line(line_buf, &url, &command, &title, &body_size, &body) != 0) {
+	malformed_line_count++;
+	fprintf(stderr, "WARN: skip malformed input line: %s:%d\n", gz_filepath, input_line_count);
+	free(line_buf);
+	line_buf = (char *) YAP_malloc(GZ_BUF_SIZE);
+	continue;
+      }
 
 
       if (body_size < min_body_size || body_size > max_body_size) {
@@ -822,6 +830,9 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
   }
 
   printf("SLEEPING END\n");
+  if (malformed_line_count > 0) {
+    fprintf(stderr, "WARN: skipped malformed input lines: %s: %d\n", gz_filepath, malformed_line_count);
+  }
 
   return 0;
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
+FIXTURE_MALFORMED="${ROOT_DIR}/tests/fixtures/index_malformed.txt"
 
 TMP_ROOT="$(mktemp -d)"
 INDEX_DIR_OK="${TMP_ROOT}/ok"
@@ -17,6 +18,7 @@ INDEX_DIR_OK8="${TMP_ROOT}/ok8"
 INDEX_DIR_OK9="${TMP_ROOT}/ok9"
 INDEX_DIR_OK10="${TMP_ROOT}/ok10"
 INDEX_DIR_OK11="${TMP_ROOT}/ok11"
+INDEX_DIR_OK12="${TMP_ROOT}/ok12"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -287,5 +289,12 @@ RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?OpenAI2025 HTTP/1.1\r\nHo
 echo "${RESP}" | grep -q "http://example.com/doc1"
 assert_daemons_alive "standard-path request"
 stop_daemons
+
+# Case 2-14: 不正行を含む入力でも有効行の索引を継続すること
+mkdir -p "${INDEX_DIR_OK12}/pos"
+"${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE_MALFORMED}" -d "${INDEX_DIR_OK12}" >/dev/null
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "OpenAI2025" | grep -q "http://example.com/doc1"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "検索用のテスト本文です" | grep -q "http://example.com/doc2"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "badcmdtoken999" | grep -q "Hit num: 0\\|not found"
 
 exit 0

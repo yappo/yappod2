@@ -34,6 +34,7 @@ URL\tCOMMAND\tTITLE\tBODY_SIZE\tBODY
 - `ADD` は文書をインデックスに追加します。
 - `DELETE` はURLをインデックスから削除します。
 - `BODY` には改行やタブを含めてはいけません。
+- フォーマット不正行（列不足、`COMMAND` 不正、`BODY_SIZE` 非数値）は警告を出してスキップし、処理は継続します。
 
 `sample.gz`（UTF-8）というサンプルを置いたので参考にしてください。
 
