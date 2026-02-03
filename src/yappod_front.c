@@ -114,37 +114,75 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
 /*
  *ファイルポインタから一行分読み込みメモリを割り当てて返す
  */
-char *readline (FILE *socket)
+static int YAP_readline_alloc(FILE *socket, char **line_out)
 {
   char *socket_buf, *line_buf;
+  size_t line_len = 0;
 
+  *line_out = NULL;
   socket_buf = (char *) YAP_malloc(BUF_SIZE);
   line_buf = (char *) YAP_malloc(BUF_SIZE);
   line_buf[0] = '\0';
 
-  while (! feof(socket)) { 
+  while (1) {
+    size_t chunk_len;
     memset(socket_buf, 0, BUF_SIZE);
-
-    if ( fgets(socket_buf, BUF_SIZE, socket) ==NULL) {
-      /* エラー */
+    if (fgets(socket_buf, BUF_SIZE, socket) == NULL) {
+      if (ferror(socket)) {
+        free(socket_buf);
+        free(line_buf);
+        return -1;
+      }
       break;
     }
 
-    if (line_buf[0] != '\0') {
-      /* 追記 */
-      int new_buf_len = strlen(line_buf) + strlen(socket_buf) + 1;
-      line_buf = (char *) YAP_realloc(line_buf, new_buf_len);
-    }
-    line_buf = (char *) strcat(line_buf, socket_buf);
+    chunk_len = strlen(socket_buf);
+    line_buf = (char *) YAP_realloc(line_buf, line_len + chunk_len + 1);
+    memcpy(line_buf + line_len, socket_buf, chunk_len + 1);
+    line_len += chunk_len;
 
-    if ( socket_buf[BUF_SIZE-2] == '\n' || strlen(socket_buf) < BUF_SIZE - 1) {
-      /* 一行分取得できたので終了 */
+    if (chunk_len < (size_t) (BUF_SIZE - 1) || socket_buf[chunk_len - 1] == '\n') {
       break;
     }
   }
 
   free(socket_buf);
-  return line_buf;
+  if (line_len == 0) {
+    free(line_buf);
+    return 0;
+  }
+  *line_out = line_buf;
+  return 1;
+}
+
+static int YAP_parse_request_line(const char *line, char *dict, int *max_size, char *op, int *start, int *end, char *keyword)
+{
+  char fmt[128];
+  int w = BUF_SIZE - 1;
+
+  snprintf(fmt, sizeof(fmt),
+           "GET / %%%d[a-zA-Z]/%%d/%%%d[a-zA-Z]/%%d-%%d?%%%ds HTTP/1.0",
+           w, w, w);
+  if (sscanf(line, fmt, dict, max_size, op, start, end, keyword) == 6) {
+    return 0;
+  }
+  return -1;
+}
+
+static int YAP_drain_http_headers(FILE *socket)
+{
+  while (1) {
+    char *line = NULL;
+    int read_rc = YAP_readline_alloc(socket, &line);
+    if (read_rc <= 0) {
+      return read_rc;
+    }
+    if ((line[0] == '\r' && line[1] == '\n') || (line[0] == '\n' && line[1] == '\0')) {
+      free(line);
+      return 1;
+    }
+    free(line);
+  }
 }
 
 /*
@@ -207,7 +245,9 @@ void *thread_server (void *ip)
     SEARCH_RESULT *result, *left, *right;
     socklen_t sockaddr_len = sizeof(yap_sin);
     int accept_socket = -1;
-    char *line, *line_buf;
+    int read_rc;
+    int header_rc;
+    char *line = NULL;
     FILE *socket = NULL;
     char *dict, *op, *keyword;/* リクエスト */
     int max_size;
@@ -219,131 +259,118 @@ void *thread_server (void *ip)
       continue;
     }
 
-        while (! feof(socket)) {
-      line = readline(socket);
-      
-      /* バッファの初期化 */
-      dict = (char *) YAP_malloc(BUF_SIZE);
-      op = (char *) YAP_malloc(BUF_SIZE);
-      keyword = (char *) YAP_malloc(BUF_SIZE);
-      dict[0] = '\0';
-      op[0] = '\0';
-      keyword[0] = '\0';
-
-      {
-        char fmt[128];
-        int w = BUF_SIZE - 1;
-        snprintf(fmt, sizeof(fmt),
-                 "GET / %%%d[a-zA-Z]/%%d/%%%d[a-zA-Z]/%%d-%%d?%%%ds HTTP/1.0",
-                 w, w, w);
-        if (sscanf(line, fmt, dict, &max_size, op, &start, &end, keyword) == 6) {
-	printf("ok:%d: %s/%d/%s/%s (%d-%d)\n", p->id, dict, max_size, op, keyword, start, end);
-
-	if (strlen(dict) == 0 || max_size == 0 || strlen(op) == 0 || strlen(keyword) == 0) {
-	  /* バッドリクエスト */
-	  YAP_send_bad_request(accept_socket, p->id);
-	  printf("bad:%d:\n", p->id);
-	} else {
-
-	  /*
-	   *正常なリクエスト
-	   *ヘッダが終了するまで入力を続ける
-	   */
-	  while (! feof(socket)) {
-	    char cr, lf;
-	    line_buf = readline(socket);
-	    cr = line_buf[0];
-	    lf = line_buf[1];
-	    free(line_buf);
-	    if (cr == '\r' && lf == '\n') {
-	      break;
-	    }
-	  }
-
-
-	  /*
-	   *各検索サーバに検索要求を出す。
-	   */
-	  for (i = 0; i < p->server_num; i++) {
-	    if (YAP_Proto_send_query(p->server_socket[i], dict, max_size, op, keyword) != 0) {
-              fprintf(stderr, "ERROR: front thread %d failed to send query to core[%d]\n", p->id, i);
-	      continue;
-	    }
-
-	    fflush(p->server_socket[i]);
-	  }
-
-
-	  YAP_Db_filename_set(&yappo_db_files);
-	  YAP_Db_base_open(&yappo_db_files);
-	  YAP_Db_linklist_open(&yappo_db_files);
-
-	  /* 検索結果を受け取りマージする */
-	  result = YAP_Proto_recv_result(p->server_socket[0]);
-
-	  for (i = 1; i < p->server_num; i++) {
-	    left = result;
-	    /* 右を検索 */
-	    right = YAP_Proto_recv_result(p->server_socket[i]);
-
-	    result = YAP_Search_op_or(left, right);
-	    if (result == NULL) {
-	      /* どちらかの検索結果が無かった */
-	      if (left != NULL) {
-		result = left;
-		left = NULL;
-	      } else if (right != NULL) {
-		result = right;
-		right = NULL;
-	      }
-	    }
-
-
-	    /* メモリ解放 */
-	    if (left != NULL) {
-	      YAP_Search_result_free(left);
-	      free(left);
-	    }
-	    if (right != NULL) {
-	      YAP_Search_result_free(right);
-	      free(right);
-	    }
-	    
-	    if (result == NULL) {
-	      /* 検索不一致 */
-	      break;
-	    }
-	  }
-
-	  /* 検索結果内のページ同士のリンク関係によりスコアを可変する */
-	  YAP_Linklist_Score(&yappo_db_files, result);
-	  /* スコア順ソート */
-	  YAP_Search_result_sort_score(result);
-	  /* 結果出力 */
-	  search_result_print(&yappo_db_files, socket, result, start, end);
-	  
-	  if (result != NULL) {
-	    printf( "hit %d\n", result->keyword_docs_num);
-	    YAP_Search_result_free(result);
-	    free(result);
-	  }
-
-	  YAP_Db_linklist_close(&yappo_db_files);
-	  YAP_Db_base_close(&yappo_db_files);
-
-	}
-	
-	free(dict); free(op); free(keyword); free(line);
-	break;
-      } else {
-	YAP_send_bad_request(accept_socket, p->id);
-	printf("bad:%d:\n", p->id);
-	
-	free(dict); free(op); free(keyword); free(line);
-	break;
+    read_rc = YAP_readline_alloc(socket, &line);
+    if (read_rc <= 0) {
+      if (read_rc < 0) {
+        fprintf(stderr, "ERROR: front thread %d failed to read request line\n", p->id);
       }
+      YAP_Net_close_stream(&socket, &accept_socket);
+      continue;
+    }
+
+    /* バッファの初期化 */
+    dict = (char *) YAP_malloc(BUF_SIZE);
+    op = (char *) YAP_malloc(BUF_SIZE);
+    keyword = (char *) YAP_malloc(BUF_SIZE);
+    dict[0] = '\0';
+    op[0] = '\0';
+    keyword[0] = '\0';
+
+    if (YAP_parse_request_line(line, dict, &max_size, op, &start, &end, keyword) != 0) {
+      YAP_send_bad_request(accept_socket, p->id);
+      printf("bad:%d:\n", p->id);
+      free(dict); free(op); free(keyword); free(line);
+      YAP_Net_close_stream(&socket, &accept_socket);
+      continue;
+    }
+
+    printf("ok:%d: %s/%d/%s/%s (%d-%d)\n", p->id, dict, max_size, op, keyword, start, end);
+
+    if (strlen(dict) == 0 || max_size == 0 || strlen(op) == 0 || strlen(keyword) == 0) {
+      YAP_send_bad_request(accept_socket, p->id);
+      printf("bad:%d:\n", p->id);
+      free(dict); free(op); free(keyword); free(line);
+      YAP_Net_close_stream(&socket, &accept_socket);
+      continue;
+    }
+
+    header_rc = YAP_drain_http_headers(socket);
+    if (header_rc <= 0) {
+      if (header_rc < 0) {
+        fprintf(stderr, "ERROR: front thread %d failed while reading headers\n", p->id);
+      }
+      free(dict); free(op); free(keyword); free(line);
+      YAP_Net_close_stream(&socket, &accept_socket);
+      continue;
+    }
+
+    /*
+     *各検索サーバに検索要求を出す。
+     */
+    for (i = 0; i < p->server_num; i++) {
+      if (YAP_Proto_send_query(p->server_socket[i], dict, max_size, op, keyword) != 0) {
+        fprintf(stderr, "ERROR: front thread %d failed to send query to core[%d]\n", p->id, i);
+        continue;
+      }
+      fflush(p->server_socket[i]);
+    }
+
+    YAP_Db_filename_set(&yappo_db_files);
+    YAP_Db_base_open(&yappo_db_files);
+    YAP_Db_linklist_open(&yappo_db_files);
+
+    /* 検索結果を受け取りマージする */
+    result = YAP_Proto_recv_result(p->server_socket[0]);
+
+    for (i = 1; i < p->server_num; i++) {
+      left = result;
+      /* 右を検索 */
+      right = YAP_Proto_recv_result(p->server_socket[i]);
+
+      result = YAP_Search_op_or(left, right);
+      if (result == NULL) {
+        /* どちらかの検索結果が無かった */
+        if (left != NULL) {
+          result = left;
+          left = NULL;
+        } else if (right != NULL) {
+          result = right;
+          right = NULL;
+        }
+      }
+
+      /* メモリ解放 */
+      if (left != NULL) {
+        YAP_Search_result_free(left);
+        free(left);
+      }
+      if (right != NULL) {
+        YAP_Search_result_free(right);
+        free(right);
+      }
+      if (result == NULL) {
+        /* 検索不一致 */
+        break;
       }
     }
+
+    /* 検索結果内のページ同士のリンク関係によりスコアを可変する */
+    YAP_Linklist_Score(&yappo_db_files, result);
+    /* スコア順ソート */
+    YAP_Search_result_sort_score(result);
+    /* 結果出力 */
+    search_result_print(&yappo_db_files, socket, result, start, end);
+
+    if (result != NULL) {
+      printf( "hit %d\n", result->keyword_docs_num);
+      YAP_Search_result_free(result);
+      free(result);
+    }
+
+    YAP_Db_linklist_close(&yappo_db_files);
+    YAP_Db_base_close(&yappo_db_files);
+
+    free(dict); free(op); free(keyword); free(line);
 
     fflush(stdout);
     fflush(socket);
