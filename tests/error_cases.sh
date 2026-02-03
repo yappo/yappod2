@@ -250,4 +250,11 @@ send_http_raw_hex "474554202f20642f3130302f4f522f302d31303fffFE20485454502f312e3
 assert_daemons_alive "invalid utf-8 query bytes"
 stop_daemons
 
+# Case 2-12: 途中で切れたUTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
+make_index "${INDEX_DIR_OK10}"
+start_daemons "${INDEX_DIR_OK10}"
+send_http_raw_hex "474554202f20642f3130302f4f522f302d31303fe38120485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
+assert_daemons_alive "truncated utf-8 query bytes"
+stop_daemons
+
 exit 0
