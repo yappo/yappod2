@@ -4,6 +4,7 @@
  *
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -98,7 +99,7 @@ int main(int argc, char *argv[]) {
 
   if (!YAP_is_dir(yappo_db_files.base_dir)) {
     printf("Please specify an existing index directory: %s\n", yappo_db_files.base_dir);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   /*
@@ -116,7 +117,7 @@ int main(int argc, char *argv[]) {
     int *list, list_len;
     /*    YAP_Index_get_keyword2( keyword_list[0], &list, &list_len);*/
     printf("address %p = %d = %d\n", (void *)list, list_len, list[0]);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   {
@@ -138,4 +139,5 @@ int main(int argc, char *argv[]) {
   YAP_Db_base_close(&yappo_db_files);
 
   YAP_Db_cache_destroy(&yappod_core_cache);
+  return EXIT_SUCCESS;
 }

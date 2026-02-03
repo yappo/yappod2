@@ -24,7 +24,7 @@
 
 static void YAP_Error(char *msg) {
   perror(msg);
-  exit(-1);
+  exit(EXIT_FAILURE);
 }
 
 static FILE *yap_fopen_or_die(const char *path, const char *mode) {

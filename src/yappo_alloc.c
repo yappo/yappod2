@@ -14,7 +14,7 @@ void *__YAP_malloc(char *filename, int line, size_t size) {
   p = malloc(size);
   if (p == NULL) {
     printf("YAP_malloc: out of memory:%s:%d\n", filename, line);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   memset(p, 0, size);
@@ -31,7 +31,7 @@ void *__YAP_realloc(char *filename, int line, void *inp, size_t size) {
   p = realloc(inp, size);
   if (p == NULL) {
     printf("YAP_realloc: out of memory:%s:%d\n", filename, line);
-    exit(-1);
+    exit(EXIT_FAILURE);
   }
 
   return p;
