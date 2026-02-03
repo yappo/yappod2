@@ -21,6 +21,7 @@
 #include "yappo_index.h"
 #include "yappo_index_filedata.h"
 #include "yappo_linklist.h"
+#include "yappo_proto.h"
 
 #define BUF_SIZE 1024
 #define PORT 10080
@@ -95,77 +96,6 @@ void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, 
     }
   }
   fflush(socket);
-}
-
-
-/*
- *検索サーバから送られて来た検索結果を受け取る
- */
-SEARCH_RESULT *search_result_recv(FILE *socket)
-{
-  int i;
-  SEARCH_RESULT *p = NULL;
-  unsigned long keyword_id;
-  int keyword_total_num, keyword_docs_num;
-
-  /* リターンコードを取得 */
-  i = 0; 
-  if (YAP_fread_exact(socket, &i, sizeof(int), 1) != 0) {
-    return NULL;
-  }
-  if (i == 0) {
-    /* ヒットしなかった */
-  } else {
-    p = (SEARCH_RESULT *) YAP_malloc(sizeof(SEARCH_RESULT));
-
-    /* KEYWORDを取得 */
-    if (YAP_fread_exact(socket, &keyword_id, sizeof(long), 1) != 0 ||
-        YAP_fread_exact(socket, &keyword_total_num, sizeof(int), 1) != 0 ||
-        YAP_fread_exact(socket, &keyword_docs_num, sizeof(int), 1) != 0) {
-      free(p);
-      return NULL;
-    }
-    if (keyword_docs_num < 0) {
-      free(p);
-      return NULL;
-    }
-    p->keyword_id = keyword_id;
-    p->keyword_total_num = keyword_total_num;
-    p->keyword_docs_num = keyword_docs_num;
-
-    /* SEARCH_DOCUMENTをまず取得する */
-    p->docs_list = (SEARCH_DOCUMENT *) YAP_malloc(sizeof(SEARCH_DOCUMENT) * p->keyword_docs_num);
-    if (YAP_fread_exact(socket, p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num) != 0) {
-      free(p->docs_list);
-      free(p);
-      return NULL;
-    }
-
-    /* posを取得 */
-    for (i = 0; i < p->keyword_docs_num; i++) {
-      if (p->docs_list[i].pos_len < 0) {
-        int j;
-        for (j = 0; j < i; j++) {
-          free(p->docs_list[j].pos);
-        }
-        free(p->docs_list);
-        free(p);
-        return NULL;
-      }
-      p->docs_list[i].pos = (int *) YAP_malloc(sizeof(int) * p->docs_list[i].pos_len);
-      if (YAP_fread_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
-        int j;
-        free(p->docs_list[i].pos);
-        for (j = 0; j < i; j++) {
-          free(p->docs_list[j].pos);
-        }
-        free(p->docs_list);
-        free(p);
-        return NULL;
-      }
-    }
-  }
-  return p;
 }
 
 
@@ -322,32 +252,7 @@ void *thread_server (void *ip)
 	   *各検索サーバに検索要求を出す。
 	   */
 	  for (i = 0; i < p->server_num; i++) {
-	    int buf_size;
-
-	    buf_size = 1;
-	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0) {
-	      continue;
-	    }
-
-	    buf_size = strlen(dict);
-	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
-	        YAP_fwrite_exact(p->server_socket[i], dict, sizeof(char), buf_size) != 0) {
-	      continue;
-	    }
-
-	    buf_size = strlen(op);
-	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
-	        YAP_fwrite_exact(p->server_socket[i], op, sizeof(char), buf_size) != 0) {
-	      continue;
-	    }
-
-	    buf_size = strlen(keyword);
-	    if (YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1) != 0 ||
-	        YAP_fwrite_exact(p->server_socket[i], keyword, sizeof(char), buf_size) != 0) {
-	      continue;
-	    }
-
-	    if (YAP_fwrite_exact(p->server_socket[i], &max_size, sizeof(int), 1) != 0) {
+	    if (YAP_Proto_send_query(p->server_socket[i], dict, max_size, op, keyword) != 0) {
 	      continue;
 	    }
 
@@ -360,12 +265,12 @@ void *thread_server (void *ip)
 	  YAP_Db_linklist_open(&yappo_db_files);
 
 	  /* 検索結果を受け取りマージする */
-	  result = search_result_recv(p->server_socket[0]);
+	  result = YAP_Proto_recv_result(p->server_socket[0]);
 
 	  for (i = 1; i < p->server_num; i++) {
 	    left = result;
 	    /* 右を検索 */
-	    right =  search_result_recv(p->server_socket[i]);
+	    right = YAP_Proto_recv_result(p->server_socket[i]);
 
 	    result = YAP_Search_op_or(left, right);
 	    if (result == NULL) {
@@ -438,8 +343,7 @@ void *thread_server (void *ip)
    *各サーバとの接続を閉じる
    */
   for (i = 0; i < p->server_num; i++) {
-    int buf_size = 0;
-    YAP_fwrite_exact(p->server_socket[i], &buf_size, sizeof(int), 1);
+    YAP_Proto_send_shutdown(p->server_socket[i]);
     fclose(p->server_socket[i]);
     close(p->server_fd[i]);
   }

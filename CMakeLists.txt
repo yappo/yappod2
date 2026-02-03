@@ -42,6 +42,7 @@ set(YAPPO_SEARCH_SOURCES
   ${SRC_DIR}/yappo_search.c
   ${SRC_DIR}/yappo_ngram.c
   ${SRC_DIR}/yappo_linklist.c
+  ${SRC_DIR}/yappo_proto.c
 )
 
 add_executable(search

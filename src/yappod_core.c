@@ -21,6 +21,7 @@
 #include "yappo_search.h"
 #include "yappo_db.h"
 #include "yappo_index.h"
+#include "yappo_proto.h"
 
 #define BUF_SIZE 1024
 #define PORT 10086
@@ -50,55 +51,6 @@ void YAP_Error( char *msg){
   exit(-1);
 }
 
-
-/*
- *検索結果をシリアライズしてクライアントに返す
- */
-void search_result_print (YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p)
-{
-  int i;
-  unsigned long keyword_id;
-  int keyword_total_num, keyword_docs_num;
-  (void) ydfp;
-
-  if (p == NULL || 0 == p->keyword_docs_num) {
-    /*リターンコードを送る*/
-    i = 0;
-    if (YAP_fwrite_exact(socket, &i, sizeof(int), 1) != 0) {
-      return;
-    }
-  } else {
-    /*リターンコードを送る*/
-    i = 1;
-    if (YAP_fwrite_exact(socket, &i, sizeof(int), 1) != 0) {
-      return;
-    }
-
-    /*KEYWORDを送る*/
-    keyword_id = p->keyword_id;
-    keyword_total_num = p->keyword_total_num;
-    keyword_docs_num = p->keyword_docs_num;
-    if (YAP_fwrite_exact(socket, &keyword_id, sizeof(long), 1) != 0 ||
-        YAP_fwrite_exact(socket, &keyword_total_num, sizeof(int), 1) != 0 ||
-        YAP_fwrite_exact(socket, &keyword_docs_num, sizeof(int), 1) != 0) {
-      return;
-    }
-
-    /*SEARCH_DOCUMENTをまず送る*/
-    if (YAP_fwrite_exact(socket, p->docs_list, sizeof(SEARCH_DOCUMENT), p->keyword_docs_num) != 0) {
-      return;
-    }
-
-    /*posを送る*/
-    for (i = 0; i < p->keyword_docs_num; i++) {
-      if (YAP_fwrite_exact(socket, p->docs_list[i].pos, sizeof(int), p->docs_list[i].pos_len) != 0) {
-        return;
-      }
-    }
-  }
-
-  fflush(socket);
-}
 
 
 /*
@@ -240,7 +192,7 @@ void *thread_server (void *ip)
     int accept_socket;
     FILE *socket;
     char *dict, *op, *keyword;/*リクエスト*/
-    int buf_size;
+    int recv_code;
     int max_size;
 
     accept_socket = accept(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len);
@@ -254,80 +206,15 @@ void *thread_server (void *ip)
 
     while (1) {
       /*永遠と処理を続ける*/
-      buf_size = 0;
-      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
+      recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);
+      if (recv_code <= 0) {
+        if (recv_code < 0) {
+          fprintf(stderr, "ERROR: invalid query payload\n");
+        }
         break;
-      }
-      if (buf_size == 0) {
-	/*このクライアントとの接続を解除する*/
-	break;
       }
 
       printf("OK: %d/%p\n", p->id, (void *) socket);
-      
-      
-      /*クライアントからリクエストを受け取る*/
-      buf_size = 0;
-      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
-        break;
-      }
-      printf("SIZE[%d]: %d\n", p->id, buf_size);
-      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "ERROR: invalid dict size: %d\n", buf_size);
-        break;
-      }
-      dict = (char *) YAP_malloc(buf_size + 1);
-      if (YAP_fread_exact(socket, dict, sizeof(char), buf_size) != 0) {
-        free(dict);
-        break;
-      }
-      dict[buf_size] = '\0';
-      
-      buf_size = 0;
-      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
-        free(dict);
-        break;
-      }
-      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "ERROR: invalid op size: %d\n", buf_size);
-        free(dict);
-        break;
-      }
-      op = (char *) YAP_malloc(buf_size + 1);
-      if (YAP_fread_exact(socket, op, sizeof(char), buf_size) != 0) {
-        free(dict);
-        free(op);
-        break;
-      }
-      op[buf_size] = '\0';
-      
-      buf_size = 0;
-      if (YAP_fread_exact(socket, &buf_size, sizeof(int), 1) != 0) {
-        free(dict);
-        free(op);
-        break;
-      }
-      if (buf_size <= 0 || buf_size > MAX_SOCKET_BUF) {
-        fprintf(stderr, "ERROR: invalid keyword size: %d\n", buf_size);
-        free(dict);
-        free(op);
-        break;
-      }
-      keyword = (char *) YAP_malloc(buf_size + 1);
-      if (YAP_fread_exact(socket, keyword, sizeof(char), buf_size) != 0) {
-        free(dict);
-        free(op);
-        free(keyword);
-        break;
-      }
-      keyword[buf_size] = '\0';
-      
-      if (YAP_fread_exact(socket, &max_size, sizeof(int), 1) != 0) {
-        free(dict);
-        free(op);
-        free(keyword);
-        break;
-      }
       
       printf("ok:%d: %s/%d/%s/%s\n", p->id, dict, max_size, op, keyword);
 
@@ -339,7 +226,18 @@ void *thread_server (void *ip)
       result = search_core(&yappo_db_files, dict, max_size, op, keyword);
 
       /*結果出力*/
-      search_result_print(&yappo_db_files, socket, result);
+      if (YAP_Proto_send_result(socket, result) != 0) {
+        if (result != NULL) {
+          YAP_Search_result_free(result);
+          free(result);
+        }
+        free(dict);
+        free(op);
+        free(keyword);
+        YAP_Db_base_close(&yappo_db_files);
+        break;
+      }
+      fflush(socket);
     
       if (result != NULL) {
 	YAP_Search_result_free(result);
