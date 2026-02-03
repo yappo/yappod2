@@ -42,6 +42,9 @@ typedef struct{
 
 /*キャッシュ*/
 YAPPO_CACHE yappod_core_cache;
+static volatile sig_atomic_t g_shutdown_requested = 0;
+static volatile sig_atomic_t g_shutdown_signal = 0;
+static const char *g_core_pidfile = "./core.pid";
 
 int count;
 
@@ -54,6 +57,17 @@ void YAP_Error( char *msg){
 static void YAP_log_thread_error(int thread_id, const char *msg)
 {
   fprintf(stderr, "ERROR: core thread %d %s\n", thread_id, msg);
+}
+
+static void YAP_request_shutdown(int sig)
+{
+  g_shutdown_signal = sig;
+  g_shutdown_requested = 1;
+}
+
+static void YAP_remove_pidfile(void)
+{
+  unlink(g_core_pidfile);
 }
 
 
@@ -228,7 +242,7 @@ void *thread_server (void *ip)
 
   printf("GO\n");
 
-  while (1) {
+  while (!g_shutdown_requested) {
     SEARCH_RESULT *result;
     socklen_t sockaddr_len = sizeof(yap_sin);
     int accept_socket = -1;
@@ -239,16 +253,22 @@ void *thread_server (void *ip)
 
     if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len,
                               &socket, &accept_socket, "core", p->id) != 0) {
+      if (g_shutdown_requested) {
+        break;
+      }
       continue;
     }
 
     printf("accept: %d\n", p->id);
 
     while (1) {
+      if (g_shutdown_requested) {
+        break;
+      }
       /*永遠と処理を続ける*/
       recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);
       if (recv_code <= 0) {
-        if (recv_code < 0) {
+        if (recv_code < 0 && !g_shutdown_requested) {
           YAP_log_thread_error(p->id, "receive query failed");
         }
         break;
@@ -353,9 +373,14 @@ void start_deamon_thread(char *indextexts_dirpath)
   }
 
   /*メインループ*/
-  while(1){
-    sleep(120);
+  while(!g_shutdown_requested){
+    sleep(1);
   }
+
+  if (g_shutdown_signal != 0) {
+    fprintf(stderr, "INFO: core shutdown requested by signal %d\n", g_shutdown_signal);
+  }
+  close(yap_socket);
   printf("end\n");
 }
 
@@ -423,9 +448,13 @@ int main(int argc, char *argv[])
     exit(0);
   }
 
+  atexit(YAP_remove_pidfile);
+
   /*
-   *SIGPIPEを無視
+   *シグナル処理
    */
+  signal(SIGTERM, YAP_request_shutdown);
+  signal(SIGINT, YAP_request_shutdown);
   signal(SIGPIPE, SIG_IGN);
 
 
