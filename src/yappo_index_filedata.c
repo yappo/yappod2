@@ -125,6 +125,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   int seek;
   char *buf, *bufp;
   int buf_len = 0;
+  size_t str_len;
 
   if (ydfp->mode == YAPPO_DB_READ) {
     /*読みこみモードではエラー*/
@@ -157,28 +158,31 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   bufp = buf;
 
   if (filedata->url != NULL) {
-    *((size_t *)bufp) = strlen(filedata->url);
+    str_len = strlen(filedata->url);
+    *((size_t *)bufp) = str_len;
     bufp += sizeof(size_t);
-    strcpy(bufp, filedata->url);
-    bufp += strlen(filedata->url);
+    memcpy(bufp, filedata->url, str_len);
+    bufp += str_len;
   } else {
     *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
   }
   if (filedata->title != NULL) {
-    *((size_t *)bufp) = strlen(filedata->title);
+    str_len = strlen(filedata->title);
+    *((size_t *)bufp) = str_len;
     bufp += sizeof(size_t);
-    strcpy(bufp, filedata->title);
-    bufp += strlen(filedata->title);
+    memcpy(bufp, filedata->title, str_len);
+    bufp += str_len;
   } else {
     *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
   }
   if (filedata->comment != NULL) {
-    *((size_t *)bufp) = strlen(filedata->comment);
+    str_len = strlen(filedata->comment);
+    *((size_t *)bufp) = str_len;
     bufp += sizeof(size_t);
-    strcpy(bufp, filedata->comment);
-    bufp += strlen(filedata->comment);
+    memcpy(bufp, filedata->comment, str_len);
+    bufp += str_len;
   } else {
     *((size_t *)bufp) = 0;
     bufp += sizeof(size_t);
@@ -196,7 +200,7 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   *((int *)bufp) = filedata->other_len;
   bufp += sizeof(int);
   if (filedata->other != NULL) {
-    strcpy(bufp, (const char *)filedata->other);
+    memcpy(bufp, filedata->other, filedata->other_len);
   }
 
   /*登録*/

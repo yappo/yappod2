@@ -345,7 +345,7 @@ void start_deamon_thread(char *indextexts_dirpath) {
     /*起動準備*/
     thread_data[i].id = i;
     thread_data[i].base_dir = (char *)YAP_malloc(strlen(indextexts_dirpath) + 1);
-    strcpy(thread_data[i].base_dir, indextexts_dirpath);
+    memcpy(thread_data[i].base_dir, indextexts_dirpath, strlen(indextexts_dirpath) + 1);
     thread_data[i].socket = dup(yap_socket);
 
     /*thread_server(dup(yap_socket), &yap_sin);*/

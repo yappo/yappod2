@@ -76,7 +76,7 @@ void __YAP_Ngram_List_add(NGRAM_LIST *list, unsigned char *keyword, int index) {
     /* 新規 */
     p = __YAP_Ngram_List_init();
     p->keyword = (unsigned char *)YAP_malloc(strlen((const char *)keyword) + 1);
-    strcpy((char *)p->keyword, (const char *)keyword);
+    memcpy(p->keyword, keyword, strlen((const char *)keyword) + 1);
     p->index = (int *)YAP_malloc(sizeof(int));
     p->index[p->index_count] = index;
     p->index_count++;
@@ -279,7 +279,7 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num) {
       list = (NGRAM_SEARCH_LIST *)YAP_realloc(list, sizeof(NGRAM_SEARCH_LIST) * (*keyword_num + 1));
 
       list[*keyword_num].keyword = (unsigned char *)YAP_malloc(strlen((const char *)gram) + 1);
-      strcpy((char *)list[*keyword_num].keyword, (const char *)gram);
+      memcpy(list[*keyword_num].keyword, gram, strlen((const char *)gram) + 1);
       list[*keyword_num].pos = pos_before;
       (*keyword_num)++;
       free(gram);

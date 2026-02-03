@@ -565,7 +565,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
       /*bodyだけメモリ確保*/
       body_tmp = (char *)YAP_malloc(strlen(body) + 1);
-      strcpy(body_tmp, body);
+      memcpy(body_tmp, body, strlen(body) + 1);
       body = body_tmp;
 
       /*titleを牽引に加える*/
@@ -674,9 +674,9 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
         /*FILEDATAに追加する*/
         index_stack[stack_count].filedata.url = (char *)YAP_malloc(strlen(url) + 1);
-        strcpy(index_stack[stack_count].filedata.url, url);
+        memcpy(index_stack[stack_count].filedata.url, url, strlen(url) + 1);
         index_stack[stack_count].filedata.title = (char *)YAP_malloc(strlen(title) + 1);
-        strcpy(index_stack[stack_count].filedata.title, title);
+        memcpy(index_stack[stack_count].filedata.title, title, strlen(title) + 1);
         index_stack[stack_count].filedata.lastmod = gz_file_mtime;
         index_stack[stack_count].filedata.size = body_size;
 

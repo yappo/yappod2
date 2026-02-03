@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
         /*キーワードを取得*/
         keyword_list = (char **)YAP_realloc(keyword_list, sizeof(char *) * (keyword_list_num + 1));
         keyword_list[keyword_list_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
-        strcpy(keyword_list[keyword_list_num], argv[i]);
+        memcpy(keyword_list[keyword_list_num], argv[i], strlen(argv[i]) + 1);
         keyword_list_num++;
       }
 
