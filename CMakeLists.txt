@@ -16,6 +16,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_compile_definitions(_DEFAULT_SOURCE _POSIX_C_SOURCE=200809L)
+endif()
+
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 
