@@ -12,7 +12,6 @@
  */
 int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata)
 {
-  int ret;
   int filedata_size, filedata_index;
   int seek;
   int str_len;
@@ -29,8 +28,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   if (YAP_fseek_set(ydfp->filedata_size_file, seek) != 0) {
     return -1;
   }
-  ret = YAP_fread_exact(ydfp->filedata_size_file, &filedata_size, sizeof(int), 1);
-  if (ret != 0) {
+  if (YAP_fread_try(ydfp->filedata_size_file, &filedata_size, sizeof(int), 1) != 1) {
     return -1;
   }
 
@@ -43,8 +41,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   if (YAP_fseek_set(ydfp->filedata_index_file, seek) != 0) {
     return -1;
   }
-  ret = YAP_fread_exact(ydfp->filedata_index_file, &filedata_index, sizeof(int), 1);
-  if (ret != 0) {
+  if (YAP_fread_try(ydfp->filedata_index_file, &filedata_index, sizeof(int), 1) != 1) {
     return -1;
   }
 

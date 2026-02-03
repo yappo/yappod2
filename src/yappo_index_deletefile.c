@@ -15,17 +15,12 @@ static int YAP_Deletefile_read_flag_byte(YAPPO_DB_FILES *ydfp, int seek, unsigne
     return -1;
   }
 
-  clearerr(ydfp->deletefile_file);
-  got = fread(out, 1, 1, ydfp->deletefile_file);
+  got = YAP_fread_try(ydfp->deletefile_file, out, 1, 1);
   if (got == 1) {
     return 0;
   }
-  if (ferror(ydfp->deletefile_file)) {
-    return -1;
-  }
 
   /* EOF は「未削除ビット(0)」として扱う。 */
-  clearerr(ydfp->deletefile_file);
   return 0;
 }
 

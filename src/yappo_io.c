@@ -68,6 +68,24 @@ int __YAP_fread_exact(char *filename, int line, FILE *fp, void *ptr, size_t size
   return 0;
 }
 
+size_t __YAP_fread_try(char *filename, int line, FILE *fp, void *ptr, size_t size, size_t nmemb)
+{
+  size_t got;
+
+  if (fp == NULL) {
+    fprintf(stderr, "YAP_fread_try: null file pointer: %s:%d\n", filename, line);
+    return 0;
+  }
+
+  got = fread(ptr, size, nmemb, fp);
+  if (ferror(fp)) {
+    fprintf(stderr, "YAP_fread_try: fread failed: %s:%d: %s\n", filename, line, strerror(errno));
+    return 0;
+  }
+
+  return got;
+}
+
 int __YAP_fwrite_exact(char *filename, int line, FILE *fp, const void *ptr, size_t size, size_t nmemb)
 {
   size_t put;

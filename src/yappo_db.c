@@ -952,14 +952,8 @@ void YAP_Db_cache_load (YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p)
     if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0) {
       p->deletefile_num = 0;
     } else {
-      size_t got;
-      clearerr(ydfp->deletefile_file);
-      got = fread(p->deletefile, 1, (ydfp->total_filenum / 8) + 1, ydfp->deletefile_file);
-      if (ferror(ydfp->deletefile_file)) {
-        p->deletefile_num = 0;
-      } else {
-        p->deletefile_num = (int) got;
-      }
+      size_t got = YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1);
+      p->deletefile_num = (int) got;
     }
     pthread_mutex_unlock(&(p->domainid_mutex));
 
