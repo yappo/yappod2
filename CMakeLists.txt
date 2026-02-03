@@ -63,10 +63,10 @@ add_executable(yappo_makeindex
   ${SRC_DIR}/yappo_makeindex.c
 )
 
-add_executable(yappo_margepos
+add_executable(yappo_mergepos
   ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
-  ${SRC_DIR}/yappo_margepos.c
+  ${SRC_DIR}/yappo_mergepos.c
 )
 
 add_executable(yappod_core
@@ -84,7 +84,7 @@ add_executable(yappod_front
 set(ALL_TARGETS
   search
   yappo_makeindex
-  yappo_margepos
+  yappo_mergepos
   yappod_core
   yappod_front
 )
