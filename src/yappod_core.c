@@ -57,15 +57,17 @@ void YAP_Error( char *msg){
 /*
  *URLデコードを行なう
  */
-char *urldecode (char *p) {
+static char *urldecode (const char *p) {
   char *ret, *retp;
   char f, l;
+  size_t in_len;
 
   if (p == NULL) {
     return NULL;
   }
 
-  ret = (char *) YAP_malloc(strlen(p));
+  in_len = strlen(p);
+  ret = (char *) YAP_malloc(in_len + 1);
   retp = ret;
 
   while (*p) {
@@ -104,6 +106,18 @@ char *urldecode (char *p) {
   return ret;
 }
 
+static void YAP_free_keyword_list(char **keyword_list, int keyword_list_num)
+{
+  int i;
+  if (keyword_list == NULL) {
+    return;
+  }
+  for (i = 0; i < keyword_list_num; i++) {
+    free(keyword_list[i]);
+  }
+  free(keyword_list);
+}
+
 /*
  *検索処理のメインルーチン
  */
@@ -113,6 +127,7 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
   char **keyword_list;
   char *keyp, *keys, *keye;
   char *buf;
+  SEARCH_RESULT *result;
   int keyword_list_num = 1;
   int i;
   (void) dict;
@@ -145,6 +160,7 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
     if (*keye == '&') {
       buf = (char *) YAP_malloc(keye - keys + 1);
       strncpy(buf, keys, keye - keys);
+      buf[keye - keys] = '\0';
       keyword_list[i] = urldecode(buf);
       keys = keye + 1;
       i++;
@@ -155,6 +171,7 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
   /*最後の1ワード*/
   buf = (char *) YAP_malloc(keye - keys + 1);
   strncpy(buf, keys, keye - keys);
+  buf[keye - keys] = '\0';
   keyword_list[i] = urldecode(buf);
   free(buf);
 
@@ -163,7 +180,9 @@ SEARCH_RESULT *search_core (YAPPO_DB_FILES *ydfp, char *dict, int max_size, char
   /*
    *検索を行なう
    */
-  return YAP_Search(ydfp, keyword_list, keyword_list_num, max_size, f_op);
+  result = YAP_Search(ydfp, keyword_list, keyword_list_num, max_size, f_op);
+  YAP_free_keyword_list(keyword_list, keyword_list_num);
+  return result;
 }
 
 
