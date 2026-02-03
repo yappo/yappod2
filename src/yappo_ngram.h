@@ -1,8 +1,8 @@
 /*
  *N-gramに関する処理
  */
-#ifndef __NGRAM_H__
-#define __NGRAM_H__
+#ifndef YAPPO_NGRAM_H
+#define YAPPO_NGRAM_H
 
 /* N-gramで切り出す文字数（UTF-8コードポイント単位） */
 #define Ngram_N 2

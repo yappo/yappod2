@@ -1,8 +1,8 @@
 /*
  *URLメタデータを取扱う
  */
-#ifndef __INDEX_FILEDATA_H__
-#define __INDEX_FILEDATA_H__
+#ifndef YAPPO_INDEX_FILEDATA_H
+#define YAPPO_INDEX_FILEDATA_H
 
 #include "yappo_db.h"
 #include "yappo_index.h"

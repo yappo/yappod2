@@ -1,8 +1,8 @@
 /*
  *protocol I/O helpers between front and core
  */
-#ifndef __YAPPO_PROTO_H__
-#define __YAPPO_PROTO_H__
+#ifndef YAPPO_PROTO_H
+#define YAPPO_PROTO_H
 
 #include <stdio.h>
 #include "yappo_search.h"

@@ -1,8 +1,8 @@
 /*
  *stat helpers
  */
-#ifndef __YAPPO_STAT_H__
-#define __YAPPO_STAT_H__
+#ifndef YAPPO_STAT_H
+#define YAPPO_STAT_H
 
 #include <sys/stat.h>
 

@@ -4,8 +4,8 @@
  *追加時のバランスなどは行なわれない
  *
  */
-#ifndef __YAPPO_MINIBTREE_H__
-#define __YAPPO_MINIBTREE_H__
+#ifndef YAPPO_MINIBTREE_H
+#define YAPPO_MINIBTREE_H
 
 typedef struct yap_minibtree {
   unsigned char *key; /*キーワード*/
