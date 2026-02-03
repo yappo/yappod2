@@ -289,7 +289,7 @@ static int YAP_parse_request_target(const char *target, char *dict, int *max_siz
 
   memcpy(path, path_start, (size_t)path_len);
   path[path_len] = '\0';
-  strcpy(keyword, query + 1);
+  memcpy(keyword, query + 1, (size_t)keyword_len + 1);
 
   snprintf(fmt, sizeof(fmt), "%%%d[^/]/%%d/%%%d[^/]/%%d-%%d%%n", w, w);
   if (sscanf(path, fmt, dict, max_size, op, start, end, &n) != 5) {
@@ -574,7 +574,7 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
     /* 起動準備 */
     thread_data[i].id = i;
     thread_data[i].base_dir = (char *)YAP_malloc(strlen(indextexts_dirpath) + 1);
-    strcpy(thread_data[i].base_dir, indextexts_dirpath);
+    memcpy(thread_data[i].base_dir, indextexts_dirpath, strlen(indextexts_dirpath) + 1);
     thread_data[i].socket = dup(yap_socket);
 
     thread_data[i].server_num = server_num;
@@ -583,7 +583,7 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
     thread_data[i].server_addr = (char **)YAP_malloc(sizeof(char **) * server_num);
     for (ii = 0; ii < server_num; ii++) {
       thread_data[i].server_addr[ii] = (char *)YAP_malloc(strlen(server_addr[ii]) + 1);
-      strcpy(thread_data[i].server_addr[ii], server_addr[ii]);
+      memcpy(thread_data[i].server_addr[ii], server_addr[ii], strlen(server_addr[ii]) + 1);
     }
 
     printf("start: %d:%s\n", i, thread_data[i].base_dir);
@@ -636,7 +636,7 @@ int main(int argc, char *argv[]) {
           break;
         server_addr = (char **)YAP_realloc(server_addr, sizeof(char **) * (server_num + 1));
         server_addr[server_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
-        strcpy(server_addr[server_num], argv[i]);
+        memcpy(server_addr[server_num], argv[i], strlen(argv[i]) + 1);
         server_num++;
       }
 
