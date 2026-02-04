@@ -157,7 +157,7 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
   docs_num = total_num = 0;
 
   /* ロック開始 */
-  pthread_mutex_lock(&(ydfp->cache->domainid_mutex));
+  pthread_mutex_lock(&(ydfp->cache->deletefile_mutex));
   for (i = 0; i < p->keyword_docs_num; i++) {
     if (p->docs_list[i].fileindex == 0) {
       continue;
@@ -177,7 +177,7 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
   }
 
   /*ロック解除 */
-  pthread_mutex_unlock(&(ydfp->cache->domainid_mutex));
+  pthread_mutex_unlock(&(ydfp->cache->deletefile_mutex));
 
   if (docs_num == 0) {
     /* 一件も一致しなかった */

@@ -874,7 +874,7 @@ void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) {
     pthread_mutex_unlock(&(p->domainid_mutex));
 
     /* 削除URLファイルキャッシュ */
-    pthread_mutex_lock(&(p->domainid_mutex));
+    pthread_mutex_lock(&(p->deletefile_mutex));
     p->deletefile = (unsigned char *)YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
     memset(p->deletefile, 0, (ydfp->total_filenum / 8) + 1);
     if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0) {
@@ -884,7 +884,7 @@ void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) {
         YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1);
       p->deletefile_num = (int)got;
     }
-    pthread_mutex_unlock(&(p->domainid_mutex));
+    pthread_mutex_unlock(&(p->deletefile_mutex));
 
     printf("load delete: %d/%d\n", p->deletefile_num, (ydfp->total_filenum / 8) + 1);
 
