@@ -956,7 +956,7 @@ int main(int argc, char *argv[]) {
     while ((direntp = readdir(input_dir)) != NULL) {
       char *name = direntp->d_name;
       int len = strlen(name);
-      if (name[len - 3] == '.' && name[len - 2] == 'g' && name[len - 1] == 'z') {
+      if (len >= 3 && name[len - 3] == '.' && name[len - 2] == 'g' && name[len - 1] == 'z') {
         /*.gzファイルのみを処理*/
         indextext_filepath = (char *)YAP_malloc(strlen(indextexts_dirpath) + strlen(name) + 2);
         if (snprintf(indextext_filepath, strlen(indextexts_dirpath) + strlen(name) + 2, "%s/%s",
