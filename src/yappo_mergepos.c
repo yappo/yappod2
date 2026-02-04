@@ -127,14 +127,20 @@ int main(int argc, char *argv[]) {
       } else if (!strcmp(argv[i], "-l")) {
         /*入力を取得*/
         i++;
-        if (argc == i)
-          break;
+        if (argc == i) {
+          YAP_print_usage(argv[0]);
+          printf("Missing value for -l\n");
+          exit(EXIT_FAILURE);
+        }
         input_dir = argv[i];
       } else if (!strcmp(argv[i], "-d")) {
         /*出力先を取得*/
         i++;
-        if (argc == i)
-          break;
+        if (argc == i) {
+          YAP_print_usage(argv[0]);
+          printf("Missing value for -d\n");
+          exit(EXIT_FAILURE);
+        }
         output_file = argv[i];
       }
       i++;
@@ -150,6 +156,13 @@ int main(int argc, char *argv[]) {
 
   if (input_dir == NULL) {
     YAP_print_usage(argv[0]);
+    printf("Missing required option: -l input_index\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (output_file == NULL) {
+    YAP_print_usage(argv[0]);
+    printf("Missing required option: -d output_file\n");
     exit(EXIT_FAILURE);
   }
 
