@@ -19,6 +19,7 @@ INDEX_DIR_OK9="${TMP_ROOT}/ok9"
 INDEX_DIR_OK10="${TMP_ROOT}/ok10"
 INDEX_DIR_OK11="${TMP_ROOT}/ok11"
 INDEX_DIR_OK12="${TMP_ROOT}/ok12"
+INDEX_DIR_OK13="${TMP_ROOT}/ok13"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -324,5 +325,28 @@ mkdir -p "${INDEX_DIR_OK12}/pos"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "OpenAI2025" | grep -q "http://example.com/doc1"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "検索用のテスト本文です" | grep -q "http://example.com/doc2"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK12}" "badcmdtoken999" | grep -q "Hit num: 0\\|not found"
+
+# Case 2-15: 長大行・BODY_SIZE不整合・同一バッチ重複ADDがあっても処理継続すること
+case_begin "Case 2-15: oversized and malformed rows do not break indexing"
+INPUT_EDGE="${TMP_ROOT}/index_edge_cases.txt"
+mkdir -p "${INDEX_DIR_OK13}/pos"
+{
+  printf "http://example.com/ok1\tADD\tOK1\t24\taaaaaaaaaaaaaaaaaaaaaaaa\n"
+  printf "http://example.com/badsize\tADD\tBadSize\t999999999999\tbadsizepayload\n"
+  printf "http://example.com/dup\tADD\tDup\t24\tbbbbbbbbbbbbbbbbbbbbbbbb\n"
+  printf "http://example.com/dup\tADD\tDup2\t24\tbbbbbbbbbbbbbbbbbbbbbbbb\n"
+  printf "http://example.com/ok2\tADD\tOK2\t24\tcccccccccccccccccccccccc\n"
+  printf "http://example.com/long\tADD\tLong\t24\t"
+  head -c 1100000 /dev/zero | tr '\0' 'L'
+  printf "\n"
+  printf "http://example.com/ok3\tADD\tOK3\t24\tdddddddddddddddddddddddd\n"
+  printf "http://example.com/ok4\tADD\tOK4\t24\teeeeeeeeeeeeeeeeeeeeeeee\n"
+} > "${INPUT_EDGE}"
+"${BUILD_DIR}/yappo_makeindex" -f "${INPUT_EDGE}" -d "${INDEX_DIR_OK13}" >/dev/null
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "aaaaaaaaaaaaaaaaaaaaaaaa" | grep -q "http://example.com/ok1"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "cccccccccccccccccccccccc" | grep -q "http://example.com/ok2"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "dddddddddddddddddddddddd" | grep -q "http://example.com/ok3"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "badsizepayload" | grep -q "Hit num: 0\\|not found"
+"${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "Dup2" | grep -q "Hit num: 0\\|not found"
 
 exit 0
