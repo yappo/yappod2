@@ -122,6 +122,13 @@ URL\tCOMMAND\tTITLE\tBODY_SIZE\tBODY
 - `BODY` に改行・タブは含めない
 - 不正行（列不足、`COMMAND`不正、`BODY_SIZE`非数値）は警告してスキップし、処理は継続
 
+`ADD` の扱い:
+
+- URL が未登録なら新規追加します。
+- URL が既登録なら更新扱いで再登録します。
+- ただし既存レコードの方が新しい（`lastmod` が新しい、または `lastmod` 同一かつ `BODY_SIZE` 同一）場合は `ADD` をスキップします。
+- 同一バッチ内で同じ URL の `ADD` が重複した場合は、先に処理した `ADD` を優先し、後続の重複 `ADD` はスキップします。
+
 サンプル: `tests/fixtures/index.txt`
 
 ### インデックスディレクトリ作成
