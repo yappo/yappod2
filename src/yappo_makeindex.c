@@ -27,6 +27,7 @@
 
 #define GZ_BUF_SIZE 1024
 #define MAX_STACK_SIZE 2040
+#define MAX_INPUT_LINE_SIZE (1024 * 1024)
 #define DEFAULT_MIN_BODY_SIZE 24
 #define DEFAULT_MAX_BODY_SIZE 102400
 
@@ -126,6 +127,14 @@ static int YAP_parse_index_line(char *line, char **url, char **command, char **t
   *title = fields[2];
   *body = fields[4];
   return 0;
+}
+
+static void YAP_reset_line_buffer(char **line_buf) {
+  if (*line_buf != NULL) {
+    free(*line_buf);
+  }
+  *line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+  (*line_buf)[0] = '\0';
 }
 
 static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
@@ -489,10 +498,12 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
   int stack_count = 0; /*メモリに確保されている処理済のurl数*/
   int input_line_count = 0;
   int malformed_line_count = 0;
+  int dropping_oversized_line = 0;
+  int oversized_line_count = 0;
 
   gz_in = (char *)YAP_malloc(GZ_BUF_SIZE);
-  line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
-  line_buf[0] = '\0';
+  line_buf = NULL;
+  YAP_reset_line_buffer(&line_buf);
 
   /*gzファイルを開く*/
   gz_file = gzopen(gz_filepath, "r");
@@ -509,16 +520,52 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
       /*エラー*/
       break;
     }
-    /*行バッファにコピーする*/
-    if (line_buf[0] != '\0') {
-      /*追記*/
-      int new_buf_len = strlen(line_buf) + strlen(gz_in) + 1;
-      line_buf = (char *)YAP_realloc(line_buf, new_buf_len);
+    {
+      size_t chunk_len = strlen(gz_in);
+      int chunk_ends_line =
+        ((chunk_len > 0 && gz_in[chunk_len - 1] == '\n') || chunk_len < GZ_BUF_SIZE - 1);
+
+      if (dropping_oversized_line) {
+        if (chunk_ends_line) {
+          input_line_count++;
+          malformed_line_count++;
+          oversized_line_count++;
+          fprintf(stderr, "WARN: skip oversized input line: %s:%d\n", gz_filepath, input_line_count);
+          dropping_oversized_line = 0;
+          YAP_reset_line_buffer(&line_buf);
+        }
+        continue;
+      }
+
+      if (strlen(line_buf) + chunk_len + 1 > MAX_INPUT_LINE_SIZE) {
+        if (chunk_ends_line) {
+          input_line_count++;
+          malformed_line_count++;
+          oversized_line_count++;
+          fprintf(stderr, "WARN: skip oversized input line: %s:%d\n", gz_filepath, input_line_count);
+          YAP_reset_line_buffer(&line_buf);
+        } else {
+          dropping_oversized_line = 1;
+          YAP_reset_line_buffer(&line_buf);
+        }
+        continue;
+      }
+
+      /*行バッファにコピーする*/
+      if (line_buf[0] != '\0') {
+        /*追記*/
+        size_t new_buf_len = strlen(line_buf) + chunk_len + 1;
+        line_buf = (char *)YAP_realloc(line_buf, new_buf_len);
+      }
+
+      line_buf = (char *)strcat(line_buf, gz_in);
+
+      if (!chunk_ends_line) {
+        continue;
+      }
     }
 
-    line_buf = (char *)strcat(line_buf, gz_in);
-
-    if (gz_in[GZ_BUF_SIZE - 2] == '\n' || strlen(gz_in) < GZ_BUF_SIZE - 1) {
+    {
       /*一行分取得できたので、ファイル毎の処理を行なう*/
       char *url, *command, *title, *body, *body_tmp;
       int line_buf_len = strlen(line_buf);
@@ -528,8 +575,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
       input_line_count++;
       if (line_buf_len == 0) {
-        free(line_buf);
-        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        YAP_reset_line_buffer(&line_buf);
         continue;
       }
       if (line_buf[line_buf_len - 1] == '\n') {
@@ -539,15 +585,13 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
         line_buf[--line_buf_len] = '\0';
       }
       if (line_buf[0] == '\0') {
-        free(line_buf);
-        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        YAP_reset_line_buffer(&line_buf);
         continue;
       }
       if (YAP_parse_index_line(line_buf, &url, &command, &title, &body_size, &body) != 0) {
         malformed_line_count++;
         fprintf(stderr, "WARN: skip malformed input line: %s:%d\n", gz_filepath, input_line_count);
-        free(line_buf);
-        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        YAP_reset_line_buffer(&line_buf);
         continue;
       }
 
@@ -556,10 +600,8 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
 
     //行バッファをクリア
     */
-        free(line_buf);
         body = NULL;
-        line_buf = NULL;
-        line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+        YAP_reset_line_buffer(&line_buf);
         continue;
       }
 
@@ -604,9 +646,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
     //行バッファをクリア*/
           free(body);
           body = NULL;
-          free(line_buf);
-          line_buf = NULL;
-          line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+          YAP_reset_line_buffer(&line_buf);
 
           continue;
         }
@@ -634,9 +674,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
       */
             free(body);
             body = NULL;
-            free(line_buf);
-            line_buf = NULL;
-            line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+            YAP_reset_line_buffer(&line_buf);
 
             continue;
           }
@@ -648,6 +686,9 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
             YAP_Index_Deletefile_put(ydfp, fileindex);
           } else {
             /* ADDは同一バッチ内で重複登録しない */
+            free(body);
+            body = NULL;
+            YAP_reset_line_buffer(&line_buf);
             continue;
           }
         }
@@ -722,9 +763,7 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
       /*行バッファをクリア*/
       free(body);
       body = NULL;
-      free(line_buf);
-      line_buf = NULL;
-      line_buf = (char *)YAP_malloc(GZ_BUF_SIZE);
+      YAP_reset_line_buffer(&line_buf);
     }
 
     if (stack_count >= MAX_STACK_SIZE) {
@@ -822,6 +861,10 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
   if (malformed_line_count > 0) {
     fprintf(stderr, "WARN: skipped malformed input lines: %s: %d\n", gz_filepath,
             malformed_line_count);
+  }
+  if (oversized_line_count > 0) {
+    fprintf(stderr, "WARN: skipped oversized input lines: %s: %d\n", gz_filepath,
+            oversized_line_count);
   }
 
   return 0;
