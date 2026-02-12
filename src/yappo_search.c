@@ -159,14 +159,26 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
   /* ロック開始 */
   pthread_mutex_lock(&(ydfp->cache->deletefile_mutex));
   for (i = 0; i < p->keyword_docs_num; i++) {
+    unsigned int deletefile_cap;
+    unsigned int seek_u;
+
     if (p->docs_list[i].fileindex == 0) {
       continue;
     }
 
     seek = p->docs_list[i].fileindex / 8;
     bit = p->docs_list[i].fileindex % 8;
+    if (seek < 0) {
+      continue;
+    }
+    seek_u = (unsigned int)seek;
+    deletefile_cap = (ydfp->cache->total_filenum / 8U) + 1U;
+    if (seek_u >= deletefile_cap) {
+      /* 破損データ由来の異常fileindexは除外する */
+      continue;
+    }
 
-    if (!(*(ydfp->cache->deletefile + seek) & (1 << bit))) {
+    if (!(*(ydfp->cache->deletefile + seek_u) & (1 << bit))) {
       result->docs_list[docs_num].fileindex = p->docs_list[i].fileindex;
       result->docs_list[docs_num].score = p->docs_list[i].score;
       result->docs_list[docs_num].pos = NULL;  /* 出現位置はコピーしない */
