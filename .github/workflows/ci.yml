@@ -147,6 +147,11 @@ jobs:
           set -o pipefail
           cmake --build build-sanitizer -j 2>&1 | tee build-sanitizer/build.log
 
+      - name: Prepare build alias for shell tests
+        run: |
+          rm -rf build
+          ln -s build-sanitizer build
+
       - name: Test (sanitizer)
         id: ctest_sanitizer
         continue-on-error: true
