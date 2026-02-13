@@ -87,6 +87,12 @@ add_executable(search_deletefile_bounds_test
   ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_deletefile_bounds_test.c
 )
 
+add_executable(filedata_decode_bounds_test
+  ${YAPPO_BASE_SOURCES}
+  ${YAPPO_SEARCH_SOURCES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests/filedata_decode_bounds_test.c
+)
+
 set(ALL_TARGETS
   search
   yappo_makeindex
@@ -98,6 +104,7 @@ set(ALL_TARGETS
 set(LINK_TARGETS
   ${ALL_TARGETS}
   search_deletefile_bounds_test
+  filedata_decode_bounds_test
 )
 
 foreach(tgt IN LISTS LINK_TARGETS)
@@ -124,3 +131,4 @@ add_test(NAME mergepos_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/mer
 add_test(NAME opendir_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/opendir_error_cases.sh)
 add_test(NAME relative_index_dir_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/relative_index_dir_cases.sh)
 add_test(NAME search_deletefile_bounds COMMAND $<TARGET_FILE:search_deletefile_bounds_test>)
+add_test(NAME filedata_decode_bounds COMMAND $<TARGET_FILE:filedata_decode_bounds_test>)
