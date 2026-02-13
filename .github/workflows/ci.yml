@@ -119,3 +119,65 @@ jobs:
           mkdir -p "${INDEX_DIR}/pos"
           "${PREFIX}/bin/yappo_makeindex" -f tests/fixtures/index.txt -d "${INDEX_DIR}" >/dev/null
           "${PREFIX}/bin/search" -l "${INDEX_DIR}" "OpenAI2025" | grep -q "http://example.com/doc1"
+
+  build-and-test-sanitizer:
+    name: ubuntu-latest (sanitizer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libdb-dev zlib1g-dev clang
+
+      - name: Configure (sanitizer)
+        run: |
+          cmake -S . -B build-sanitizer \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_C_FLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build (sanitizer)
+        run: |
+          set -o pipefail
+          cmake --build build-sanitizer -j 2>&1 | tee build-sanitizer/build.log
+
+      - name: Test (sanitizer)
+        id: ctest_sanitizer
+        continue-on-error: true
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -o pipefail
+          ctest --test-dir build-sanitizer --output-on-failure 2>&1 | tee build-sanitizer/ctest.log
+
+      - name: Dump sanitizer logs on failure
+        if: steps.ctest_sanitizer.outcome == 'failure'
+        run: |
+          echo "::group::ctest.log"
+          cat build-sanitizer/ctest.log
+          echo "::endgroup::"
+          if [ -f build-sanitizer/Testing/Temporary/LastTest.log ]; then
+            echo "::group::LastTest.log"
+            cat build-sanitizer/Testing/Temporary/LastTest.log
+            echo "::endgroup::"
+          fi
+          if [ -f build-sanitizer/Testing/Temporary/LastTestsFailed.log ]; then
+            echo "::group::LastTestsFailed.log"
+            cat build-sanitizer/Testing/Temporary/LastTestsFailed.log
+            echo "::endgroup::"
+          fi
+
+      - name: Enforce sanitizer test success
+        if: always()
+        run: |
+          if [ "${{ steps.ctest_sanitizer.outcome }}" != "success" ]; then
+            echo "ctest (sanitizer) failed"
+            exit 1
+          fi
