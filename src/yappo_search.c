@@ -163,7 +163,7 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
   for (i = 0; i < p->keyword_docs_num; i++) {
     unsigned int seek_u;
 
-    if (p->docs_list[i].fileindex == 0) {
+    if (p->docs_list[i].fileindex <= 0) {
       continue;
     }
 
