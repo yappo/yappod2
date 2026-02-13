@@ -996,6 +996,11 @@ int main(int argc, char *argv[]) {
 
     /*ディレクトリを開く*/
     input_dir = opendir(indextexts_dirpath);
+    if (input_dir == NULL) {
+      perror("ERROR: opendir failed");
+      printf("Please specify an existing input directory.\n");
+      exit(EXIT_FAILURE);
+    }
     while ((direntp = readdir(input_dir)) != NULL) {
       char *name = direntp->d_name;
       int len = strlen(name);
