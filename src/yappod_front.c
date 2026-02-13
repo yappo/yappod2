@@ -27,6 +27,7 @@
 #include "yappo_proto.h"
 
 #define BUF_SIZE 1024
+#define MAX_HTTP_LINE_SIZE (16 * 1024)
 #define PORT 10080
 #define CORE_PORT 10086
 
@@ -74,6 +75,18 @@ static int YAP_send_bad_request(int fd, int thread_id) {
                     "\r\n"
                     "Bad Search Request<br>By Yappo Search";
   return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
+}
+
+static void YAP_drain_oversized_line(FILE *socket, char *socket_buf, size_t chunk_len) {
+  while (chunk_len == (size_t)(BUF_SIZE - 1) && socket_buf[chunk_len - 1] != '\n') {
+    if (fgets(socket_buf, BUF_SIZE, socket) == NULL) {
+      break;
+    }
+    chunk_len = strlen(socket_buf);
+    if (chunk_len == 0) {
+      break;
+    }
+  }
 }
 
 static int YAP_writef(FILE *socket, const char *fmt, ...) {
@@ -232,6 +245,14 @@ static int YAP_readline_alloc(FILE *socket, char **line_out) {
     }
 
     chunk_len = strlen(socket_buf);
+    if (line_len + chunk_len + 1 > MAX_HTTP_LINE_SIZE) {
+      if (chunk_len > 0) {
+        YAP_drain_oversized_line(socket, socket_buf, chunk_len);
+      }
+      free(socket_buf);
+      free(line_buf);
+      return -2;
+    }
     line_buf = (char *)YAP_realloc(line_buf, line_len + chunk_len + 1);
     memcpy(line_buf + line_len, socket_buf, chunk_len + 1);
     line_len += chunk_len;
@@ -391,7 +412,9 @@ void *thread_server(void *ip) {
 
     read_rc = YAP_readline_alloc(socket, &line);
     if (read_rc <= 0) {
-      if (read_rc < 0) {
+      if (read_rc == -2) {
+        YAP_send_bad_request(accept_socket, p->id);
+      } else if (read_rc < 0) {
         YAP_log_thread_error(p->id, "read request line failed");
       }
       YAP_Net_close_stream(&socket, &accept_socket);
@@ -432,7 +455,9 @@ void *thread_server(void *ip) {
 
     header_rc = YAP_drain_http_headers(socket);
     if (header_rc <= 0) {
-      if (header_rc < 0) {
+      if (header_rc == -2) {
+        YAP_send_bad_request(accept_socket, p->id);
+      } else if (header_rc < 0) {
         YAP_log_thread_error(p->id, "read headers failed");
       }
       free(dict);
