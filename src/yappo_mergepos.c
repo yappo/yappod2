@@ -82,6 +82,25 @@ static void YAP_format_or_die(char *dst, size_t dst_size, const char *fmt, ...) 
   }
 }
 
+static int YAP_require_input_shard_files(const pos_t *input) {
+  int ok = 1;
+
+  if (!YAP_is_reg(input->data)) {
+    fprintf(stderr, "Missing required pos shard file: %s\n", input->data);
+    ok = 0;
+  }
+  if (!YAP_is_reg(input->index)) {
+    fprintf(stderr, "Missing required pos shard file: %s\n", input->index);
+    ok = 0;
+  }
+  if (!YAP_is_reg(input->size)) {
+    fprintf(stderr, "Missing required pos shard file: %s\n", input->size);
+    ok = 0;
+  }
+
+  return ok ? 0 : -1;
+}
+
 int main(int argc, char *argv[]) {
   char *output_file = NULL, *input_dir = NULL;
 
@@ -198,6 +217,12 @@ int main(int argc, char *argv[]) {
     inputs[i]->seek_stop = 0;
   }
 
+  for (i = 0; i < num; i++) {
+    if (YAP_require_input_shard_files(inputs[i]) != 0) {
+      exit(EXIT_FAILURE);
+    }
+  }
+
   /*
    * 出力先、入力先のファイルを開く
    */
@@ -214,9 +239,17 @@ int main(int argc, char *argv[]) {
     inputs[i]->index_fp = fopen(inputs[i]->index, "r");
     inputs[i]->size_fp = fopen(inputs[i]->size, "r");
 
-    if (inputs[i]->data_fp == NULL || inputs[i]->index_fp == NULL || inputs[i]->size_fp == NULL) {
-      inputs[i]->seek_stop = 1;
-      seek_stops++;
+    if (inputs[i]->data_fp == NULL) {
+      fprintf(stderr, "fopen error: %s\n", inputs[i]->data);
+      exit(EXIT_FAILURE);
+    }
+    if (inputs[i]->index_fp == NULL) {
+      fprintf(stderr, "fopen error: %s\n", inputs[i]->index);
+      exit(EXIT_FAILURE);
+    }
+    if (inputs[i]->size_fp == NULL) {
+      fprintf(stderr, "fopen error: %s\n", inputs[i]->size);
+      exit(EXIT_FAILURE);
     }
   }
 

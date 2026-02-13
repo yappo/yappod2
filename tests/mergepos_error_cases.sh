@@ -67,6 +67,11 @@ run_expect_fail \
   "${BUILD_DIR}/yappo_mergepos" -l "${INDEX_DIR}" -d "${TMP_ROOT}/outpos" -s 1 -e 0
 
 run_expect_fail \
+  "mergepos: missing pos shard range should fail" \
+  "Missing required pos shard file: ${INDEX_DIR}/pos/1" \
+  "${BUILD_DIR}/yappo_mergepos" -l "${INDEX_DIR}" -d "${TMP_ROOT}/outpos" -s 0 -e 1
+
+run_expect_fail \
   "mergepos: non-existing input dir should fail" \
   "Please specify an existing index directory." \
   "${BUILD_DIR}/yappo_mergepos" -l "${TMP_ROOT}/no_such_dir" -d "${TMP_ROOT}/outpos" -s 0 -e 0
