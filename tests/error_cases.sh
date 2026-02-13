@@ -21,6 +21,8 @@ INDEX_DIR_OK11="${TMP_ROOT}/ok11"
 INDEX_DIR_OK12="${TMP_ROOT}/ok12"
 INDEX_DIR_OK13="${TMP_ROOT}/ok13"
 INDEX_DIR_OK14="${TMP_ROOT}/ok14"
+INDEX_DIR_OK15="${TMP_ROOT}/ok15"
+INDEX_DIR_OK16="${TMP_ROOT}/ok16"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -303,16 +305,16 @@ stop_daemons
 
 # Case 2-11: 不正UTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
 case_begin "Case 2-11: invalid utf-8 bytes"
-make_index "${INDEX_DIR_OK10}"
-start_daemons "${INDEX_DIR_OK10}"
+make_index "${INDEX_DIR_OK15}"
+start_daemons "${INDEX_DIR_OK15}"
 send_http_raw_hex "474554202f642f3130302f4f522f302d31303ffffe20485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
 assert_daemons_alive "invalid utf-8 query bytes"
 stop_daemons
 
 # Case 2-12: 途中で切れたUTF-8バイト列を含むHTTPクエリでも front/core が落ちないこと
 case_begin "Case 2-12: truncated utf-8 bytes"
-make_index "${INDEX_DIR_OK10}"
-start_daemons "${INDEX_DIR_OK10}"
+make_index "${INDEX_DIR_OK16}"
+start_daemons "${INDEX_DIR_OK16}"
 send_http_raw_hex "474554202f642f3130302f4f522f302d31303fe38120485454502f312e300d0a486f73743a206c6f63616c686f73740d0a0d0a"
 assert_daemons_alive "truncated utf-8 query bytes"
 stop_daemons

@@ -26,6 +26,23 @@ static int YAP_Utf8_char_len(unsigned char c) {
   return 1;
 }
 
+/* 不完全なUTF-8シーケンスでは、残りバイト数までに丸める */
+static int YAP_Utf8_char_len_safe(const unsigned char *p) {
+  size_t remain;
+  int len;
+
+  if (p == NULL || *p == '\0') {
+    return 0;
+  }
+
+  remain = strlen((const char *)p);
+  len = YAP_Utf8_char_len(*p);
+  if ((size_t)len > remain) {
+    return (int)remain;
+  }
+  return len;
+}
+
 /*
  *出現位置リストの初期化
  */
@@ -161,8 +178,9 @@ NGRAM_LIST *YAP_Ngram_tokenize(char *body, int *keyword_num) {
       }
     } else {
       /* UTF-8 非ASCII */
+      int step = YAP_Utf8_char_len_safe(tokp);
       gram = YAP_Ngram_get_2byte(tokp);
-      tokp_next = tokp + YAP_Utf8_char_len(*tokp);
+      tokp_next = tokp + step;
       pos++;
     }
 
@@ -211,17 +229,24 @@ unsigned char *YAP_Ngram_get_1byte(unsigned char *tokp) {
 unsigned char *YAP_Ngram_get_2byte(unsigned char *tokp) {
   unsigned char *ret;
   int len1, len2, total;
+  size_t remain;
+
+  if (tokp == NULL || *tokp == '\0') {
+    return NULL;
+  }
+  remain = strlen((const char *)tokp);
 
   len1 = YAP_Utf8_char_len(*tokp);
-  len2 = 0;
-  if (*(tokp + len1)) {
-    len2 = YAP_Utf8_char_len(*(tokp + len1));
-  }
-  if (len2 == 0) {
+  if ((size_t)len1 >= remain) {
     return NULL;
   }
 
+  len2 = YAP_Utf8_char_len(*(tokp + len1));
   total = len1 + len2;
+  if ((size_t)total > remain) {
+    return NULL;
+  }
+
   ret = (unsigned char *)YAP_malloc((size_t)total + 1);
   memcpy(ret, tokp, (size_t)total);
   ret[total] = '\0';
@@ -269,8 +294,9 @@ NGRAM_SEARCH_LIST *YAP_Ngram_tokenize_search(char *body, int *keyword_num) {
       }
     } else {
       /* UTF-8 非ASCII */
+      int step = YAP_Utf8_char_len_safe(tokp);
       gram = YAP_Ngram_get_2byte(tokp);
-      tokp_next = tokp + YAP_Utf8_char_len(*tokp);
+      tokp_next = tokp + step;
       pos++;
     }
 
