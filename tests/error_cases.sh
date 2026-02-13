@@ -151,7 +151,7 @@ sys.stdout.buffer.write(b"".join(chunks))
 PY
 }
 
-send_http_long_query() {
+send_http_long_query_capture() {
   local length="$1"
   python3 - "$length" <<'PY'
 import socket, sys
@@ -160,11 +160,17 @@ query = "A" * length
 payload = f"GET /d/100/OR/0-10?{query} HTTP/1.0\r\nHost: localhost\r\n\r\n".encode("utf-8")
 s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
 s.sendall(payload)
-try:
-    s.recv(4096)
-except OSError:
-    pass
+chunks = []
+while True:
+    try:
+        chunk = s.recv(4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    chunks.append(chunk)
 s.close()
+sys.stdout.buffer.write(b"".join(chunks))
 PY
 }
 
@@ -289,7 +295,8 @@ stop_daemons
 case_begin "Case 2-10: oversized query"
 make_index "${INDEX_DIR_OK10}"
 start_daemons "${INDEX_DIR_OK10}"
-send_http_long_query 200000
+RESP="$(send_http_long_query_capture 200000)"
+echo "${RESP}" | grep -q "400 Bad Request"
 assert_daemons_alive "oversized request query"
 stop_daemons
 

@@ -81,6 +81,12 @@ add_executable(yappod_front
   ${SRC_DIR}/yappod_front.c
 )
 
+add_executable(search_deletefile_bounds_test
+  ${YAPPO_BASE_SOURCES}
+  ${YAPPO_SEARCH_SOURCES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_deletefile_bounds_test.c
+)
+
 set(ALL_TARGETS
   search
   yappo_makeindex
@@ -89,14 +95,19 @@ set(ALL_TARGETS
   yappod_front
 )
 
-foreach(tgt IN LISTS ALL_TARGETS)
+set(LINK_TARGETS
+  ${ALL_TARGETS}
+  search_deletefile_bounds_test
+)
+
+foreach(tgt IN LISTS LINK_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
   target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads)
 endforeach()
 
 find_library(M_LIB m)
 if(M_LIB)
-  foreach(tgt IN LISTS ALL_TARGETS)
+  foreach(tgt IN LISTS LINK_TARGETS)
     target_link_libraries(${tgt} PRIVATE ${M_LIB})
   endforeach()
 endif()
@@ -108,3 +119,5 @@ install(TARGETS ${ALL_TARGETS}
 add_test(NAME e2e COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.sh)
 add_test(NAME error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/error_cases.sh)
 add_test(NAME mergepos_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/mergepos_error_cases.sh)
+add_test(NAME opendir_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/opendir_error_cases.sh)
+add_test(NAME search_deletefile_bounds COMMAND $<TARGET_FILE:search_deletefile_bounds_test>)
