@@ -10,14 +10,32 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+static int YAP_filedata_read_field(const unsigned char **bufp, size_t *remain, void *out,
+                                   size_t field_size) {
+  if (*remain < field_size) {
+    return -1;
+  }
+  memcpy(out, *bufp, field_size);
+  *bufp += field_size;
+  *remain -= field_size;
+  return 0;
+}
+
 /*
  *fileindexをキーに検索をしてFILEDATAを取得
  */
 int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_size, filedata_index;
   int seek;
+  int rc = -1;
   size_t str_len;
-  unsigned char *buf, *bufp;
+  size_t remain;
+  unsigned char *buf;
+  const unsigned char *bufp;
+
+  if (ydfp == NULL || filedata == NULL) {
+    return -1;
+  }
 
   if ((unsigned int)fileindex > ydfp->total_filenum) {
     /*対象となるIDは存在していない*/
@@ -34,7 +52,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     return -1;
   }
 
-  if (filedata_size == 0) {
+  if (filedata_size <= 0) {
     /*サイズが0なので登録されていない*/
     return -1;
   }
@@ -48,9 +66,9 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   }
 
   /*データの読みこみ*/
-  buf = (unsigned char *)YAP_malloc(filedata_size);
+  buf = (unsigned char *)YAP_malloc((size_t)filedata_size);
   if (YAP_fseek_set(ydfp->filedata_file, filedata_index) != 0 ||
-      YAP_fread_exact(ydfp->filedata_file, buf, 1, filedata_size) != 0) {
+      YAP_fread_exact(ydfp->filedata_file, buf, 1, (size_t)filedata_size) != 0) {
     free(buf);
     buf = NULL;
     return -1;
@@ -59,66 +77,79 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   memset(filedata, 0, sizeof(FILEDATA));
 
   bufp = buf;
+  remain = (size_t)filedata_size;
 
   /*FIELDATAをシリアライズする
    * url\0title\0comment\0size\0keyword_num\0lastmod\0domainid\0other_len\0other
    */
-  memcpy(&str_len, bufp, sizeof(size_t));
-  bufp += sizeof(size_t);
+  if (YAP_filedata_read_field(&bufp, &remain, &str_len, sizeof(size_t)) != 0 || str_len > remain) {
+    goto done;
+  }
   if (str_len > 0) {
     filedata->url = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->url, bufp, str_len);
     filedata->url[str_len] = '\0';
     bufp += str_len;
+    remain -= str_len;
   } else {
     filedata->url = NULL;
   }
 
-  memcpy(&str_len, bufp, sizeof(size_t));
-  bufp += sizeof(size_t);
+  if (YAP_filedata_read_field(&bufp, &remain, &str_len, sizeof(size_t)) != 0 || str_len > remain) {
+    goto done;
+  }
   if (str_len > 0) {
     filedata->title = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->title, bufp, str_len);
     filedata->title[str_len] = '\0';
     bufp += str_len;
+    remain -= str_len;
   } else {
     filedata->title = NULL;
   }
 
-  memcpy(&str_len, bufp, sizeof(size_t));
-  bufp += sizeof(size_t);
+  if (YAP_filedata_read_field(&bufp, &remain, &str_len, sizeof(size_t)) != 0 || str_len > remain) {
+    goto done;
+  }
   if (str_len > 0) {
     filedata->comment = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->comment, bufp, str_len);
     filedata->comment[str_len] = '\0';
     bufp += str_len;
+    remain -= str_len;
   } else {
     filedata->comment = NULL;
   }
 
-  memcpy(&(filedata->size), bufp, sizeof(int));
-  bufp += sizeof(int);
-  memcpy(&(filedata->keyword_num), bufp, sizeof(int));
-  bufp += sizeof(int);
-  memcpy(&(filedata->lastmod), bufp, sizeof(time_t));
-  bufp += sizeof(time_t);
-  memcpy(&(filedata->domainid), bufp, sizeof(int));
-  bufp += sizeof(int);
+  if (YAP_filedata_read_field(&bufp, &remain, &(filedata->size), sizeof(int)) != 0 ||
+      YAP_filedata_read_field(&bufp, &remain, &(filedata->keyword_num), sizeof(int)) != 0 ||
+      YAP_filedata_read_field(&bufp, &remain, &(filedata->lastmod), sizeof(time_t)) != 0 ||
+      YAP_filedata_read_field(&bufp, &remain, &(filedata->domainid), sizeof(int)) != 0) {
+    goto done;
+  }
 
-  memcpy(&(filedata->other_len), bufp, sizeof(int));
-  bufp += sizeof(int);
+  if (YAP_filedata_read_field(&bufp, &remain, &(filedata->other_len), sizeof(int)) != 0 ||
+      filedata->other_len < 0 || (size_t)filedata->other_len > remain) {
+    goto done;
+  }
   if (filedata->other_len > 0) {
     filedata->other = (unsigned char *)YAP_malloc(filedata->other_len + 1);
     memcpy(filedata->other, bufp, filedata->other_len);
     filedata->other[filedata->other_len] = '\0';
-    bufp += filedata->other_len;
+    remain -= (size_t)filedata->other_len;
   } else {
     filedata->other = NULL;
   }
 
+  rc = 0;
+
+done:
+  if (rc != 0) {
+    YAP_Index_Filedata_free(filedata);
+  }
   free(buf);
 
-  return 0;
+  return rc;
 }
 
 /*
