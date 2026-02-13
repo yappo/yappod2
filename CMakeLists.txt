@@ -119,6 +119,7 @@ install(TARGETS ${ALL_TARGETS}
 add_test(NAME e2e COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e.sh)
 add_test(NAME error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/error_cases.sh)
 add_test(NAME front_http_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/front_http_error_cases.sh)
+add_test(NAME makeindex_input_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/makeindex_input_error_cases.sh)
 add_test(NAME mergepos_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/mergepos_error_cases.sh)
 add_test(NAME opendir_error_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/opendir_error_cases.sh)
 add_test(NAME relative_index_dir_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/relative_index_dir_cases.sh)
