@@ -831,6 +831,8 @@ void YAP_Db_cache_destroy(YAPPO_CACHE *p) {
  *必要ならば各ファイルをメモリ上にキャッシュする
  */
 void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) {
+  unsigned int deletefile_cap;
+  unsigned int loaded_delete_num;
 
   if (ydfp->total_filenum != p->total_filenum || ydfp->total_domainnum != p->total_domainnum ||
       ydfp->total_keywordnum != p->total_keywordnum) {
@@ -899,21 +901,23 @@ void YAP_Db_cache_load(YAPPO_DB_FILES *ydfp, YAPPO_CACHE *p) {
     pthread_mutex_unlock(&(p->domainid_mutex));
 
     /* 削除URLファイルキャッシュ */
+    deletefile_cap = (ydfp->total_filenum / 8U) + 1U;
     pthread_mutex_lock(&(p->deletefile_mutex));
-    p->deletefile = (unsigned char *)YAP_realloc(p->deletefile, (ydfp->total_filenum / 8) + 1);
-    memset(p->deletefile, 0, (ydfp->total_filenum / 8) + 1);
+    p->deletefile = (unsigned char *)YAP_realloc(p->deletefile, deletefile_cap);
+    memset(p->deletefile, 0, deletefile_cap);
     if (YAP_fseek_set(ydfp->deletefile_file, 0L) != 0) {
       p->deletefile_num = 0;
     } else {
-      size_t got =
-        YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, (ydfp->total_filenum / 8) + 1);
-      p->deletefile_num = (int)got;
+      size_t got = YAP_fread_try(ydfp->deletefile_file, p->deletefile, 1, deletefile_cap);
+      p->deletefile_num = (unsigned int)got;
     }
+    /* 削除ビットマップと総URL数は同一mutex配下で更新する */
+    p->total_filenum = ydfp->total_filenum;
+    loaded_delete_num = p->deletefile_num;
     pthread_mutex_unlock(&(p->deletefile_mutex));
 
-    printf("load delete: %d/%d\n", p->deletefile_num, (ydfp->total_filenum / 8) + 1);
+    printf("load delete: %u/%u\n", loaded_delete_num, deletefile_cap);
 
-    p->total_filenum = ydfp->total_filenum;
     p->total_domainnum = ydfp->total_domainnum;
     p->total_keywordnum = ydfp->total_keywordnum;
   }
