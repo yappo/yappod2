@@ -348,6 +348,10 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
     /* tmpファイルを元にもどす */
     dir_path = yap_alloc_printf("%s", p->base_dir);
     pos_dir = opendir(dir_path);
+    if (pos_dir == NULL) {
+      perror("opendir base_dir");
+      free(dir_path);
+    } else {
     while ((direntp = readdir(pos_dir)) != NULL) {
       char *name_tmp = direntp->d_name;
       int len = strlen(name_tmp);
@@ -373,10 +377,15 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
     }
     closedir(pos_dir);
     free(dir_path);
+    }
 
     /* 位置情報ファイルも元にもどす */
     dir_path = yap_alloc_printf("%s/pos", p->base_dir);
     pos_dir = opendir(dir_path);
+    if (pos_dir == NULL) {
+      perror("opendir pos_dir");
+      free(dir_path);
+    } else {
     while ((direntp = readdir(pos_dir)) != NULL) {
       char *name_tmp = direntp->d_name;
       int len = strlen(name_tmp);
@@ -403,6 +412,7 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
     }
     closedir(pos_dir);
     free(dir_path);
+    }
   }
 
   /* 登録URL数 */
