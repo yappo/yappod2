@@ -41,9 +41,28 @@ case_begin() {
   echo "[CASE] ${CURRENT_CASE}" >&2
 }
 
+dump_daemon_logs() {
+  local f
+
+  if [ ! -d "${DAEMON_RUN_DIR}" ]; then
+    return
+  fi
+
+  echo "[DEBUG] daemon run dir: ${DAEMON_RUN_DIR}" >&2
+  for f in core.pid front.pid core.log core.error front.log front.error; do
+    if [ -f "${DAEMON_RUN_DIR}/${f}" ]; then
+      echo "[DEBUG] ----- ${f} -----" >&2
+      cat "${DAEMON_RUN_DIR}/${f}" >&2 || true
+      echo >&2
+      echo "[DEBUG] --------------------" >&2
+    fi
+  done
+}
+
 on_error() {
   local rc=$?
   echo "[ERROR] case='${CURRENT_CASE}' rc=${rc}" >&2
+  dump_daemon_logs
 }
 trap on_error ERR
 
@@ -181,6 +200,7 @@ assert_daemons_alive() {
   local context="$1"
   if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
     echo "front/core daemon crashed: ${context}" >&2
+    dump_daemon_logs
     exit 1
   fi
 }
@@ -209,13 +229,20 @@ start_daemons() {
 
   if [ ! -f "${DAEMON_RUN_DIR}/core.pid" ] || [ ! -f "${DAEMON_RUN_DIR}/front.pid" ]; then
     echo "Failed to start daemon stack (pid file missing)." >&2
+    dump_daemon_logs
     exit 1
   fi
   CORE_PID="$(cat "${DAEMON_RUN_DIR}/core.pid")"
   FRONT_PID="$(cat "${DAEMON_RUN_DIR}/front.pid")"
+  if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
+    echo "Failed to start daemon stack (process exited)." >&2
+    dump_daemon_logs
+    exit 1
+  fi
 
   if ! wait_for_port 10086 || ! wait_for_port 10080; then
     echo "Failed to open core/front ports." >&2
+    dump_daemon_logs
     exit 1
   fi
 }
