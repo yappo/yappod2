@@ -85,6 +85,13 @@ static char *urldecode(const char *p) {
       retp++;
       p++;
     } else {
+      /* '%' の後ろが2文字未満なら不正エスケープとしてそのまま残す */
+      if (p[1] == '\0' || p[2] == '\0') {
+        *retp = *p;
+        retp++;
+        p++;
+        continue;
+      }
       int hi = -1, lo = -1;
       if (p[1] >= '0' && p[1] <= '9') {
         hi = p[1] - '0';

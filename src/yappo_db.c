@@ -114,6 +114,23 @@ static char *yap_alloc_printf(const char *fmt, ...) {
   return buf;
 }
 
+static int yap_has_suffix(const char *value, const char *suffix) {
+  size_t value_len;
+  size_t suffix_len;
+
+  if (value == NULL || suffix == NULL) {
+    return 0;
+  }
+
+  value_len = strlen(value);
+  suffix_len = strlen(suffix);
+  if (value_len < suffix_len) {
+    return 0;
+  }
+
+  return strcmp(value + (value_len - suffix_len), suffix) == 0;
+}
+
 /*
  *YAPPO_DB_FILESに必要なファイル名をセットする
  */
@@ -359,8 +376,7 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
       len = strlen(name);
 
       printf("name: %s\n", name);
-      if (name[len - 4] == '_' && name[len - 3] == 't' && name[len - 2] == 'm' &&
-          name[len - 1] == 'p') {
+      if (yap_has_suffix(name, "_tmp")) {
         char *new_name = yap_alloc_printf("%s", name);
         new_name[len - 4] = 0;
         printf("/bin/mv %s %s\n", name, new_name);
@@ -393,8 +409,7 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
       len = strlen(name);
 
       printf("name: %s\n", name);
-      if (name[len - 4] == '_' && name[len - 3] == 't' && name[len - 2] == 'm' &&
-          name[len - 1] == 'p') {
+      if (yap_has_suffix(name, "_tmp")) {
         char *new_name = yap_alloc_printf("%s", name);
         new_name[len - 4] = 0;
         new_name = (char *)YAP_realloc(new_name, strlen(new_name) + 1);

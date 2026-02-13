@@ -20,6 +20,7 @@ INDEX_DIR_OK10="${TMP_ROOT}/ok10"
 INDEX_DIR_OK11="${TMP_ROOT}/ok11"
 INDEX_DIR_OK12="${TMP_ROOT}/ok12"
 INDEX_DIR_OK13="${TMP_ROOT}/ok13"
+INDEX_DIR_OK14="${TMP_ROOT}/ok14"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -355,5 +356,20 @@ mkdir -p "${INDEX_DIR_OK13}/pos"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "dddddddddddddddddddddddd" | grep -q "http://example.com/ok3"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "badsizepayload" | grep -q "Hit num: 0\\|not found"
 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK13}" "Dup2" | grep -q "Hit num: 0\\|not found"
+
+# Case 2-16: 不正%エスケープを含むHTTPクエリでも front/core が落ちないこと
+case_begin "Case 2-16: invalid percent escapes over daemon path"
+make_index "${INDEX_DIR_OK14}"
+start_daemons "${INDEX_DIR_OK14}"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?% HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+echo "${RESP}" | grep -q "HTTP/1.0 200 OK"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?%A HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+echo "${RESP}" | grep -q "HTTP/1.0 200 OK"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?%ZZ HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+echo "${RESP}" | grep -q "HTTP/1.0 200 OK"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?A%2 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+echo "${RESP}" | grep -q "HTTP/1.0 200 OK"
+assert_daemons_alive "invalid-percent request"
+stop_daemons
 
 exit 0
