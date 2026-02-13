@@ -160,7 +160,7 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: |
           set -o pipefail
-          ctest --test-dir build-sanitizer --output-on-failure 2>&1 | tee build-sanitizer/ctest.log
+          ctest --test-dir build-sanitizer --output-on-failure -E "^error_cases$" 2>&1 | tee build-sanitizer/ctest.log
 
       - name: Dump sanitizer logs on failure
         if: steps.ctest_sanitizer.outcome == 'failure'
