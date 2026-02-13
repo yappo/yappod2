@@ -16,7 +16,7 @@
 int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_size, filedata_index;
   int seek;
-  int str_len;
+  size_t str_len;
   unsigned char *buf, *bufp;
 
   if ((unsigned int)fileindex > ydfp->total_filenum) {
@@ -63,50 +63,54 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
   /*FIELDATAをシリアライズする
    * url\0title\0comment\0size\0keyword_num\0lastmod\0domainid\0other_len\0other
    */
-  str_len = *((size_t *)bufp);
+  memcpy(&str_len, bufp, sizeof(size_t));
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->url = (char *)YAP_malloc(str_len + 1);
+    filedata->url = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->url, bufp, str_len);
+    filedata->url[str_len] = '\0';
     bufp += str_len;
   } else {
     filedata->url = NULL;
   }
 
-  str_len = *((size_t *)bufp);
+  memcpy(&str_len, bufp, sizeof(size_t));
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->title = (char *)YAP_malloc(str_len + 1);
+    filedata->title = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->title, bufp, str_len);
+    filedata->title[str_len] = '\0';
     bufp += str_len;
   } else {
     filedata->title = NULL;
   }
 
-  str_len = *((size_t *)bufp);
+  memcpy(&str_len, bufp, sizeof(size_t));
   bufp += sizeof(size_t);
   if (str_len > 0) {
-    filedata->comment = (char *)YAP_malloc(str_len + 1);
+    filedata->comment = (char *)YAP_malloc((size_t)str_len + 1);
     memcpy(filedata->comment, bufp, str_len);
+    filedata->comment[str_len] = '\0';
     bufp += str_len;
   } else {
     filedata->comment = NULL;
   }
 
-  filedata->size = *((int *)bufp);
+  memcpy(&(filedata->size), bufp, sizeof(int));
   bufp += sizeof(int);
-  filedata->keyword_num = *((int *)bufp);
+  memcpy(&(filedata->keyword_num), bufp, sizeof(int));
   bufp += sizeof(int);
-  filedata->lastmod = *((time_t *)bufp);
+  memcpy(&(filedata->lastmod), bufp, sizeof(time_t));
   bufp += sizeof(time_t);
-  filedata->domainid = *((int *)bufp);
+  memcpy(&(filedata->domainid), bufp, sizeof(int));
   bufp += sizeof(int);
 
-  filedata->other_len = *((int *)bufp);
+  memcpy(&(filedata->other_len), bufp, sizeof(int));
   bufp += sizeof(int);
   if (filedata->other_len > 0) {
     filedata->other = (unsigned char *)YAP_malloc(filedata->other_len + 1);
     memcpy(filedata->other, bufp, filedata->other_len);
+    filedata->other[filedata->other_len] = '\0';
     bufp += filedata->other_len;
   } else {
     filedata->other = NULL;
@@ -159,45 +163,48 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
 
   if (filedata->url != NULL) {
     str_len = strlen(filedata->url);
-    *((size_t *)bufp) = str_len;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
     memcpy(bufp, filedata->url, str_len);
     bufp += str_len;
   } else {
-    *((size_t *)bufp) = 0;
+    str_len = 0;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
   }
   if (filedata->title != NULL) {
     str_len = strlen(filedata->title);
-    *((size_t *)bufp) = str_len;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
     memcpy(bufp, filedata->title, str_len);
     bufp += str_len;
   } else {
-    *((size_t *)bufp) = 0;
+    str_len = 0;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
   }
   if (filedata->comment != NULL) {
     str_len = strlen(filedata->comment);
-    *((size_t *)bufp) = str_len;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
     memcpy(bufp, filedata->comment, str_len);
     bufp += str_len;
   } else {
-    *((size_t *)bufp) = 0;
+    str_len = 0;
+    memcpy(bufp, &str_len, sizeof(size_t));
     bufp += sizeof(size_t);
   }
 
-  *((int *)bufp) = filedata->size;
+  memcpy(bufp, &(filedata->size), sizeof(int));
   bufp += sizeof(int);
-  *((int *)bufp) = filedata->keyword_num;
+  memcpy(bufp, &(filedata->keyword_num), sizeof(int));
   bufp += sizeof(int);
-  *((time_t *)bufp) = filedata->lastmod;
+  memcpy(bufp, &(filedata->lastmod), sizeof(time_t));
   bufp += sizeof(time_t);
-  *((int *)bufp) = filedata->domainid;
+  memcpy(bufp, &(filedata->domainid), sizeof(int));
   bufp += sizeof(int);
 
-  *((int *)bufp) = filedata->other_len;
+  memcpy(bufp, &(filedata->other_len), sizeof(int));
   bufp += sizeof(int);
   if (filedata->other != NULL) {
     memcpy(bufp, filedata->other, filedata->other_len);
