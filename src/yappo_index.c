@@ -5,6 +5,7 @@
 #include "yappo_db.h"
 #include "yappo_alloc.h"
 #include <ctype.h>
+#include <limits.h>
 #include <string.h>
 
 /*
@@ -216,26 +217,57 @@ int *YAP_Index_8bit_decode(unsigned char *encode, int *list_len, int len) {
   int i;
   int *list;
   unsigned char *encode_p;
-  int bits;
+  unsigned int value = 0;
+  int bits = 0;
+  int malformed = 0;
+  size_t list_cap;
 
   *list_len = 0;
-  bits = 0;
 
-  list = (int *)YAP_malloc(sizeof(int) * sizeof(int) * (len + 1));
+  if (len < 0) {
+    list = (int *)YAP_malloc(sizeof(int));
+    list[0] = 0;
+    return list;
+  }
+  list_cap = (size_t)len + 1U;
+  list = (int *)YAP_malloc(sizeof(int) * list_cap);
   encode_p = encode;
 
   list[*list_len] = 0;
   for (i = 0; i < len; i++) {
+    unsigned int chunk = (unsigned int)(*encode_p & 0x7f);
 
-    list[*list_len] = list[*list_len] + ((*encode_p & 0x7f) << bits);
+    if (bits < 0 || bits > 28) {
+      malformed = 1;
+      break;
+    }
+    if (chunk > ((unsigned int)INT_MAX >> bits)) {
+      malformed = 1;
+      break;
+    }
+    value += (chunk << bits);
     bits += 7;
+
     if ((*encode_p & 0x80) == 0) {
       /* 最後の7bit */
+      list[*list_len] = (int)value;
       (*list_len)++;
-      list[*list_len] = 0;
+      if ((size_t)(*list_len) >= list_cap) {
+        malformed = 1;
+        break;
+      }
+      value = 0;
       bits = 0;
     }
     encode_p++;
+  }
+  if (!malformed && bits != 0) {
+    /* 末尾が継続ビットのまま終わっており、壊れた符号列 */
+    malformed = 1;
+  }
+  if (malformed) {
+    *list_len = 0;
+    list[0] = 0;
   }
 
   /*

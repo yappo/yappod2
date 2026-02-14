@@ -99,6 +99,12 @@ add_executable(search_deletefile_concurrency_test
   ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_deletefile_concurrency_test.c
 )
 
+add_executable(index_varint_decode_test
+  ${YAPPO_BASE_SOURCES}
+  ${YAPPO_SEARCH_SOURCES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_varint_decode_test.c
+)
+
 set(ALL_TARGETS
   search
   yappo_makeindex
@@ -112,6 +118,7 @@ set(LINK_TARGETS
   search_deletefile_bounds_test
   filedata_decode_bounds_test
   search_deletefile_concurrency_test
+  index_varint_decode_test
 )
 
 foreach(tgt IN LISTS LINK_TARGETS)
@@ -140,3 +147,4 @@ add_test(NAME relative_index_dir_cases COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests
 add_test(NAME search_deletefile_bounds COMMAND $<TARGET_FILE:search_deletefile_bounds_test>)
 add_test(NAME filedata_decode_bounds COMMAND $<TARGET_FILE:filedata_decode_bounds_test>)
 add_test(NAME search_deletefile_concurrency COMMAND $<TARGET_FILE:search_deletefile_concurrency_test>)
+add_test(NAME index_varint_decode COMMAND $<TARGET_FILE:index_varint_decode_test>)
