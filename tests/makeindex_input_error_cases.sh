@@ -31,8 +31,9 @@ trap on_error ERR
 make_index() {
   local input_file="$1"
   local index_dir="$2"
+  shift 2
   mkdir -p "${index_dir}/pos"
-  "${BUILD_DIR}/yappo_makeindex" -f "${input_file}" -d "${index_dir}" >/dev/null
+  "${BUILD_DIR}/yappo_makeindex" -f "${input_file}" -d "${index_dir}" "$@" >/dev/null
 }
 
 expect_hit() {
@@ -103,5 +104,51 @@ expect_hit "${INDEX3}" "abc123" "http://example.com/doc5"
 expect_no_hit "${INDEX3}" "削除対象"
 expect_no_hit "${INDEX3}" "oversizedtoken666lllmmmnnn"
 expect_no_hit "${INDEX3}" "oversizedtoken777ooopppqqq"
+
+case_begin "makeindex: invalid body_size fields are skipped"
+INPUT4="${TMP_ROOT}/input_invalid_size_fields.txt"
+INDEX4="${TMP_ROOT}/index4"
+sed -n '1,2p' "${FIXTURE}" > "${INPUT4}"
+cat >> "${INPUT4}" <<'EOF'
+http://example.com/badsize-neg	ADD	BadSizeNeg	-1	badsizeNEGtoken888aaabbb
+http://example.com/badsize-over	ADD	BadSizeOver	2147483648	badsizeOVERtoken999cccddd
+http://example.com/badsize-alpha	ADD	BadSizeAlpha	abc	badsizeALPHAtoken000eeefff
+EOF
+sed -n '3,$p' "${FIXTURE}" >> "${INPUT4}"
+make_index "${INPUT4}" "${INDEX4}"
+expect_hit "${INDEX4}" "OpenAI2025" "http://example.com/doc1"
+expect_hit "${INDEX4}" "abc123" "http://example.com/doc5"
+expect_no_hit "${INDEX4}" "badsizeNEGtoken888aaabbb"
+expect_no_hit "${INDEX4}" "badsizeOVERtoken999cccddd"
+expect_no_hit "${INDEX4}" "badsizeALPHAtoken000eeefff"
+
+case_begin "makeindex: default body size boundaries are handled"
+INPUT5="${TMP_ROOT}/input_size_boundary_default.txt"
+INDEX5="${TMP_ROOT}/index5"
+python3 - "${FIXTURE}" "${INPUT5}" <<'PY'
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+size_map = {
+    "http://example.com/doc1": "24",
+    "http://example.com/doc2": "23",
+    "https://example.com/doc3": "102400",
+    "http://example.com/doc5": "102401",
+}
+
+with open(src, encoding="utf-8") as fin, open(dst, "w", encoding="utf-8") as fout:
+    for line in fin:
+        line = line.rstrip("\n")
+        fields = line.split("\t")
+        if len(fields) == 5 and fields[0] in size_map:
+            fields[3] = size_map[fields[0]]
+            line = "\t".join(fields)
+        fout.write(line + "\n")
+PY
+make_index "${INPUT5}" "${INDEX5}"
+expect_hit "${INDEX5}" "OpenAI2025" "http://example.com/doc1"
+expect_hit "${INDEX5}" "サンプル本文" "https://example.com/doc3"
+expect_no_hit "${INDEX5}" "検索用のテスト本文です"
+expect_no_hit "${INDEX5}" "abc123"
 
 exit 0
