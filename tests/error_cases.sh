@@ -29,6 +29,7 @@ INDEX_DIR_OK16="${TMP_ROOT}/ok16"
 INDEX_DIR_OK17="${TMP_ROOT}/ok17"
 INDEX_DIR_OK18="${TMP_ROOT}/ok18"
 INDEX_DIR_OK19="${TMP_ROOT}/ok19"
+INDEX_DIR_OK20="${TMP_ROOT}/ok20"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -589,5 +590,23 @@ if ! echo "${RESP}" | grep -q $'^\t'; then
 fi
 assert_daemons_alive "missing-filedata-strings request"
 stop_daemons
+
+# Case 2-19: postings集約メモリ上限を越える場合は安全に打ち切ること
+case_begin "Case 2-19: postings query bytes cap"
+make_index "${INDEX_DIR_OK20}"
+set +e
+SEARCH_OUT="$(YAPPOD_MAX_POSTINGS_QUERY_BYTES=1 "${BUILD_DIR}/search" -l "${INDEX_DIR_OK20}" "OpenAI2025" 2>&1)"
+SEARCH_RC=$?
+set -e
+if [ "${SEARCH_RC}" -ge 128 ]; then
+  echo "search crashed by signal under postings bytes cap (rc=${SEARCH_RC})" >&2
+  echo "${SEARCH_OUT}" >&2
+  exit 1
+fi
+if ! echo "${SEARCH_OUT}" | grep -q "not found"; then
+  echo "Expected safe cutoff result under postings bytes cap" >&2
+  echo "${SEARCH_OUT}" >&2
+  exit 1
+fi
 
 exit 0

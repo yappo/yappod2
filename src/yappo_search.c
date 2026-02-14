@@ -7,6 +7,8 @@
 #include <math.h>
 #include <time.h>
 #include <ctype.h>
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <stdint.h>
@@ -19,6 +21,7 @@
 #include "yappo_io.h"
 #include "yappo_ngram.h"
 #include "yappo_search.h"
+#include "yappo_limits.h"
 
 static int YAP_Search_keyword_stat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
                                        int *keyword_total_num, int *keyword_docs_num) {
@@ -34,6 +37,41 @@ static int YAP_Search_keyword_stat_get(YAPPO_DB_FILES *ydfp, unsigned long keywo
     return -1;
   }
   return 0;
+}
+
+static size_t YAP_Search_max_postings_query_bytes(void) {
+  const char *env;
+  char *endptr;
+  unsigned long long parsed;
+  static size_t cached = 0;
+  static int initialized = 0;
+
+  if (initialized) {
+    return cached;
+  }
+  initialized = 1;
+  cached = (size_t)YAP_DEFAULT_MAX_POSTINGS_QUERY_BYTES;
+
+  env = getenv("YAPPOD_MAX_POSTINGS_QUERY_BYTES");
+  if (env == NULL || env[0] == '\0') {
+    return cached;
+  }
+
+  errno = 0;
+  parsed = strtoull(env, &endptr, 10);
+  if (errno != 0 || endptr == env || *endptr != '\0' || parsed == 0ULL) {
+    return cached;
+  }
+
+  if (parsed > (unsigned long long)INT_MAX) {
+    cached = (size_t)INT_MAX;
+  } else {
+    cached = (size_t)parsed;
+  }
+  if (cached == 0) {
+    cached = 1;
+  }
+  return cached;
 }
 
 /*
@@ -679,6 +717,7 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   int max_pos_file;
   int docs_cap;
   int malformed;
+  size_t postings_bytes_cap;
 
   if (ydfp == NULL || ydfp->cache == NULL || ret_docs_num == NULL) {
     return NULL;
@@ -703,6 +742,7 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   posbuf_tmp = NULL;
   posbuf_len_tmp = 0;
   posbuf_cap = 0;
+  postings_bytes_cap = YAP_Search_max_postings_query_bytes();
   max_pos_file = (int)(ydfp->total_filenum / MAX_POS_URL);
   for (i = 0; i <= max_pos_file; i++) {
     if (YAP_Db_pos_open(ydfp, i)) {
@@ -724,8 +764,16 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
       printf("[%d]ret: %d/ len: %d\n", i, ret, posbuf_len);
       if (ret == 0 && posbuf_len > 0) {
         size_t needed = posbuf_len_tmp + (size_t)posbuf_len;
+        if (needed > postings_bytes_cap) {
+          free(posbuf);
+          free(posbuf_tmp);
+          return NULL;
+        }
         if (needed > posbuf_cap) {
           size_t new_cap = (posbuf_cap == 0) ? 4096U : posbuf_cap;
+          if (new_cap > postings_bytes_cap) {
+            new_cap = postings_bytes_cap;
+          }
           while (new_cap < needed) {
             if (new_cap > (SIZE_MAX / 2U)) {
               free(posbuf);
@@ -733,6 +781,9 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
               return NULL;
             }
             new_cap *= 2U;
+            if (new_cap > postings_bytes_cap) {
+              new_cap = postings_bytes_cap;
+            }
           }
           posbuf_tmp = (unsigned char *)YAP_realloc(posbuf_tmp, new_cap);
           posbuf_cap = new_cap;

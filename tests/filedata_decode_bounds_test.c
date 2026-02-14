@@ -5,6 +5,7 @@
 
 #include "yappo_db.h"
 #include "yappo_index_filedata.h"
+#include "yappo_limits.h"
 
 static int fail(const char *msg) {
   fprintf(stderr, "%s\n", msg);
@@ -44,7 +45,8 @@ static int setup_db_with_payload(YAPPO_DB_FILES *db, const unsigned char *payloa
 
   if (write_exact(db->filedata_size_file, &payload_len, sizeof(payload_len)) != 0 ||
       write_exact(db->filedata_index_file, &index, sizeof(index)) != 0 ||
-      (payload_len > 0 && write_exact(db->filedata_file, payload, (size_t)payload_len) != 0) ||
+      (payload_len > 0 && payload != NULL &&
+       write_exact(db->filedata_file, payload, (size_t)payload_len) != 0) ||
       fseek(db->filedata_size_file, 0L, SEEK_SET) != 0 ||
       fseek(db->filedata_index_file, 0L, SEEK_SET) != 0 ||
       fseek(db->filedata_file, 0L, SEEK_SET) != 0) {
@@ -115,6 +117,10 @@ static int test_negative_other_length(void) {
   payload_len = (int)(p - payload);
 
   return expect_get_failed(payload, payload_len);
+}
+
+static int test_oversized_payload_size(void) {
+  return expect_get_failed(NULL, YAP_MAX_FILEDATA_RECORD_SIZE + 1);
 }
 
 static int test_valid_payload(void) {
@@ -190,6 +196,9 @@ int main(void) {
     return 1;
   }
   if (test_negative_other_length() != 0) {
+    return 1;
+  }
+  if (test_oversized_payload_size() != 0) {
     return 1;
   }
   if (test_valid_payload() != 0) {

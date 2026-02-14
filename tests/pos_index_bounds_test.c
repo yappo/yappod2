@@ -4,6 +4,7 @@
 
 #include "yappo_db.h"
 #include "yappo_index_pos.h"
+#include "yappo_limits.h"
 
 static int fail(const char *msg) {
   fprintf(stderr, "%s\n", msg);
@@ -91,6 +92,11 @@ static int test_negative_index(void) {
   return expect_get_failed(4, -1, payload, (int)sizeof(payload));
 }
 
+static int test_oversized_postings_size(void) {
+  unsigned char payload[1] = {0x00};
+  return expect_get_failed(YAP_MAX_POSTINGS_BLOB_SIZE + 1, 0, payload, 0);
+}
+
 static int test_valid_postings(void) {
   YAPPO_DB_FILES db;
   unsigned char payload[4] = {0x10, 0x20, 0x30, 0x40};
@@ -128,6 +134,9 @@ int main(void) {
     return 1;
   }
   if (test_negative_index() != 0) {
+    return 1;
+  }
+  if (test_oversized_postings_size() != 0) {
     return 1;
   }
   if (test_valid_postings() != 0) {
