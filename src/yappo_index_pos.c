@@ -90,7 +90,9 @@ int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
   if (YAP_fseek_end(ydfp->pos_file, 0L) != 0) {
     return -1;
   }
-  pos_index = ftell(ydfp->pos_file);
+  if (YAP_ftell_int(ydfp->pos_file, &pos_index) != 0) {
+    return -1;
+  }
   if (YAP_fwrite_exact(ydfp->pos_file, postings_buf, 1, postings_buf_len) != 0) {
     return -1;
   }
@@ -244,7 +246,9 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
       }
 
       /*データの書きこみ*/
-      index_tmp = ftell(pos_tmp_file);
+      if (YAP_ftell_int(pos_tmp_file, &index_tmp) != 0) {
+        break;
+      }
       if (YAP_fwrite_exact(pos_tmp_file, buf, 1, size) != 0) {
         break;
       }
