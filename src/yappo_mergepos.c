@@ -369,7 +369,7 @@ int main(int argc, char *argv[]) {
       int fileindex, filepos_len;
       int delete_seek, delete_bit, delete_f;
       int malformed = 0;
-      int key_pos_seek;
+      long key_pos_seek;
       unsigned char *new_bufs;
       new_pos = (int *)YAP_malloc(sizeof(int) * (size_t)pos_len);
 
@@ -431,8 +431,8 @@ int main(int argc, char *argv[]) {
           /*
      * 保存する
      */
-          key_pos_seek = sizeof(int) * key_pos;
-          if (YAP_fseek_set(output->index_fp, key_pos_seek) != 0 ||
+          if (YAP_seek_offset_index(sizeof(int), (unsigned long)key_pos, &key_pos_seek) != 0 ||
+              YAP_fseek_set(output->index_fp, key_pos_seek) != 0 ||
               YAP_fseek_set(output->size_fp, key_pos_seek) != 0 ||
               YAP_fwrite_exact(output->data_fp, new_bufs, sizeof(char), new_pos_len) != 0 ||
               YAP_fwrite_exact(output->index_fp, &new_index, sizeof(int), 1) != 0 ||

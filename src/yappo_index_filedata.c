@@ -26,7 +26,7 @@ static int YAP_filedata_read_field(const unsigned char **bufp, size_t *remain, v
  */
 int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_size, filedata_index;
-  int seek;
+  long seek;
   int rc = -1;
   size_t str_len;
   size_t remain;
@@ -42,7 +42,9 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     return -1;
   }
 
-  seek = sizeof(int) * fileindex;
+  if (YAP_seek_offset_index(sizeof(int), (unsigned long)fileindex, &seek) != 0) {
+    return -1;
+  }
 
   /*サイズの読みこみ*/
   if (YAP_fseek_set(ydfp->filedata_size_file, seek) != 0) {
@@ -157,7 +159,7 @@ done:
  */
 int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *filedata) {
   int filedata_index;
-  int seek;
+  long seek;
   char *buf, *bufp;
   int buf_len = 0;
   size_t str_len;
@@ -243,7 +245,10 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
 
   /*登録*/
 
-  seek = sizeof(int) * fileindex;
+  if (YAP_seek_offset_index(sizeof(int), (unsigned long)fileindex, &seek) != 0) {
+    free(buf);
+    return -1;
+  }
 
   /*サイズの書きこみ*/
   if (YAP_fseek_set(ydfp->filedata_size_file, seek) != 0 ||
@@ -283,14 +288,16 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
  */
 int YAP_Index_Filedata_del(YAPPO_DB_FILES *ydfp, int fileindex) {
   int c = 0;
-  int seek;
+  long seek;
 
   if (ydfp->mode == YAPPO_DB_READ) {
     /*読みこみモードではエラー*/
     return -1;
   }
 
-  seek = sizeof(int) * fileindex;
+  if (YAP_seek_offset_index(sizeof(int), (unsigned long)fileindex, &seek) != 0) {
+    return -1;
+  }
 
   /*サイズの書きこみ*/
   if (YAP_fseek_set(ydfp->filedata_size_file, seek) != 0 ||
@@ -342,7 +349,8 @@ int YAP_Index_Filedata_free(FILEDATA *p) {
 int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_size,
                           char *filedata_index) {
   int i;
-  int seek, index, index_tmp, size;
+  long seek;
+  int index, index_tmp, size;
   char *filedata_tmp, *filedata_index_tmp;
   FILE *filedata_file, *filedata_size_file, *filedata_index_file;
   FILE *filedata_tmp_file, *filedata_index_tmp_file;
@@ -403,7 +411,9 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
 
   /*位置情報のコピー*/
   for (i = 1; (unsigned int)i <= ydfp->total_filenum; i++) {
-    seek = sizeof(int) * i;
+    if (YAP_seek_offset_index(sizeof(int), (unsigned long)i, &seek) != 0) {
+      break;
+    }
 
     /*サイズの読みこみ*/
     if (YAP_fread_exact(filedata_size_file, &size, sizeof(int), 1) != 0) {

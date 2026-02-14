@@ -61,6 +61,23 @@ int __YAP_ftell_int(char *filename, int line, FILE *fp, int *offset_out);
 #define YAP_ftell_int(fp, offset_out) (__YAP_ftell_int(__FILE__, __LINE__, fp, offset_out))
 
 /**
+ * @brief `index * item_size` を `long` のシークオフセットへ安全に変換します。
+ *
+ * @details
+ * `long` に収まらない場合は失敗を返します。
+ *
+ * @param item_size 1要素のサイズ（バイト）
+ * @param index 要素インデックス
+ * @param offset_out 変換結果の出力先
+ * @return 0:成功 / -1:失敗
+ */
+int __YAP_seek_offset_index(char *filename, int line, size_t item_size, unsigned long index,
+                            long *offset_out);
+/** @brief 呼び出し位置情報付きの `__YAP_seek_offset_index` ラッパー。通常はこちらを使います。 */
+#define YAP_seek_offset_index(item_size, index, offset_out)                                        \
+  (__YAP_seek_offset_index(__FILE__, __LINE__, item_size, index, offset_out))
+
+/**
  * @brief 指定要素数を「必ず」読み込みます。
  *
  * @details
