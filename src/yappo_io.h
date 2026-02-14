@@ -46,6 +46,21 @@ int __YAP_fseek_end(char *filename, int line, FILE *fp, long offset);
 #define YAP_fseek_end(fp, offset) (__YAP_fseek_end(__FILE__, __LINE__, fp, offset))
 
 /**
+ * @brief 現在のファイル位置を `int` で取得します。
+ *
+ * @details
+ * `ftell` の戻り値が負値、または `INT_MAX` を超える場合は失敗します。
+ * インデックス内に `int` オフセットで保存する用途向けのヘルパーです。
+ *
+ * @param fp 対象ファイル
+ * @param offset_out 取得した位置の出力先
+ * @return 0:成功 / -1:失敗
+ */
+int __YAP_ftell_int(char *filename, int line, FILE *fp, int *offset_out);
+/** @brief 呼び出し位置情報付きの `__YAP_ftell_int` ラッパー。通常はこちらを使います。 */
+#define YAP_ftell_int(fp, offset_out) (__YAP_ftell_int(__FILE__, __LINE__, fp, offset_out))
+
+/**
  * @brief 指定要素数を「必ず」読み込みます。
  *
  * @details

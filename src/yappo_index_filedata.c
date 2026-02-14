@@ -257,7 +257,10 @@ int YAP_Index_Filedata_put(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     free(buf);
     return -1;
   }
-  filedata_index = ftell(ydfp->filedata_file);
+  if (YAP_ftell_int(ydfp->filedata_file, &filedata_index) != 0) {
+    free(buf);
+    return -1;
+  }
   if (YAP_fwrite_exact(ydfp->filedata_file, buf, 1, buf_len) != 0) {
     free(buf);
     return -1;
@@ -427,7 +430,9 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
       }
 
       /*データの書きこみ*/
-      index_tmp = ftell(filedata_tmp_file);
+      if (YAP_ftell_int(filedata_tmp_file, &index_tmp) != 0) {
+        break;
+      }
       if (YAP_fwrite_exact(filedata_tmp_file, buf, 1, size) != 0) {
         break;
       }
