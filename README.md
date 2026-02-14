@@ -121,6 +121,8 @@ URL\tCOMMAND\tTITLE\tBODY_SIZE\tBODY
 - `COMMAND`: `ADD` / `DELETE`
 - `BODY` に改行・タブは含めない
 - 不正行（列不足、`COMMAND`不正、`BODY_SIZE`非数値）は警告してスキップし、処理は継続
+- `BODY_SIZE` は**宣言値（メタデータ）**として扱います。本文実長との一致チェックは行いません。
+- `--min-body-size` / `--max-body-size` の判定、および検索結果の `(size:...)` 表示にはこの宣言値を使います。
 
 `ADD` の扱い:
 
@@ -162,6 +164,10 @@ yappo_makeindex -l /path/to/gz_dir -d /tmp/yappoindex
 yappo_makeindex -f tests/fixtures/index.txt -d /tmp/yappoindex \
   --min-body-size 1 --max-body-size 200000
 ```
+
+補足:
+
+- ここでいう「本文サイズ」は `BODY` の実バイト長ではなく、入力列 `BODY_SIZE` の宣言値です。
 
 ## pos 統合（`yappo_mergepos`）
 
