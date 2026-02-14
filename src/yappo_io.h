@@ -78,6 +78,27 @@ int __YAP_seek_offset_index(char *filename, int line, size_t item_size, unsigned
   (__YAP_seek_offset_index(__FILE__, __LINE__, item_size, index, offset_out))
 
 /**
+ * @brief 既存ファイルを別パスへ置き換えます（rename）。
+ *
+ * @param src 置換元パス
+ * @param dst 置換先パス
+ * @return 0:成功 / -1:失敗
+ */
+int __YAP_rename_replace(char *filename, int line, const char *src, const char *dst);
+/** @brief 呼び出し位置情報付きの `__YAP_rename_replace` ラッパー。通常はこちらを使います。 */
+#define YAP_rename_replace(src, dst) (__YAP_rename_replace(__FILE__, __LINE__, src, dst))
+
+/**
+ * @brief ファイルを削除します。対象が存在しない場合は成功扱いです。
+ *
+ * @param path 削除対象パス
+ * @return 0:成功 / -1:失敗
+ */
+int __YAP_unlink_if_exists(char *filename, int line, const char *path);
+/** @brief 呼び出し位置情報付きの `__YAP_unlink_if_exists` ラッパー。通常はこちらを使います。 */
+#define YAP_unlink_if_exists(path) (__YAP_unlink_if_exists(__FILE__, __LINE__, path))
+
+/**
  * @brief 指定要素数を「必ず」読み込みます。
  *
  * @details

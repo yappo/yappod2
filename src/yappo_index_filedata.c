@@ -5,10 +5,20 @@
 #include "yappo_index_filedata.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
+static int YAP_gc_close_file(FILE *fp, const char *path) {
+  if (fp == NULL) {
+    return 0;
+  }
+  if (fclose(fp) != 0) {
+    fprintf(stderr, "fclose error: %s: %s\n", path, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
 
 static int YAP_filedata_read_field(const unsigned char **bufp, size_t *remain, void *out,
                                    size_t field_size) {
@@ -349,6 +359,7 @@ int YAP_Index_Filedata_free(FILEDATA *p) {
 int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_size,
                           char *filedata_index) {
   int i;
+  int gc_error = 0;
   long seek;
   int index, index_tmp, size;
   char *filedata_tmp, *filedata_index_tmp;
@@ -412,11 +423,13 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   /*位置情報のコピー*/
   for (i = 1; (unsigned int)i <= ydfp->total_filenum; i++) {
     if (YAP_seek_offset_index(sizeof(int), (unsigned long)i, &seek) != 0) {
+      gc_error = 1;
       break;
     }
 
     /*サイズの読みこみ*/
     if (YAP_fread_exact(filedata_size_file, &size, sizeof(int), 1) != 0) {
+      gc_error = 1;
       break;
     }
 
@@ -426,6 +439,7 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
       /*indexの読みこみ*/
       if (YAP_fseek_set(filedata_index_file, seek) != 0 ||
           YAP_fread_exact(filedata_index_file, &index, sizeof(int), 1) != 0) {
+        gc_error = 1;
         break;
       }
 
@@ -436,14 +450,17 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
       }
       if (YAP_fseek_set(filedata_file, index) != 0 ||
           YAP_fread_exact(filedata_file, buf, 1, size) != 0) {
+        gc_error = 1;
         break;
       }
 
       /*データの書きこみ*/
       if (YAP_ftell_int(filedata_tmp_file, &index_tmp) != 0) {
+        gc_error = 1;
         break;
       }
       if (YAP_fwrite_exact(filedata_tmp_file, buf, 1, size) != 0) {
+        gc_error = 1;
         break;
       }
     } else {
@@ -451,6 +468,7 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
     }
     /*indexの書きこみ*/
     if (YAP_fwrite_exact(filedata_index_tmp_file, &index_tmp, sizeof(int), 1) != 0) {
+      gc_error = 1;
       break;
     }
   }
@@ -460,28 +478,30 @@ int YAP_Index_Filedata_gc(YAPPO_DB_FILES *ydfp, char *filedata, char *filedata_s
   }
 
   /*ファイルを閉じる*/
-  fclose(filedata_file);
-  fclose(filedata_size_file);
-  fclose(filedata_index_file);
-  fclose(filedata_tmp_file);
-  fclose(filedata_index_tmp_file);
+  if (YAP_gc_close_file(filedata_file, filedata) != 0 ||
+      YAP_gc_close_file(filedata_size_file, filedata_size) != 0 ||
+      YAP_gc_close_file(filedata_index_file, filedata_index) != 0 ||
+      YAP_gc_close_file(filedata_tmp_file, filedata_tmp) != 0 ||
+      YAP_gc_close_file(filedata_index_tmp_file, filedata_index_tmp) != 0) {
+    gc_error = 1;
+  }
+
+  if (gc_error) {
+    YAP_unlink_if_exists(filedata_tmp);
+    YAP_unlink_if_exists(filedata_index_tmp);
+    free(filedata_tmp);
+    free(filedata_index_tmp);
+    return -1;
+  }
 
   /*ファイルを入れ換える*/
-  if (fork()) {
-    int s;
-    wait(&s);
-  } else {
-    execl("/bin/mv", "/bin/mv", filedata_tmp, filedata, (char *)0);
-    perror("execl /bin/mv");
-    _exit(EXIT_FAILURE);
-  }
-  if (fork()) {
-    int s;
-    wait(&s);
-  } else {
-    execl("/bin/mv", "/bin/mv", filedata_index_tmp, filedata_index, (char *)0);
-    perror("execl /bin/mv");
-    _exit(EXIT_FAILURE);
+  if (YAP_rename_replace(filedata_tmp, filedata) != 0 ||
+      YAP_rename_replace(filedata_index_tmp, filedata_index) != 0) {
+    YAP_unlink_if_exists(filedata_tmp);
+    YAP_unlink_if_exists(filedata_index_tmp);
+    free(filedata_tmp);
+    free(filedata_index_tmp);
+    return -1;
   }
 
   free(filedata_tmp);
