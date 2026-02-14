@@ -27,6 +27,7 @@ INDEX_DIR_OK14="${TMP_ROOT}/ok14"
 INDEX_DIR_OK15="${TMP_ROOT}/ok15"
 INDEX_DIR_OK16="${TMP_ROOT}/ok16"
 INDEX_DIR_OK17="${TMP_ROOT}/ok17"
+INDEX_DIR_OK18="${TMP_ROOT}/ok18"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -91,6 +92,34 @@ assert_not_segv() {
 
   if [ "${rc}" -ge 128 ]; then
     echo "search crashed by signal (rc=${rc}): index=${index_dir} query=${query}" >&2
+    exit 1
+  fi
+}
+
+assert_hit_finite_score() {
+  local index_dir="$1"
+  local query="$2"
+  local expect_url="$3"
+  local out
+  local rc
+
+  set +e
+  out="$("${BUILD_DIR}/search" -l "${index_dir}" "${query}" 2>&1)"
+  rc=$?
+  set -e
+
+  if [ "${rc}" -ge 128 ]; then
+    echo "search crashed by signal (rc=${rc}): index=${index_dir} query=${query}" >&2
+    exit 1
+  fi
+  if ! echo "${out}" | grep -q "URL:${expect_url}"; then
+    echo "Expected URL hit '${expect_url}' for query: ${query}" >&2
+    echo "${out}" >&2
+    exit 1
+  fi
+  if echo "${out}" | grep -Eiq "SCORE:(nan|inf|-inf)"; then
+    echo "Expected finite score output for query: ${query}" >&2
+    echo "${out}" >&2
     exit 1
   fi
 }
@@ -460,5 +489,37 @@ RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?A%2 HTTP/1.1\r\nHost: loc
 echo "${RESP}" | grep -q "HTTP/1.0 200 OK"
 assert_daemons_alive "invalid-percent request"
 stop_daemons
+
+# Case 2-17: 極端な数値が混入しても score が有限値で返ること
+case_begin "Case 2-17: finite score under extreme numeric values"
+make_index "${INDEX_DIR_OK18}"
+python3 - "${INDEX_DIR_OK18}" <<'PY'
+import math
+import os
+import struct
+import sys
+
+base = sys.argv[1]
+
+score_path = os.path.join(base, "score")
+size_path = os.path.join(base, "size")
+urllen_path = os.path.join(base, "urllen")
+filekeywordnum_path = os.path.join(base, "filekeywordnum")
+
+# fileindex=1 の値を異常値にして score 計算ガードを検証する
+with open(score_path, "r+b") as f:
+    f.seek(8)  # sizeof(double) * 1
+    f.write(struct.pack("<d", math.nan))
+with open(size_path, "r+b") as f:
+    f.seek(4)  # sizeof(int) * 1
+    f.write(struct.pack("<i", 0))
+with open(urllen_path, "r+b") as f:
+    f.seek(4)
+    f.write(struct.pack("<i", 0))
+with open(filekeywordnum_path, "r+b") as f:
+    f.seek(4)
+    f.write(struct.pack("<i", 0))
+PY
+assert_hit_finite_score "${INDEX_DIR_OK18}" "OpenAI2025" "http://example.com/doc1"
 
 exit 0
