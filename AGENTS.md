@@ -51,6 +51,7 @@ README の例:
    - `## 影響範囲`
 7. PR作成後は GitHub Actions の CI を確認し、**必須ジョブが全て成功してから** merge します。失敗していたら gh コマンドで CI のログを確認し原因を調査しコミットを再度行います (`gh run view <run-id> --log-failed`)
    - `gh pr checks <pr-number>`
+     - for loop で sleep 20 をしながらポーリングで確認すること
    - `gh pr merge <pr-number> --merge --delete-branch`
 8. タスク完了後は次タスクへ自動遷移せず、再度「次タスク候補 + 残タスク（最大10件）」を提示してユーザ判断を待ちます。
 
