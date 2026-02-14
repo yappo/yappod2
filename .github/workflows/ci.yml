@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/ci.yml"
       - "CMakeLists.txt"
+      - "cmake/**"
       - "src/**"
       - "tests/**"
   pull_request:
@@ -15,6 +16,7 @@ on:
     paths:
       - ".github/workflows/ci.yml"
       - "CMakeLists.txt"
+      - "cmake/**"
       - "src/**"
       - "tests/**"
   workflow_dispatch:
@@ -43,14 +45,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libdb-dev zlib1g-dev
+          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev
 
       - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install berkeley-db
+          brew install berkeley-db cmocka
 
       - name: Configure (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -95,6 +97,55 @@ jobs:
             echo "::endgroup::"
           fi
 
+      - name: Collect daemon logs on failure
+        if: steps.ctest.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p build/daemon-logs
+          for base in "${RUNNER_TEMP}" "${TMPDIR:-/tmp}" "/tmp"; do
+            [ -d "${base}" ] || continue
+            while IFS= read -r f; do
+              rel="${f#${base}/}"
+              safe="$(echo "${rel}" | tr '/:' '__')"
+              cp "${f}" "build/daemon-logs/${safe}"
+            done < <(find "${base}" -type f \( -name "core.error" -o -name "front.error" -o -name "core.log" -o -name "front.log" \) -path "*yappod2-test-*" 2>/dev/null)
+          done
+
+      - name: Upload daemon logs artifact
+        if: steps.ctest.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-logs-${{ matrix.os }}
+          path: build/daemon-logs
+          if-no-files-found: warn
+
+      - name: Summarize logs
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ${RUNNER_OS} build/test summary"
+            if [ -f build/build.log ]; then
+              echo ""
+              echo "Build log tail:"
+              echo '```text'
+              tail -n 40 build/build.log
+              echo '```'
+            fi
+            if [ -f build/ctest.log ]; then
+              echo ""
+              echo "CTest summary:"
+              echo '```text'
+              grep -E "Test +#|tests passed|tests failed|Total Test time" build/ctest.log || true
+              echo '```'
+              echo ""
+              echo "Daemon port traces:"
+              echo '```text'
+              grep -F "[TEST] daemon attempt=" build/ctest.log || echo "(no daemon trace)"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Enforce test success
         if: always()
         run: |
@@ -132,7 +183,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libdb-dev zlib1g-dev clang
+          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev clang
 
       - name: Configure (sanitizer)
         run: |
@@ -146,11 +197,6 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build-sanitizer -j 2>&1 | tee build-sanitizer/build.log
-
-      - name: Prepare build alias for shell tests
-        run: |
-          rm -rf build
-          ln -s build-sanitizer build
 
       - name: Test (sanitizer)
         id: ctest_sanitizer
@@ -195,6 +241,55 @@ jobs:
               echo "::endgroup::"
             done
           fi
+
+      - name: Collect sanitizer daemon logs on failure
+        if: steps.ctest_sanitizer.outcome == 'failure'
+        shell: bash
+        run: |
+          mkdir -p build-sanitizer/daemon-logs
+          for base in "${RUNNER_TEMP}" "${TMPDIR:-/tmp}" "/tmp"; do
+            [ -d "${base}" ] || continue
+            while IFS= read -r f; do
+              rel="${f#${base}/}"
+              safe="$(echo "${rel}" | tr '/:' '__')"
+              cp "${f}" "build-sanitizer/daemon-logs/${safe}"
+            done < <(find "${base}" -type f \( -name "core.error" -o -name "front.error" -o -name "core.log" -o -name "front.log" \) -path "*yappod2-test-*" 2>/dev/null)
+          done
+
+      - name: Upload sanitizer daemon logs artifact
+        if: steps.ctest_sanitizer.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-logs-sanitizer
+          path: build-sanitizer/daemon-logs
+          if-no-files-found: warn
+
+      - name: Summarize sanitizer logs
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ubuntu-latest sanitizer summary"
+            if [ -f build-sanitizer/build.log ]; then
+              echo ""
+              echo "Build log tail:"
+              echo '```text'
+              tail -n 40 build-sanitizer/build.log
+              echo '```'
+            fi
+            if [ -f build-sanitizer/ctest.log ]; then
+              echo ""
+              echo "CTest summary:"
+              echo '```text'
+              grep -E "Test +#|tests passed|tests failed|Total Test time" build-sanitizer/ctest.log || true
+              echo '```'
+              echo ""
+              echo "Daemon port traces:"
+              echo '```text'
+              grep -F "[TEST] daemon attempt=" build-sanitizer/ctest.log || echo "(no daemon trace)"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce sanitizer test success
         if: always()

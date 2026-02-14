@@ -22,6 +22,7 @@ Yappod2 は、**オフラインの索引作成** と **オンラインの検索�
 - `yappod_front`（HTTP/TCP `10080`）
   - HTTPの検索リクエストを受ける入口
   - 受けたクエリを1台以上の `yappod_core` に中継し、結果を集約して返却
+  - `-p` で listen ポート、`-P` で接続先 core ポートを変更可能
 
 ### サーバ構成時の動作（検索リクエストの流れ）
 
@@ -49,17 +50,17 @@ Yappod2 は、**オフラインの索引作成** と **オンラインの検索�
 
 - Command Line Tools
 - Homebrew
-- `cmake`, `berkeley-db`, `zlib`, `ninja`（Ninja利用時）
+- `cmake`, `berkeley-db`, `zlib`, `cmocka`, `ninja`（Ninja利用時）
 
 ```bash
-brew install cmake berkeley-db zlib ninja
+brew install cmake berkeley-db zlib cmocka ninja
 ```
 
 ### Linux (Ubuntu 例)
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake libdb-dev zlib1g-dev
+sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev
 ```
 
 ## ビルド
@@ -93,6 +94,22 @@ cmake --build build
 ```bash
 ctest --test-dir build --output-on-failure
 ```
+
+補足:
+
+- daemon 系テストは毎回空きポートを自動採番して起動するため、`10080` / `10086` 固定前提ではありません。
+- 失敗時は ctest 出力中の `[TEST] daemon attempt=... core_port=... front_port=...` を確認してください。
+
+テスト分類（CMake オプション）:
+
+- daemon 系のみ: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=ON -DYAPPOD_TESTS_NODAEMON=OFF`
+- 非 daemon 系のみ: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=OFF -DYAPPOD_TESTS_NODAEMON=ON`
+- 両方（既定）: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=ON -DYAPPOD_TESTS_NODAEMON=ON`
+
+ラベル実行:
+
+- daemon 系のみ: `ctest --test-dir build -L daemon --output-on-failure`
+- 非 daemon 系のみ: `ctest --test-dir build -L standalone --output-on-failure`
 
 ## インストール
 
@@ -217,14 +234,22 @@ search -l /tmp/yappoindex -o キーワード1 キーワード2
 
 役割:
 
-- `yappod_core`: 検索処理を実行するバックエンド（TCP `10086`）
-- `yappod_front`: HTTPリクエスト受付と結果集約を行うフロント（TCP `10080`）
+- `yappod_core`: 検索処理を実行するバックエンド（既定 TCP `10086`、`-p` で変更）
+- `yappod_front`: HTTPリクエスト受付と結果集約を行うフロント（既定 TCP `10080`、`-p` で変更）
+- `yappod_front` は接続先 `yappod_core` ポートを `-P` で指定（既定 `10086`）
 
 起動:
 
 ```bash
 yappod_core -l /tmp/yappoindex
 yappod_front -l /tmp/yappoindex -s localhost
+```
+
+ヘルプ表示:
+
+```bash
+yappod_core --help
+yappod_front --help
 ```
 
 `yappod_front` の `-s` は複数指定できます。複数の `yappod_core` へ同一クエリを送り、結果を集約します。
@@ -236,11 +261,20 @@ yappod_front -l /tmp/yappoindex \
   -s search-server3
 ```
 
+ポート指定例（front/core を既定以外で起動）:
+
+```bash
+yappod_core -l /tmp/yappoindex -p 12086
+yappod_front -l /tmp/yappoindex -s localhost -p 12080 -P 12086
+```
+
 HTTPクエリ例:
 
 ```text
 http://localhost:10080/yappo/100000/AND/0-10?キーワード
 ```
+
+※ `10080` は既定ポートです。`yappod_front -p` で変更した場合はそのポートを使ってください。
 
 HTTPリクエスト行としては次の形式です。
 

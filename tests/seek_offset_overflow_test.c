@@ -1,65 +1,47 @@
 #include <limits.h>
-#include <stdio.h>
+#include <setjmp.h>
+#include <stdarg.h>
+#include <stddef.h>
+
+#include <cmocka.h>
 
 #include "yappo_io.h"
 
-static int fail(const char *msg) {
-  fprintf(stderr, "%s\n", msg);
-  return 1;
-}
-
-static int test_valid_offset(void) {
+static void test_valid_offset(void **state) {
   long offset = -1;
 
-  if (YAP_seek_offset_index(sizeof(int), 10UL, &offset) != 0) {
-    return fail("valid int offset should succeed");
-  }
-  if (offset != (long)(sizeof(int) * 10UL)) {
-    return fail("valid int offset mismatch");
-  }
+  (void)state;
 
-  if (YAP_seek_offset_index(sizeof(double), 3UL, &offset) != 0) {
-    return fail("valid double offset should succeed");
-  }
-  if (offset != (long)(sizeof(double) * 3UL)) {
-    return fail("valid double offset mismatch");
-  }
+  assert_int_equal(YAP_seek_offset_index(sizeof(int), 10UL, &offset), 0);
+  assert_int_equal(offset, (long)(sizeof(int) * 10UL));
 
-  return 0;
+  assert_int_equal(YAP_seek_offset_index(sizeof(double), 3UL, &offset), 0);
+  assert_int_equal(offset, (long)(sizeof(double) * 3UL));
 }
 
-static int test_overflow_offset(void) {
+static void test_overflow_offset(void **state) {
   unsigned long too_large_int = ((unsigned long)LONG_MAX / (unsigned long)sizeof(int)) + 1UL;
   unsigned long too_large_double =
     ((unsigned long)LONG_MAX / (unsigned long)sizeof(double)) + 1UL;
   long offset = 0;
 
-  if (YAP_seek_offset_index(sizeof(int), too_large_int, &offset) == 0) {
-    return fail("int offset overflow should fail");
-  }
-  if (YAP_seek_offset_index(sizeof(double), too_large_double, &offset) == 0) {
-    return fail("double offset overflow should fail");
-  }
+  (void)state;
 
-  return 0;
+  assert_int_not_equal(YAP_seek_offset_index(sizeof(int), too_large_int, &offset), 0);
+  assert_int_not_equal(YAP_seek_offset_index(sizeof(double), too_large_double, &offset), 0);
 }
 
-static int test_null_output(void) {
-  if (YAP_seek_offset_index(sizeof(int), 1UL, NULL) == 0) {
-    return fail("null output pointer should fail");
-  }
-  return 0;
+static void test_null_output(void **state) {
+  (void)state;
+  assert_int_not_equal(YAP_seek_offset_index(sizeof(int), 1UL, NULL), 0);
 }
 
 int main(void) {
-  if (test_valid_offset() != 0) {
-    return 1;
-  }
-  if (test_overflow_offset() != 0) {
-    return 1;
-  }
-  if (test_null_output() != 0) {
-    return 1;
-  }
-  return 0;
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_valid_offset),
+    cmocka_unit_test(test_overflow_offset),
+    cmocka_unit_test(test_null_output),
+  };
+
+  return cmocka_run_group_tests(tests, NULL, NULL);
 }
