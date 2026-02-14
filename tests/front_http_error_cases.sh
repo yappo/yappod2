@@ -129,6 +129,62 @@ sys.stdout.buffer.write(b"".join(chunks))
 PY
 }
 
+send_http_long_request_line_capture() {
+  local keyword_len="$1"
+  python3 - "$keyword_len" <<'PY'
+import socket, sys
+keyword_len = int(sys.argv[1])
+keyword = "A" * keyword_len
+payload = (
+    f"GET /yappo/100000/AND/0-10?{keyword} HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "\r\n"
+).encode("utf-8")
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+s.shutdown(socket.SHUT_WR)
+chunks = []
+while True:
+    try:
+        chunk = s.recv(4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    chunks.append(chunk)
+s.close()
+sys.stdout.buffer.write(b"".join(chunks))
+PY
+}
+
+send_http_long_dict_capture() {
+  local dict_len="$1"
+  python3 - "$dict_len" <<'PY'
+import socket, sys
+dict_len = int(sys.argv[1])
+dict_name = "d" * dict_len
+payload = (
+    f"GET /{dict_name}/100000/AND/0-10?OpenAI2025 HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "\r\n"
+).encode("utf-8")
+s = socket.create_connection(("127.0.0.1", 10080), timeout=1.0)
+s.sendall(payload)
+s.shutdown(socket.SHUT_WR)
+chunks = []
+while True:
+    try:
+        chunk = s.recv(4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    chunks.append(chunk)
+s.close()
+sys.stdout.buffer.write(b"".join(chunks))
+PY
+}
+
 assert_daemons_alive() {
   local context="$1"
   if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
@@ -211,6 +267,10 @@ RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10 HTTP/1.1\r\nHost: localho
 expect_bad_request "${RESP}" "missing query"
 assert_daemons_alive "missing query"
 
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10? HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+expect_bad_request "${RESP}" "empty query keyword"
+assert_daemons_alive "empty query keyword"
+
 RESP="$(send_http_capture $'GET /yappo/100000/AND/notrange?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
 expect_bad_request "${RESP}" "invalid range"
 assert_daemons_alive "invalid range"
@@ -226,6 +286,18 @@ assert_daemons_alive "end before start"
 RESP="$(send_http_capture $'GET /yappo/0/AND/0-10?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
 expect_bad_request "${RESP}" "invalid max_size"
 assert_daemons_alive "invalid max_size"
+
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10/extra?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+expect_bad_request "${RESP}" "unexpected extra path segment"
+assert_daemons_alive "unexpected extra path segment"
+
+RESP="$(send_http_long_dict_capture 2000)"
+expect_bad_request "${RESP}" "oversized target segment"
+assert_daemons_alive "oversized target segment"
+
+RESP="$(send_http_long_request_line_capture 20000)"
+expect_bad_request "${RESP}" "oversized request line"
+assert_daemons_alive "oversized request line"
 
 RESP="$(send_http_long_header_capture 20000)"
 expect_bad_request "${RESP}" "oversized header"
