@@ -156,9 +156,12 @@ jobs:
         id: ctest_sanitizer
         continue-on-error: true
         env:
-          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          SANITIZER_LOG_DIR: ${{ github.workspace }}/build-sanitizer/sanitizer-logs
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1:log_path=${{ github.workspace }}/build-sanitizer/sanitizer-logs/asan
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1:log_path=${{ github.workspace }}/build-sanitizer/sanitizer-logs/ubsan
         run: |
+          rm -rf build-sanitizer/sanitizer-logs
+          mkdir -p build-sanitizer/sanitizer-logs
           set -o pipefail
           ctest --test-dir build-sanitizer --output-on-failure 2>&1 | tee build-sanitizer/ctest.log
 
@@ -177,6 +180,20 @@ jobs:
             echo "::group::LastTestsFailed.log"
             cat build-sanitizer/Testing/Temporary/LastTestsFailed.log
             echo "::endgroup::"
+          fi
+          if compgen -G "build-sanitizer/sanitizer-logs/asan*" > /dev/null; then
+            for f in build-sanitizer/sanitizer-logs/asan*; do
+              echo "::group::$(basename "$f")"
+              cat "$f"
+              echo "::endgroup::"
+            done
+          fi
+          if compgen -G "build-sanitizer/sanitizer-logs/ubsan*" > /dev/null; then
+            for f in build-sanitizer/sanitizer-logs/ubsan*; do
+              echo "::group::$(basename "$f")"
+              cat "$f"
+              echo "::endgroup::"
+            done
           fi
 
       - name: Enforce sanitizer test success

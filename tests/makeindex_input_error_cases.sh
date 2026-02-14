@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
+CURRENT_CASE="setup"
+
+# shellcheck source=tests/test_helpers.sh
+source "${ROOT_DIR}/tests/test_helpers.sh"
 
 TMP_ROOT="$(mktemp -d)"
 
@@ -11,6 +15,18 @@ cleanup() {
   rm -rf "${TMP_ROOT}"
 }
 trap cleanup EXIT
+
+case_begin() {
+  CURRENT_CASE="$1"
+  echo "[CASE] ${CURRENT_CASE}" >&2
+}
+
+on_error() {
+  local rc=$?
+  echo "[ERROR] case='${CURRENT_CASE}' rc=${rc} cmd='${BASH_COMMAND}'" >&2
+  dump_sanitizer_logs
+}
+trap on_error ERR
 
 make_index() {
   local input_file="$1"
@@ -38,7 +54,7 @@ expect_no_hit() {
   fi
 }
 
-echo "[CASE] makeindex: invalid URL should not break indexing" >&2
+case_begin "makeindex: invalid URL should not break indexing"
 INPUT1="${TMP_ROOT}/input_invalid_url.txt"
 INDEX1="${TMP_ROOT}/index1"
 sed -n '1,2p' "${FIXTURE}" > "${INPUT1}"
@@ -50,7 +66,7 @@ make_index "${INPUT1}" "${INDEX1}"
 expect_hit "${INDEX1}" "OpenAI2025" "http://example.com/doc1"
 expect_hit "${INDEX1}" "abc123" "http://example.com/doc5"
 
-echo "[CASE] makeindex: empty/broken rows are skipped and processing continues" >&2
+case_begin "makeindex: empty/broken rows are skipped and processing continues"
 INPUT2="${TMP_ROOT}/input_broken_rows.txt"
 INDEX2="${TMP_ROOT}/index2"
 sed -n '1,3p' "${FIXTURE}" > "${INPUT2}"
@@ -68,7 +84,7 @@ expect_hit "${INDEX2}" "abc123" "http://example.com/doc5"
 expect_no_hit "${INDEX2}" "badcmdtoken333mmmnnnooo"
 expect_no_hit "${INDEX2}" "nourltoken222xxxyyyzzz"
 
-echo "[CASE] makeindex: oversized burst lines are skipped and valid lines survive" >&2
+case_begin "makeindex: oversized burst lines are skipped and valid lines survive"
 INPUT3="${TMP_ROOT}/input_oversized_burst.txt"
 INDEX3="${TMP_ROOT}/index3"
 sed -n '1,4p' "${FIXTURE}" > "${INPUT3}"

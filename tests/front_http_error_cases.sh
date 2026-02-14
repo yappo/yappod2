@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
 
+# shellcheck source=tests/test_helpers.sh
+source "${ROOT_DIR}/tests/test_helpers.sh"
+
 TMP_ROOT="$(mktemp -d)"
 INDEX_DIR="${TMP_ROOT}/index"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
@@ -45,6 +48,7 @@ on_error() {
   local rc=$?
   echo "[ERROR] case='${CURRENT_CASE}' rc=${rc}" >&2
   dump_daemon_logs
+  dump_sanitizer_logs
 }
 trap on_error ERR
 
@@ -130,6 +134,7 @@ assert_daemons_alive() {
   if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
     echo "front/core daemon crashed: ${context}" >&2
     dump_daemon_logs
+    dump_sanitizer_logs
     exit 1
   fi
 }
@@ -168,6 +173,7 @@ start_daemons() {
   if [ ! -f "${DAEMON_RUN_DIR}/core.pid" ] || [ ! -f "${DAEMON_RUN_DIR}/front.pid" ]; then
     echo "Failed to start daemon stack (pid file missing)." >&2
     dump_daemon_logs
+    dump_sanitizer_logs
     exit 1
   fi
   CORE_PID="$(cat "${DAEMON_RUN_DIR}/core.pid")"
@@ -175,12 +181,14 @@ start_daemons() {
   if ! kill -0 "${CORE_PID}" 2>/dev/null || ! kill -0 "${FRONT_PID}" 2>/dev/null; then
     echo "Failed to start daemon stack (process exited)." >&2
     dump_daemon_logs
+    dump_sanitizer_logs
     exit 1
   fi
 
   if ! wait_for_port 10086 || ! wait_for_port 10080; then
     echo "Failed to open core/front ports." >&2
     dump_daemon_logs
+    dump_sanitizer_logs
     exit 1
   fi
 }

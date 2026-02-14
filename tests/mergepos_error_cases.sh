@@ -6,11 +6,22 @@ BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
 TMP_ROOT="$(mktemp -d)"
 INDEX_DIR="${TMP_ROOT}/index"
+CURRENT_CASE="setup"
+
+# shellcheck source=tests/test_helpers.sh
+source "${ROOT_DIR}/tests/test_helpers.sh"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
 }
 trap cleanup EXIT
+
+on_error() {
+  local rc=$?
+  echo "[ERROR] case='${CURRENT_CASE}' rc=${rc} cmd='${BASH_COMMAND}'" >&2
+  dump_sanitizer_logs
+}
+trap on_error ERR
 
 mkdir -p "${INDEX_DIR}/pos"
 "${BUILD_DIR}/yappo_makeindex" -f "${FIXTURE}" -d "${INDEX_DIR}" >/dev/null
@@ -22,6 +33,7 @@ run_expect_fail() {
   local out
   local rc
 
+  CURRENT_CASE="${case_name}"
   echo "[CASE] ${case_name}" >&2
   set +e
   out="$("$@" 2>&1)"
