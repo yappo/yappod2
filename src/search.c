@@ -35,15 +35,27 @@ void search_result_print(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) {
     printf("Hit num: %d\n\n", p->keyword_docs_num);
     for (i = 0; i < p->keyword_docs_num; i++) {
       if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
+        const char *url;
+        const char *title;
         struct tm *last_tm = localtime(&(filedata.lastmod));
+
+        url = (filedata.url != NULL) ? filedata.url : "";
+        title = filedata.title;
+        if (title == NULL || title[0] == '\0') {
+          title = url;
+        }
 
         printf("----------------------------------------\n");
         printf("List: %d/%d\t[%d]\t(domainid:%d)\n", i, p->keyword_docs_num,
                p->docs_list[i].fileindex, filedata.domainid);
-        printf("%s(SCORE:%.1f)\n", filedata.title, p->docs_list[i].score);
-        printf("URL:%s\n", filedata.url);
-        printf("(size:%d)(date:%d/%d/%d)\n", filedata.size, last_tm->tm_year + 1900,
-               last_tm->tm_mon + 1, last_tm->tm_mday);
+        printf("%s(SCORE:%.1f)\n", title, p->docs_list[i].score);
+        printf("URL:%s\n", url);
+        if (last_tm != NULL) {
+          printf("(size:%d)(date:%d/%d/%d)\n", filedata.size, last_tm->tm_year + 1900,
+                 last_tm->tm_mon + 1, last_tm->tm_mday);
+        } else {
+          printf("(size:%d)(date:0/0/0)\n", filedata.size);
+        }
         printf("\n");
 
         YAP_Index_Filedata_free(&filedata);
