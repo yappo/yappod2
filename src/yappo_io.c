@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
+#include <unistd.h>
 
 int __YAP_fseek_set(char *filename, int line, FILE *fp, long offset) {
   if (fp == NULL) {
@@ -97,6 +98,32 @@ int __YAP_seek_offset_index(char *filename, int line, size_t item_size, unsigned
   }
 
   *offset_out = (long)((unsigned long)item_size * index);
+  return 0;
+}
+
+int __YAP_rename_replace(char *filename, int line, const char *src, const char *dst) {
+  if (src == NULL || dst == NULL) {
+    fprintf(stderr, "YAP_rename_replace: null path: %s:%d\n", filename, line);
+    return -1;
+  }
+  if (rename(src, dst) != 0) {
+    fprintf(stderr, "YAP_rename_replace: rename failed: %s:%d: %s -> %s: %s\n", filename, line,
+            src, dst, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
+int __YAP_unlink_if_exists(char *filename, int line, const char *path) {
+  if (path == NULL) {
+    fprintf(stderr, "YAP_unlink_if_exists: null path: %s:%d\n", filename, line);
+    return -1;
+  }
+  if (unlink(path) != 0 && errno != ENOENT) {
+    fprintf(stderr, "YAP_unlink_if_exists: unlink failed: %s:%d: %s: %s\n", filename, line, path,
+            strerror(errno));
+    return -1;
+  }
   return 0;
 }
 

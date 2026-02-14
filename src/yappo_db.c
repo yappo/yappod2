@@ -335,7 +335,10 @@ void YAP_Db_base_close(YAPPO_DB_FILES *p) {
 
   if (p->mode == YAPPO_DB_WRITE) {
     /* データファイルの掃除 */
-    YAP_Index_Filedata_gc(p, p->filedata_tmp, p->filedata_size_tmp, p->filedata_index_tmp);
+    if (YAP_Index_Filedata_gc(p, p->filedata_tmp, p->filedata_size_tmp, p->filedata_index_tmp) !=
+        0) {
+      YAP_Error("filedata gc error");
+    }
   }
 
   free(p->filedata);
@@ -727,7 +730,9 @@ void YAP_Db_pos_close(YAPPO_DB_FILES *p) {
 
   /* データの整理を行なう */
   if (p->mode == YAPPO_DB_WRITE) {
-    YAP_Index_Pos_gc(p, p->pos_tmp, p->pos_size_tmp, p->pos_index_tmp);
+    if (YAP_Index_Pos_gc(p, p->pos_tmp, p->pos_size_tmp, p->pos_index_tmp) != 0) {
+      YAP_Error("pos gc error");
+    }
   }
 
   /*
