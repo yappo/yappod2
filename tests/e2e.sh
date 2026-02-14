@@ -6,12 +6,23 @@ BUILD_DIR="${ROOT_DIR}/build"
 FIXTURE="${ROOT_DIR}/tests/fixtures/index.txt"
 INDEX_DIR="$(mktemp -d)"
 INDEX_DIR_LOOSE="$(mktemp -d)"
+CURRENT_CASE="e2e"
+
+# shellcheck source=tests/test_helpers.sh
+source "${ROOT_DIR}/tests/test_helpers.sh"
 
 cleanup() {
   rm -rf "${INDEX_DIR}"
   rm -rf "${INDEX_DIR_LOOSE}"
 }
 trap cleanup EXIT
+
+on_error() {
+  local rc=$?
+  echo "[ERROR] case='${CURRENT_CASE}' rc=${rc} cmd='${BASH_COMMAND}'" >&2
+  dump_sanitizer_logs
+}
+trap on_error ERR
 
 mkdir -p "${INDEX_DIR}/pos"
 mkdir -p "${INDEX_DIR_LOOSE}/pos"

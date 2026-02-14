@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
+CURRENT_CASE="setup"
+
+# shellcheck source=tests/test_helpers.sh
+source "${ROOT_DIR}/tests/test_helpers.sh"
 
 TMP_ROOT="$(mktemp -d)"
 INPUT_DIR="${TMP_ROOT}/input"
@@ -16,7 +20,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[CASE] makeindex: opendir failure should return error" >&2
+on_error() {
+  local rc=$?
+  echo "[ERROR] case='${CURRENT_CASE}' rc=${rc} cmd='${BASH_COMMAND}'" >&2
+  dump_sanitizer_logs
+}
+trap on_error ERR
+
+CURRENT_CASE="makeindex: opendir failure should return error"
+echo "[CASE] ${CURRENT_CASE}" >&2
 
 mkdir -p "${INPUT_DIR}"
 mkdir -p "${INDEX_DIR}/pos"
