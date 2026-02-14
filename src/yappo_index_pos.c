@@ -49,7 +49,7 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
     return -1;
   }
 
-  if (pos_size == 0) {
+  if (pos_size <= 0) {
     /*サイズが0なので登録されていない*/
     return -1;
   }

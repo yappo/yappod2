@@ -110,6 +110,13 @@ add_executable(seek_offset_overflow_test
   ${SRC_DIR}/yappo_io.c
 )
 
+add_executable(pos_index_bounds_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests/pos_index_bounds_test.c
+  ${SRC_DIR}/yappo_alloc.c
+  ${SRC_DIR}/yappo_io.c
+  ${SRC_DIR}/yappo_index_pos.c
+)
+
 set(ALL_TARGETS
   search
   yappo_makeindex
@@ -125,6 +132,7 @@ set(LINK_TARGETS
   search_deletefile_concurrency_test
   index_varint_decode_test
   seek_offset_overflow_test
+  pos_index_bounds_test
 )
 
 foreach(tgt IN LISTS LINK_TARGETS)
@@ -155,3 +163,4 @@ add_test(NAME filedata_decode_bounds COMMAND $<TARGET_FILE:filedata_decode_bound
 add_test(NAME search_deletefile_concurrency COMMAND $<TARGET_FILE:search_deletefile_concurrency_test>)
 add_test(NAME index_varint_decode COMMAND $<TARGET_FILE:index_varint_decode_test>)
 add_test(NAME seek_offset_overflow COMMAND $<TARGET_FILE:seek_offset_overflow_test>)
+add_test(NAME pos_index_bounds COMMAND $<TARGET_FILE:pos_index_bounds_test>)
