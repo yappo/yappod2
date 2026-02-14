@@ -217,7 +217,7 @@ static void test_case_06_front_survives_core_disconnect(void **state) {
   assert_int_equal(kill(ctx->stack.core_pid, SIGTERM), 0);
   usleep(300000);
 
-  for (i = 0; i < 10; i++) {
+  for (i = 0; i < 20; i++) {
     char *response_text = NULL;
     if (ytest_http_send_text(ctx->stack.front_port,
                              "GET /d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n",
@@ -229,11 +229,17 @@ static void test_case_06_front_survives_core_disconnect(void **state) {
       break;
     }
     free(response_text);
-    assert_int_equal(kill(ctx->stack.front_pid, 0), 0);
+    if (kill(ctx->stack.front_pid, 0) != 0) {
+      ytest_daemon_stack_dump_logs(&ctx->stack, stderr);
+      fail_msg("front exited after core disconnect");
+    }
     usleep(200000);
   }
 
-  (void)got_response;
+  if (!got_response) {
+    ytest_daemon_stack_dump_logs(&ctx->stack, stderr);
+    fail_msg("front did not return HTTP response after core disconnect");
+  }
   assert_int_equal(kill(ctx->stack.front_pid, 0), 0);
 }
 

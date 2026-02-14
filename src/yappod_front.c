@@ -177,6 +177,7 @@ static int YAP_connect_core_stream(const char *host, int core_port, FILE **strea
   if (gai_rc != 0) {
     fprintf(stderr, "ERROR: front thread %d resolve %s failed: %s\n", thread_id, host,
             gai_strerror(gai_rc));
+    fflush(stderr);
     return -1;
   }
 
@@ -195,6 +196,7 @@ static int YAP_connect_core_stream(const char *host, int core_port, FILE **strea
   freeaddrinfo(res);
   if (fd < 0) {
     fprintf(stderr, "ERROR: front thread %d connect %s:%d failed\n", thread_id, host, core_port);
+    fflush(stderr);
     return -1;
   }
 
@@ -438,6 +440,7 @@ void *thread_server(void *ip) {
   YAPPO_DB_FILES yappo_db_files;
   YAP_THREAD_DATA *p = (YAP_THREAD_DATA *)ip;
   int i;
+  int j;
 
   /*
    *データベースの準備
@@ -452,7 +455,12 @@ void *thread_server(void *ip) {
   for (i = 0; i < p->server_num; i++) {
     if (YAP_connect_core_stream(p->server_addr[i], p->core_port, &(p->server_socket[i]),
                                 &(p->server_fd[i]), p->id) != 0) {
-      YAP_Error("client connect error");
+      fprintf(stderr, "ERROR: front thread %d client connect error\n", p->id);
+      fflush(stderr);
+      for (j = 0; j < i; j++) {
+        YAP_Net_close_stream(&(p->server_socket[j]), &(p->server_fd[j]));
+      }
+      return NULL;
     }
   }
 

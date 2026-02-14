@@ -12,6 +12,7 @@
 
 #include "test_cli.h"
 #include "test_fs.h"
+#include "test_http.h"
 
 static int read_pid_file_once(const char *path, pid_t *pid_out) {
   FILE *fp = NULL;
@@ -201,6 +202,37 @@ void ytest_stop_pid_if_alive(pid_t pid, int retries, int sleep_ms) {
   kill(pid, SIGKILL);
 }
 
+static int wait_front_ready(int front_port, int retries, int sleep_ms) {
+  static const char *k_ready_request =
+    "GET /d/1/OR/0-1?__ytest_ready__ HTTP/1.0\r\nHost: localhost\r\n\r\n";
+  int i;
+
+  if (front_port <= 0 || retries <= 0 || sleep_ms < 0) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  for (i = 0; i < retries; i++) {
+    char *response = NULL;
+    int rc = ytest_http_send_text(front_port, k_ready_request, &response);
+
+    if (rc == 0) {
+      int ok = (response != NULL && strstr(response, "HTTP/1.0") != NULL);
+      free(response);
+      if (ok) {
+        return 0;
+      }
+    } else {
+      free(response);
+    }
+
+    usleep((useconds_t)(sleep_ms * 1000));
+  }
+
+  errno = ETIMEDOUT;
+  return -1;
+}
+
 static int launch_core_daemon(const char *bin_path, const char *index_dir, int core_port,
                               const char *cwd) {
   ytest_cmd_result_t result;
@@ -356,13 +388,15 @@ int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
             stack->core_port, stack->front_port);
 
     if (launch_core_daemon(core_bin, index_dir, stack->core_port, stack->run_dir) == 0 &&
+        ytest_read_pid_file(stack->run_dir, "core.pid", 100, 20, &stack->core_pid) == 0 &&
+        kill(stack->core_pid, 0) == 0 &&
+        ytest_wait_for_port(stack->core_port, 50, 100) == 0 &&
         launch_front_daemon(front_bin, index_dir, "127.0.0.1", stack->front_port,
                             stack->core_port, stack->run_dir) == 0 &&
-        ytest_read_pid_file(stack->run_dir, "core.pid", 100, 20, &stack->core_pid) == 0 &&
         ytest_read_pid_file(stack->run_dir, "front.pid", 100, 20, &stack->front_pid) == 0 &&
-        kill(stack->core_pid, 0) == 0 && kill(stack->front_pid, 0) == 0 &&
-        ytest_wait_for_port(stack->core_port, 50, 100) == 0 &&
-        ytest_wait_for_port(stack->front_port, 50, 100) == 0) {
+        kill(stack->front_pid, 0) == 0 &&
+        ytest_wait_for_port(stack->front_port, 50, 100) == 0 &&
+        wait_front_ready(stack->front_port, 50, 100) == 0) {
       return 0;
     }
     if (errno != 0) {
