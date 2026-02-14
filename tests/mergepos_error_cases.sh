@@ -104,4 +104,56 @@ run_expect_fail \
   "fopen error: ${INDEX_NO_KEYNUM}/keywordnum" \
   "${BUILD_DIR}/yappo_mergepos" -l "${INDEX_NO_KEYNUM}" -d "${TMP_ROOT}/outpos_no_keynum" -s 0 -e 0
 
+INDEX_MALFORMED="${TMP_ROOT}/index_malformed_postings"
+cp -R "${INDEX_DIR}" "${INDEX_MALFORMED}"
+python3 - "${INDEX_MALFORMED}" <<'PY'
+import os
+import struct
+import sys
+
+base = sys.argv[1]
+keywordnum_path = os.path.join(base, "keywordnum")
+index_path = os.path.join(base, "pos", "0_index")
+size_path = os.path.join(base, "pos", "0_size")
+data_path = os.path.join(base, "pos", "0")
+
+with open(keywordnum_path, "rb") as f:
+    data = f.read(4)
+if len(data) != 4:
+    sys.exit(0)
+keyword_num = struct.unpack("<i", data)[0]
+if keyword_num <= 0:
+    sys.exit(0)
+
+vals = [1, 1000000]
+enc = bytearray()
+for v in vals:
+    while True:
+        b = v & 0x7F
+        v >>= 7
+        if v:
+            enc.append(b | 0x80)
+        else:
+            enc.append(b)
+            break
+
+with open(index_path, "r+b") as fidx, open(size_path, "r+b") as fsize, open(data_path, "r+b") as fdata:
+    for kid in range(1, keyword_num + 1):
+        fidx.seek(4 * kid)
+        raw = fidx.read(4)
+        if len(raw) != 4:
+            break
+        idx = struct.unpack("<i", raw)[0]
+        if idx < 0:
+            continue
+        fdata.seek(idx)
+        fdata.write(enc)
+        fsize.seek(4 * kid)
+        fsize.write(struct.pack("<i", len(enc)))
+PY
+run_expect_fail \
+  "mergepos: malformed postings payload should fail safely" \
+  "malformed postings payload:" \
+  "${BUILD_DIR}/yappo_mergepos" -l "${INDEX_MALFORMED}" -d "${TMP_ROOT}/outpos_malformed" -s 0 -e 0
+
 exit 0
