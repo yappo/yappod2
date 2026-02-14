@@ -859,7 +859,7 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
         if (now_index < ydfp->cache->filekeywordnum_num) {
           filekeywordnum = ydfp->cache->filekeywordnum[now_index];
         }
-        if (score <= 0.0) {
+        if (!isfinite(score) || score <= 0.0) {
           score = 1.0;
         }
         if (size <= 0) {
@@ -877,21 +877,52 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
        *スコアの計算
        */
       {
+        double size_norm;
+        double tf_log;
+        double urllen_norm;
+
         tf = idf = 0.0;
         score = log(score) + 1.0;
+        if (!isfinite(score) || score <= 0.0) {
+          score = 1.0;
+        }
 
         /* idfを文書サイズで正規化 */
-        idf = ((base_idf + 1.0) / (log10(size) + 1.0) * 100.0) + 1.0;
+        size_norm = log10((double)size) + 1.0;
+        if (!isfinite(size_norm) || size_norm <= 0.0) {
+          size_norm = 1.0;
+        }
+        idf = ((base_idf + 1.0) / size_norm * 100.0) + 1.0;
+        if (!isfinite(idf) || idf <= 0.0) {
+          idf = 1.0;
+        }
         idf = score / idf * 100.0; /* スコアで正規化 */
+        if (!isfinite(idf) || idf <= 0.0) {
+          idf = 1.0;
+        }
 
         /* 文書中のキーワード出現率 */
         tf = ((double)docs_list[df].pos_len / (double)filekeywordnum * 100.0) + 1.0;
+        if (!isfinite(tf) || tf <= 0.0) {
+          tf = 1.0;
+        }
+        tf_log = log10(tf) + 1.0;
+        if (!isfinite(tf_log) || tf_log <= 0.0) {
+          tf_log = 1.0;
+        }
+        urllen_norm = ((double)urllen * (double)urllen);
+        if (!isfinite(urllen_norm) || urllen_norm <= 0.0) {
+          urllen_norm = 1.0;
+        }
 
         /* スコアリング */
         /*
     score = score * score * score;
   */
-        docs_list[df].score = idf * tf * (log10(tf) + 1.0) * score / (double)(urllen * urllen);
+        docs_list[df].score = idf * tf * tf_log * score / urllen_norm;
+        if (!isfinite(docs_list[df].score) || docs_list[df].score < 0.0) {
+          docs_list[df].score = 0.0;
+        }
       }
 
       df++;
