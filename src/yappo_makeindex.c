@@ -595,6 +595,10 @@ int indexer_core(char *gz_filepath, time_t gz_file_mtime, YAPPO_DB_FILES *ydfp, 
         continue;
       }
 
+      /*
+       * body_sizeは入力列の宣言値をそのまま扱う（本文実長とは一致しなくてもよい）。
+       * 閾値判定も宣言値ベースで行う。
+       */
       if (body_size < min_body_size || body_size > max_body_size) {
         /*ファイルサイズが小さすぎるか大きすぎるので索引に加えない
 

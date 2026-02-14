@@ -55,6 +55,25 @@ expect_no_hit() {
   fi
 }
 
+expect_hit_with_size() {
+  local index_dir="$1"
+  local query="$2"
+  local expect_url="$3"
+  local expect_size="$4"
+  local out
+
+  out="$("${BUILD_DIR}/search" -l "${index_dir}" "${query}")"
+  if ! echo "${out}" | grep -q "URL:${expect_url}"; then
+    echo "Expected hit '${expect_url}' for query '${query}' in ${index_dir}" >&2
+    exit 1
+  fi
+  if ! echo "${out}" | grep -q "(size:${expect_size})"; then
+    echo "Expected size '${expect_size}' for query '${query}' in ${index_dir}" >&2
+    echo "${out}" >&2
+    exit 1
+  fi
+}
+
 case_begin "makeindex: invalid URL should not break indexing"
 INPUT1="${TMP_ROOT}/input_invalid_url.txt"
 INDEX1="${TMP_ROOT}/index1"
@@ -146,7 +165,7 @@ with open(src, encoding="utf-8") as fin, open(dst, "w", encoding="utf-8") as fou
         fout.write(line + "\n")
 PY
 make_index "${INPUT5}" "${INDEX5}"
-expect_hit "${INDEX5}" "OpenAI2025" "http://example.com/doc1"
+expect_hit_with_size "${INDEX5}" "OpenAI2025" "http://example.com/doc1" "24"
 expect_hit "${INDEX5}" "サンプル本文" "https://example.com/doc3"
 expect_no_hit "${INDEX5}" "検索用のテスト本文です"
 expect_no_hit "${INDEX5}" "abc123"
