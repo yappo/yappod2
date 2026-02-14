@@ -192,8 +192,10 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
   int i, docs_num, total_num;
   int seek, bit;
   unsigned int deletefile_cap;
+  unsigned int total_filenum;
+  const unsigned char *deletefile_bitmap;
 
-  if (p == NULL) {
+  if (p == NULL || ydfp == NULL || ydfp->cache == NULL) {
     return NULL;
   }
 
@@ -204,16 +206,24 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
 
   /* ロック開始 */
   pthread_mutex_lock(&(ydfp->cache->deletefile_mutex));
-  deletefile_cap = (ydfp->cache->total_filenum / 8U) + 1U;
+  total_filenum = ydfp->cache->total_filenum;
+  deletefile_cap = (total_filenum / 8U) + 1U;
+  deletefile_bitmap = ydfp->cache->deletefile;
   for (i = 0; i < p->keyword_docs_num; i++) {
+    int fileindex;
     unsigned int seek_u;
 
-    if (p->docs_list[i].fileindex <= 0) {
+    fileindex = p->docs_list[i].fileindex;
+    if (fileindex <= 0) {
+      continue;
+    }
+    if ((unsigned int)fileindex > total_filenum) {
+      /* キャッシュ上のURL総数を超える異常fileindexは除外する */
       continue;
     }
 
-    seek = p->docs_list[i].fileindex / 8;
-    bit = p->docs_list[i].fileindex % 8;
+    seek = fileindex / 8;
+    bit = fileindex % 8;
     if (seek < 0) {
       continue;
     }
@@ -223,14 +233,16 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
       continue;
     }
 
-    if (!(*(ydfp->cache->deletefile + seek_u) & (1U << bit))) {
-      result->docs_list[docs_num].fileindex = p->docs_list[i].fileindex;
-      result->docs_list[docs_num].score = p->docs_list[i].score;
-      result->docs_list[docs_num].pos = NULL;  /* 出現位置はコピーしない */
-      result->docs_list[docs_num].pos_len = 0; /* 長さ情報も同上 */
-      total_num += p->docs_list[i].pos_len;
-      docs_num++;
+    if (deletefile_bitmap != NULL && (deletefile_bitmap[seek_u] & (1U << bit))) {
+      continue;
     }
+
+    result->docs_list[docs_num].fileindex = fileindex;
+    result->docs_list[docs_num].score = p->docs_list[i].score;
+    result->docs_list[docs_num].pos = NULL;  /* 出現位置はコピーしない */
+    result->docs_list[docs_num].pos_len = 0; /* 長さ情報も同上 */
+    total_num += p->docs_list[i].pos_len;
+    docs_num++;
   }
 
   /*ロック解除 */
