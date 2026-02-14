@@ -5,6 +5,7 @@
 #include "yappo_index_filedata.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_limits.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,7 +65,7 @@ int YAP_Index_Filedata_get(YAPPO_DB_FILES *ydfp, int fileindex, FILEDATA *fileda
     return -1;
   }
 
-  if (filedata_size <= 0) {
+  if (filedata_size <= 0 || filedata_size > YAP_MAX_FILEDATA_RECORD_SIZE) {
     /*サイズが0なので登録されていない*/
     return -1;
   }

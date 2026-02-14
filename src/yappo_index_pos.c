@@ -10,6 +10,7 @@
 #include "yappo_index.h"
 #include "yappo_alloc.h"
 #include "yappo_io.h"
+#include "yappo_limits.h"
 
 static int YAP_gc_close_file(FILE *fp, const char *path) {
   if (fp == NULL) {
@@ -49,7 +50,7 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
     return -1;
   }
 
-  if (pos_size <= 0) {
+  if (pos_size <= 0 || pos_size > YAP_MAX_POSTINGS_BLOB_SIZE) {
     /*サイズが0なので登録されていない*/
     return -1;
   }
