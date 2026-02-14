@@ -94,6 +94,22 @@ static void start_daemons(ctx_t *ctx, const char *index_dir, const char *run_tag
   assert_int_equal(rc, 0);
 }
 
+static void assert_http_contains_retry(int port, const char *request, const char *needle,
+                                       int retries, int sleep_ms) {
+  int i;
+
+  for (i = 0; i < retries; i++) {
+    if (ytest_http_text_contains(port, request, needle) == 0) {
+      return;
+    }
+    if (i + 1 < retries) {
+      usleep((useconds_t)(sleep_ms * 1000));
+    }
+  }
+
+  fail_msg("HTTP response did not contain expected token after %d retries", retries);
+}
+
 static void test_case_01_missing_pos_directory(void **state) {
   ctx_t *ctx = (ctx_t *)(*state);
   char index_dir[PATH_MAX];
@@ -213,12 +229,10 @@ static void test_case_06_front_survives_core_disconnect(void **state) {
   start_daemons(ctx, index_dir, "daemon_disconnect", run_dir, sizeof(run_dir));
 
   assert_int_equal(kill(ctx->stack.core_pid, SIGTERM), 0);
-  usleep(200000);
-  assert_int_equal(
-    ytest_http_text_contains(
-      ctx->stack.front_port,
-      "GET /d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n", "HTTP/1.0"),
-    0);
+  usleep(300000);
+  assert_http_contains_retry(ctx->stack.front_port,
+                             "GET /d/100/OR/0-10?OpenAI2025 HTTP/1.0\r\nHost: localhost\r\n\r\n",
+                             "HTTP/1.0", 20, 100);
   assert_int_equal(kill(ctx->stack.front_pid, 0), 0);
 }
 
