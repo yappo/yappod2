@@ -57,7 +57,7 @@ typedef struct {
   unsigned int domainid_num;
   pthread_mutex_t domainid_mutex;
 
-  /* 削除URLファイルキャッシュ */
+  /* 削除URLファイルキャッシュ（deletefile関連は deletefile_mutex で保護） */
   unsigned char *deletefile;
   unsigned int deletefile_num;
   pthread_mutex_t deletefile_mutex;

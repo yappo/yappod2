@@ -53,6 +53,61 @@ static void test_null_input(void **state) {
   YAP_Db_cache_destroy(&cache);
 }
 
+static void test_null_db_or_cache(void **state) {
+  SEARCH_RESULT input;
+  SEARCH_DOCUMENT doc;
+  YAPPO_DB_FILES db;
+
+  (void)state;
+
+  memset(&input, 0, sizeof(input));
+  memset(&doc, 0, sizeof(doc));
+  memset(&db, 0, sizeof(db));
+
+  input.keyword_docs_num = 1;
+  input.docs_list = &doc;
+  input.docs_list[0].fileindex = 1;
+  input.docs_list[0].pos_len = 1;
+
+  assert_null(YAP_Search_result_delete(NULL, &input));
+  assert_null(YAP_Search_result_delete(&db, &input));
+}
+
+static void test_null_bitmap_is_safe(void **state) {
+  YAPPO_DB_FILES db;
+  YAPPO_CACHE cache;
+  SEARCH_RESULT input;
+  SEARCH_RESULT *filtered;
+
+  (void)state;
+
+  memset(&input, 0, sizeof(input));
+  assert_int_equal(setup_cache(&db, &cache, 16U), 0);
+
+  free(cache.deletefile);
+  cache.deletefile = NULL;
+  cache.deletefile_num = 0;
+
+  input.keyword_docs_num = 2;
+  input.docs_list = (SEARCH_DOCUMENT *)calloc((size_t)input.keyword_docs_num, sizeof(SEARCH_DOCUMENT));
+  assert_non_null(input.docs_list);
+
+  input.docs_list[0].fileindex = 1;
+  input.docs_list[0].pos_len = 2;
+  input.docs_list[1].fileindex = 24;
+  input.docs_list[1].pos_len = 3;
+
+  filtered = YAP_Search_result_delete(&db, &input);
+  assert_non_null(filtered);
+  assert_int_equal(filtered->keyword_docs_num, 1);
+  assert_int_equal(filtered->docs_list[0].fileindex, 1);
+  assert_int_equal(filtered->keyword_total_num, 2);
+
+  cleanup_result(filtered);
+  free(input.docs_list);
+  YAP_Db_cache_destroy(&cache);
+}
+
 static void test_mixed_case(void **state) {
   YAPPO_DB_FILES db;
   YAPPO_CACHE cache;
@@ -139,6 +194,8 @@ static void test_all_filtered_case(void **state) {
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_null_input),
+    cmocka_unit_test(test_null_db_or_cache),
+    cmocka_unit_test(test_null_bitmap_is_safe),
     cmocka_unit_test(test_mixed_case),
     cmocka_unit_test(test_all_filtered_case),
   };
