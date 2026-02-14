@@ -1,93 +1,47 @@
-#include <stdio.h>
+#include <setjmp.h>
+#include <stdarg.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-#include "yappo_db.h"
+#include <cmocka.h>
+
+#include "test_db_tmpfiles.h"
 #include "yappo_index_filedata.h"
 #include "yappo_limits.h"
 
-static int fail(const char *msg) {
-  fprintf(stderr, "%s\n", msg);
-  return 1;
-}
-
-static int write_exact(FILE *fp, const void *buf, size_t len) {
-  return fwrite(buf, 1, len, fp) == len ? 0 : -1;
-}
-
-static void close_if_open(FILE **fp) {
-  if (*fp != NULL) {
-    fclose(*fp);
-    *fp = NULL;
-  }
-}
-
-static void cleanup_db(YAPPO_DB_FILES *db) {
-  close_if_open(&db->filedata_size_file);
-  close_if_open(&db->filedata_index_file);
-  close_if_open(&db->filedata_file);
-}
-
-static int setup_db_with_payload(YAPPO_DB_FILES *db, const unsigned char *payload, int payload_len) {
-  int index = 0;
-
-  memset(db, 0, sizeof(*db));
-  db->total_filenum = 0;
-
-  db->filedata_size_file = tmpfile();
-  db->filedata_index_file = tmpfile();
-  db->filedata_file = tmpfile();
-  if (db->filedata_size_file == NULL || db->filedata_index_file == NULL || db->filedata_file == NULL) {
-    cleanup_db(db);
-    return -1;
-  }
-
-  if (write_exact(db->filedata_size_file, &payload_len, sizeof(payload_len)) != 0 ||
-      write_exact(db->filedata_index_file, &index, sizeof(index)) != 0 ||
-      (payload_len > 0 && payload != NULL &&
-       write_exact(db->filedata_file, payload, (size_t)payload_len) != 0) ||
-      fseek(db->filedata_size_file, 0L, SEEK_SET) != 0 ||
-      fseek(db->filedata_index_file, 0L, SEEK_SET) != 0 ||
-      fseek(db->filedata_file, 0L, SEEK_SET) != 0) {
-    cleanup_db(db);
-    return -1;
-  }
-
-  return 0;
-}
-
-static int expect_get_failed(const unsigned char *payload, int payload_len) {
+static void expect_get_failed(const unsigned char *payload, int payload_len) {
   YAPPO_DB_FILES db;
   FILEDATA filedata;
   int rc;
 
-  if (setup_db_with_payload(&db, payload, payload_len) != 0) {
-    return fail("failed to setup test db");
-  }
+  assert_int_equal(ytest_setup_filedata_db(&db, payload, payload_len), 0);
   memset(&filedata, 0, sizeof(filedata));
   rc = YAP_Index_Filedata_get(&db, 0, &filedata);
   YAP_Index_Filedata_free(&filedata);
-  cleanup_db(&db);
-  if (rc == 0) {
-    return fail("expected decode failure");
-  }
-  return 0;
+  ytest_cleanup_filedata_db(&db);
+  assert_int_not_equal(rc, 0);
 }
 
-static int test_truncated_payload(void) {
+static void test_truncated_payload(void **state) {
   unsigned char payload[1] = {0};
-  return expect_get_failed(payload, 1);
+
+  (void)state;
+  expect_get_failed(payload, 1);
 }
 
-static int test_invalid_string_length(void) {
+static void test_invalid_string_length(void **state) {
   unsigned char payload[sizeof(size_t)];
   size_t bad_len = 1024;
+
+  (void)state;
+
   memcpy(payload, &bad_len, sizeof(bad_len));
-  return expect_get_failed(payload, (int)sizeof(payload));
+  expect_get_failed(payload, (int)sizeof(payload));
 }
 
-static int test_negative_other_length(void) {
+static void test_negative_other_length(void **state) {
   unsigned char payload[256];
   unsigned char *p = payload;
   size_t zero = 0;
@@ -97,6 +51,8 @@ static int test_negative_other_length(void) {
   int domainid = 7;
   int other_len = -1;
   int payload_len;
+
+  (void)state;
 
   memcpy(p, &zero, sizeof(zero));
   p += sizeof(zero);
@@ -116,14 +72,15 @@ static int test_negative_other_length(void) {
   p += sizeof(other_len);
   payload_len = (int)(p - payload);
 
-  return expect_get_failed(payload, payload_len);
+  expect_get_failed(payload, payload_len);
 }
 
-static int test_oversized_payload_size(void) {
-  return expect_get_failed(NULL, YAP_MAX_FILEDATA_RECORD_SIZE + 1);
+static void test_oversized_payload_size(void **state) {
+  (void)state;
+  expect_get_failed(NULL, YAP_MAX_FILEDATA_RECORD_SIZE + 1);
 }
 
-static int test_valid_payload(void) {
+static void test_valid_payload(void **state) {
   YAPPO_DB_FILES db;
   FILEDATA filedata;
   unsigned char payload[256];
@@ -139,6 +96,8 @@ static int test_valid_payload(void) {
   const unsigned char other[2] = {'x', 'y'};
   int payload_len;
   int rc;
+
+  (void)state;
 
   memcpy(p, &url_len, sizeof(url_len));
   p += sizeof(url_len);
@@ -163,46 +122,34 @@ static int test_valid_payload(void) {
   p += sizeof(other);
   payload_len = (int)(p - payload);
 
-  if (setup_db_with_payload(&db, payload, payload_len) != 0) {
-    return fail("failed to setup valid test db");
-  }
+  assert_int_equal(ytest_setup_filedata_db(&db, payload, payload_len), 0);
 
   memset(&filedata, 0, sizeof(filedata));
   rc = YAP_Index_Filedata_get(&db, 0, &filedata);
-  if (rc != 0) {
-    cleanup_db(&db);
-    return fail("valid payload decode failed");
-  }
-  if (strcmp(filedata.url, "u") != 0 || strcmp(filedata.title, "t") != 0 ||
-      strcmp(filedata.comment, "c") != 0 || filedata.size != size ||
-      filedata.keyword_num != keyword_num || filedata.lastmod != lastmod ||
-      filedata.domainid != domainid || filedata.other_len != other_len ||
-      filedata.other[0] != 'x' || filedata.other[1] != 'y') {
-    YAP_Index_Filedata_free(&filedata);
-    cleanup_db(&db);
-    return fail("decoded payload mismatch");
-  }
+  assert_int_equal(rc, 0);
+  assert_string_equal(filedata.url, "u");
+  assert_string_equal(filedata.title, "t");
+  assert_string_equal(filedata.comment, "c");
+  assert_int_equal(filedata.size, size);
+  assert_int_equal(filedata.keyword_num, keyword_num);
+  assert_int_equal(filedata.lastmod, lastmod);
+  assert_int_equal(filedata.domainid, domainid);
+  assert_int_equal(filedata.other_len, other_len);
+  assert_int_equal(filedata.other[0], 'x');
+  assert_int_equal(filedata.other[1], 'y');
 
   YAP_Index_Filedata_free(&filedata);
-  cleanup_db(&db);
-  return 0;
+  ytest_cleanup_filedata_db(&db);
 }
 
 int main(void) {
-  if (test_truncated_payload() != 0) {
-    return 1;
-  }
-  if (test_invalid_string_length() != 0) {
-    return 1;
-  }
-  if (test_negative_other_length() != 0) {
-    return 1;
-  }
-  if (test_oversized_payload_size() != 0) {
-    return 1;
-  }
-  if (test_valid_payload() != 0) {
-    return 1;
-  }
-  return 0;
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_truncated_payload),
+    cmocka_unit_test(test_invalid_string_length),
+    cmocka_unit_test(test_negative_other_length),
+    cmocka_unit_test(test_oversized_payload_size),
+    cmocka_unit_test(test_valid_payload),
+  };
+
+  return cmocka_run_group_tests(tests, NULL, NULL);
 }

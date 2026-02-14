@@ -1,8 +1,13 @@
 #include <limits.h>
 #include <pthread.h>
+#include <setjmp.h>
+#include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <cmocka.h>
 
 #include "yappo_db.h"
 #include "yappo_search.h"
@@ -61,10 +66,10 @@ static void *writer_thread(void *arg) {
     ctx->cache.deletefile_num = cap;
 
     if ((i % 3) == 0) {
-      ctx->cache.deletefile[0] |= (unsigned char)(1U << 2); /* fileindex=2 */
+      ctx->cache.deletefile[0] |= (unsigned char)(1U << 2);
     }
     if (total_filenum > 4096U && (i % 5) == 0) {
-      ctx->cache.deletefile[512] |= 1U; /* fileindex=4096 */
+      ctx->cache.deletefile[512] |= 1U;
     }
     pthread_mutex_unlock(&ctx->cache.deletefile_mutex);
   }
@@ -131,10 +136,12 @@ static void *reader_thread(void *arg) {
   return NULL;
 }
 
-int main(void) {
+static void test_concurrency(void **state) {
   test_ctx_t ctx;
   pthread_t writer;
   pthread_t reader;
+
+  (void)state;
 
   memset(&ctx, 0, sizeof(ctx));
   YAP_Db_cache_init(&ctx.cache);
@@ -143,39 +150,27 @@ int main(void) {
   ctx.cache.total_filenum = 8U;
   ctx.cache.deletefile_num = 2U;
   ctx.cache.deletefile = (unsigned char *)calloc(ctx.cache.deletefile_num, sizeof(unsigned char));
-  if (ctx.cache.deletefile == NULL) {
-    fprintf(stderr, "failed to allocate initial deletefile bitmap\n");
-    pthread_mutex_destroy(&ctx.failure_mutex);
-    YAP_Db_cache_destroy(&ctx.cache);
-    return 1;
-  }
+  assert_non_null(ctx.cache.deletefile);
   ctx.db.cache = &ctx.cache;
 
-  if (pthread_create(&writer, NULL, writer_thread, &ctx) != 0) {
-    fprintf(stderr, "failed to create writer thread\n");
-    pthread_mutex_destroy(&ctx.failure_mutex);
-    YAP_Db_cache_destroy(&ctx.cache);
-    return 1;
-  }
-  if (pthread_create(&reader, NULL, reader_thread, &ctx) != 0) {
-    fprintf(stderr, "failed to create reader thread\n");
-    pthread_join(writer, NULL);
-    pthread_mutex_destroy(&ctx.failure_mutex);
-    YAP_Db_cache_destroy(&ctx.cache);
-    return 1;
-  }
+  assert_int_equal(pthread_create(&writer, NULL, writer_thread, &ctx), 0);
+  assert_int_equal(pthread_create(&reader, NULL, reader_thread, &ctx), 0);
 
   pthread_join(writer, NULL);
   pthread_join(reader, NULL);
 
   if (ctx.failed) {
-    fprintf(stderr, "%s\n", ctx.message);
-    pthread_mutex_destroy(&ctx.failure_mutex);
-    YAP_Db_cache_destroy(&ctx.cache);
-    return 1;
+    fail_msg("%s", ctx.message);
   }
 
   pthread_mutex_destroy(&ctx.failure_mutex);
   YAP_Db_cache_destroy(&ctx.cache);
-  return 0;
+}
+
+int main(void) {
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_concurrency),
+  };
+
+  return cmocka_run_group_tests(tests, NULL, NULL);
 }

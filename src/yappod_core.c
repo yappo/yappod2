@@ -5,6 +5,7 @@
 */
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,7 +26,7 @@
 #include "yappo_proto.h"
 
 #define BUF_SIZE 1024
-#define PORT 10086
+#define DEFAULT_CORE_PORT 10086
 #define MAX_SOCKET_BUF (1024 * 1024)
 
 /*
@@ -45,12 +46,61 @@ YAPPO_CACHE yappod_core_cache;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_core_pidfile = "./core.pid";
+static void YAP_request_shutdown(int sig);
 
 int count;
 
 void YAP_Error(char *msg) {
   fprintf(stderr, "ERROR: %s\n", msg);
   exit(EXIT_FAILURE);
+}
+
+static void YAP_print_usage(FILE *out, const char *prog) {
+  fprintf(out,
+          "Usage: %s -l <index_dir> [-p <port>]\n"
+          "  -l <index_dir>  Index directory path (required)\n"
+          "  -p <port>       Listen port (default: %d)\n"
+          "  -h, --help      Show this help\n",
+          prog, DEFAULT_CORE_PORT);
+}
+
+static int YAP_parse_port(const char *value, int *port_out) {
+  long port;
+  char *endptr;
+
+  if (value == NULL || port_out == NULL) {
+    return -1;
+  }
+
+  port = strtol(value, &endptr, 10);
+  if (*value == '\0' || *endptr != '\0' || port < 1 || port > 65535) {
+    return -1;
+  }
+  *port_out = (int)port;
+  return 0;
+}
+
+static int YAP_install_signal_handlers(void) {
+  struct sigaction sa;
+  struct sigaction ign_sa;
+
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = YAP_request_shutdown;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGINT, &sa, NULL) != 0) {
+    return -1;
+  }
+
+  memset(&ign_sa, 0, sizeof(ign_sa));
+  ign_sa.sa_handler = SIG_IGN;
+  ign_sa.sa_flags = SA_RESTART;
+  sigemptyset(&ign_sa.sa_mask);
+  if (sigaction(SIGPIPE, &ign_sa, NULL) != 0) {
+    return -1;
+  }
+
+  return 0;
 }
 
 static void YAP_log_thread_error(int thread_id, const char *msg) {
@@ -313,7 +363,7 @@ void *thread_server(void *ip) {
   return NULL;
 }
 
-void start_deamon_thread(char *indextexts_dirpath) {
+void start_deamon_thread(char *indextexts_dirpath, int listen_port) {
   int sock_optval = 1;
   int yap_socket;
   struct sockaddr_in yap_sin;
@@ -333,10 +383,11 @@ void start_deamon_thread(char *indextexts_dirpath) {
 
   /*bindする*/
   yap_sin.sin_family = AF_INET;
-  yap_sin.sin_port = htons(PORT);
+  yap_sin.sin_port = htons((unsigned short)listen_port);
   yap_sin.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(yap_socket, (struct sockaddr *)&yap_sin, sizeof(yap_sin)) < 0) {
-    YAP_Error("bind error");
+    fprintf(stderr, "ERROR: bind failed on port %d: %s\n", listen_port, strerror(errno));
+    exit(EXIT_FAILURE);
   }
 
   /*listen*/
@@ -381,26 +432,44 @@ int main(int argc, char *argv[]) {
   int i, pid;
   char *indextexts_dirpath = NULL;
   struct stat f_stats;
+  int listen_port = DEFAULT_CORE_PORT;
 
   /*
    *オプションを取得
    */
-  if (argc > 1) {
-    i = 1;
-    while (1) {
-      if (argc == i)
-        break;
-
-      if (!strcmp(argv[i], "-l")) {
-        /*インデックスディレクトリを取得*/
-        i++;
-        if (argc == i)
-          break;
-        indextexts_dirpath = argv[i];
-      }
-
-      i++;
+  for (i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+      YAP_print_usage(stdout, argv[0]);
+      return EXIT_SUCCESS;
     }
+    if (!strcmp(argv[i], "-l")) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "ERROR: missing value for -l\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      indextexts_dirpath = argv[++i];
+      continue;
+    }
+    if (!strcmp(argv[i], "-p")) {
+      if (i + 1 >= argc || YAP_parse_port(argv[i + 1], &listen_port) != 0) {
+        fprintf(stderr, "ERROR: invalid port for -p\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      i++;
+      continue;
+    }
+
+    fprintf(stderr, "ERROR: unknown option: %s\n", argv[i]);
+    YAP_print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  if (indextexts_dirpath == NULL) {
+    fprintf(stderr, "ERROR: missing required option -l\n");
+    YAP_print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
   }
 
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
@@ -442,13 +511,14 @@ int main(int argc, char *argv[]) {
   /*
    *シグナル処理
    */
-  signal(SIGTERM, YAP_request_shutdown);
-  signal(SIGINT, YAP_request_shutdown);
-  signal(SIGPIPE, SIG_IGN);
+  if (YAP_install_signal_handlers() != 0) {
+    perror("ERROR: sigaction");
+    return EXIT_FAILURE;
+  }
 
   YAP_Db_cache_init(&yappod_core_cache);
 
-  start_deamon_thread(indextexts_dirpath);
+  start_deamon_thread(indextexts_dirpath, listen_port);
 
   YAP_Db_cache_destroy(&yappod_core_cache);
   return EXIT_SUCCESS;

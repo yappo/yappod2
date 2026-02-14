@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -28,8 +29,8 @@
 
 #define BUF_SIZE 1024
 #define MAX_HTTP_LINE_SIZE (16 * 1024)
-#define PORT 10080
-#define CORE_PORT 10086
+#define DEFAULT_FRONT_PORT 10080
+#define DEFAULT_CORE_PORT 10086
 
 /*
  *スレッド毎の構造
@@ -38,6 +39,7 @@ typedef struct {
   int id;
   int socket;
   int server_num;
+  int core_port;
   FILE **server_socket;
   int *server_fd;
   char **server_addr;
@@ -51,10 +53,62 @@ int count;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_front_pidfile = "./front.pid";
+static void YAP_request_shutdown(int sig);
 
 void YAP_Error(char *msg) {
   fprintf(stderr, "ERROR: %s\n", msg);
   exit(EXIT_FAILURE);
+}
+
+static void YAP_print_usage(FILE *out, const char *prog) {
+  fprintf(out,
+          "Usage: %s -l <index_dir> -s <core_host> [-s <core_host> ...] "
+          "[-p <front_port>] [-P <core_port>]\n"
+          "  -l <index_dir>   Index directory path (required)\n"
+          "  -s <core_host>   Core server host (required, repeatable)\n"
+          "  -p <front_port>  Front listen port (default: %d)\n"
+          "  -P <core_port>   Core connect port (default: %d)\n"
+          "  -h, --help       Show this help\n",
+          prog, DEFAULT_FRONT_PORT, DEFAULT_CORE_PORT);
+}
+
+static int YAP_parse_port(const char *value, int *port_out) {
+  long port;
+  char *endptr;
+
+  if (value == NULL || port_out == NULL) {
+    return -1;
+  }
+
+  port = strtol(value, &endptr, 10);
+  if (*value == '\0' || *endptr != '\0' || port < 1 || port > 65535) {
+    return -1;
+  }
+  *port_out = (int)port;
+  return 0;
+}
+
+static int YAP_install_signal_handlers(void) {
+  struct sigaction sa;
+  struct sigaction ign_sa;
+
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = YAP_request_shutdown;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGINT, &sa, NULL) != 0) {
+    return -1;
+  }
+
+  memset(&ign_sa, 0, sizeof(ign_sa));
+  ign_sa.sa_handler = SIG_IGN;
+  ign_sa.sa_flags = SA_RESTART;
+  sigemptyset(&ign_sa.sa_mask);
+  if (sigaction(SIGPIPE, &ign_sa, NULL) != 0) {
+    return -1;
+  }
+
+  return 0;
 }
 
 static void YAP_log_thread_error(int thread_id, const char *msg) {
@@ -102,7 +156,7 @@ static int YAP_writef(FILE *socket, const char *fmt, ...) {
   return 0;
 }
 
-static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_out,
+static int YAP_connect_core_stream(const char *host, int core_port, FILE **stream_out, int *fd_out,
                                    int thread_id) {
   struct addrinfo hints;
   struct addrinfo *res = NULL, *rp;
@@ -118,11 +172,12 @@ static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  snprintf(port_str, sizeof(port_str), "%d", CORE_PORT);
+  snprintf(port_str, sizeof(port_str), "%d", core_port);
   gai_rc = getaddrinfo(host, port_str, &hints, &res);
   if (gai_rc != 0) {
     fprintf(stderr, "ERROR: front thread %d resolve %s failed: %s\n", thread_id, host,
             gai_strerror(gai_rc));
+    fflush(stderr);
     return -1;
   }
 
@@ -140,7 +195,8 @@ static int YAP_connect_core_stream(const char *host, FILE **stream_out, int *fd_
 
   freeaddrinfo(res);
   if (fd < 0) {
-    fprintf(stderr, "ERROR: front thread %d connect %s:%d failed\n", thread_id, host, CORE_PORT);
+    fprintf(stderr, "ERROR: front thread %d connect %s:%d failed\n", thread_id, host, core_port);
+    fflush(stderr);
     return -1;
   }
 
@@ -384,6 +440,7 @@ void *thread_server(void *ip) {
   YAPPO_DB_FILES yappo_db_files;
   YAP_THREAD_DATA *p = (YAP_THREAD_DATA *)ip;
   int i;
+  int j;
 
   /*
    *データベースの準備
@@ -396,9 +453,14 @@ void *thread_server(void *ip) {
    *各サーバとの接続を開始する
    */
   for (i = 0; i < p->server_num; i++) {
-    if (YAP_connect_core_stream(p->server_addr[i], &(p->server_socket[i]), &(p->server_fd[i]),
-                                p->id) != 0) {
-      YAP_Error("client connect error");
+    if (YAP_connect_core_stream(p->server_addr[i], p->core_port, &(p->server_socket[i]),
+                                &(p->server_fd[i]), p->id) != 0) {
+      fprintf(stderr, "ERROR: front thread %d client connect error\n", p->id);
+      fflush(stderr);
+      for (j = 0; j < i; j++) {
+        YAP_Net_close_stream(&(p->server_socket[j]), &(p->server_fd[j]));
+      }
+      return NULL;
     }
   }
 
@@ -575,7 +637,7 @@ void *thread_server(void *ip) {
 }
 
 void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_socket,
-                         char **server_addr) {
+                         char **server_addr, int listen_port, int core_port) {
   int sock_optval = 1;
   int yap_socket;
   struct sockaddr_in yap_sin;
@@ -596,10 +658,11 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
 
   /* bindする */
   yap_sin.sin_family = AF_INET;
-  yap_sin.sin_port = htons(PORT);
+  yap_sin.sin_port = htons((unsigned short)listen_port);
   yap_sin.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(yap_socket, (struct sockaddr *)&yap_sin, sizeof(yap_sin)) < 0) {
-    YAP_Error("bind error");
+    fprintf(stderr, "ERROR: bind failed on port %d: %s\n", listen_port, strerror(errno));
+    exit(EXIT_FAILURE);
   }
 
   /* listen */
@@ -620,6 +683,7 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
     thread_data[i].socket = dup(yap_socket);
 
     thread_data[i].server_num = server_num;
+    thread_data[i].core_port = core_port;
     thread_data[i].server_socket = (FILE **)YAP_malloc(sizeof(FILE **) * server_num);
     thread_data[i].server_fd = (int *)YAP_malloc(sizeof(int) * server_num);
     thread_data[i].server_addr = (char **)YAP_malloc(sizeof(char **) * server_num);
@@ -655,43 +719,76 @@ int main(int argc, char *argv[]) {
   int server_num = 0;
   int *server_socket = NULL;
   char **server_addr = NULL;
+  int listen_port = DEFAULT_FRONT_PORT;
+  int core_port = DEFAULT_CORE_PORT;
 
   /*
    *オプションを取得
    */
-  if (argc > 1) {
-    i = 1;
-    while (1) {
-      if (argc == i)
-        break;
-
-      if (!strcmp(argv[i], "-l")) {
-        /* インデックスディレクトリを取得 */
-        i++;
-        if (argc == i)
-          break;
-        indextexts_dirpath = argv[i];
-      } else if (!strcmp(argv[i], "-s")) {
-        /* 検索サーバ指定 */
-        i++;
-        if (argc == i)
-          break;
-        server_addr = (char **)YAP_realloc(server_addr, sizeof(char **) * (server_num + 1));
-        server_addr[server_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
-        memcpy(server_addr[server_num], argv[i], strlen(argv[i]) + 1);
-        server_num++;
-      }
-
-      i++;
+  for (i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+      YAP_print_usage(stdout, argv[0]);
+      return EXIT_SUCCESS;
     }
+    if (!strcmp(argv[i], "-l")) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "ERROR: missing value for -l\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      indextexts_dirpath = argv[++i];
+      continue;
+    }
+    if (!strcmp(argv[i], "-p")) {
+      if (i + 1 >= argc || YAP_parse_port(argv[i + 1], &listen_port) != 0) {
+        fprintf(stderr, "ERROR: invalid port for -p\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      i++;
+      continue;
+    }
+    if (!strcmp(argv[i], "-P")) {
+      if (i + 1 >= argc || YAP_parse_port(argv[i + 1], &core_port) != 0) {
+        fprintf(stderr, "ERROR: invalid port for -P\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      i++;
+      continue;
+    }
+    if (!strcmp(argv[i], "-s")) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "ERROR: missing value for -s\n");
+        YAP_print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+      }
+      server_addr = (char **)YAP_realloc(server_addr, sizeof(char **) * (server_num + 1));
+      server_addr[server_num] = (char *)YAP_malloc(strlen(argv[i + 1]) + 1);
+      memcpy(server_addr[server_num], argv[i + 1], strlen(argv[i + 1]) + 1);
+      server_num++;
+      i++;
+      continue;
+    }
+
+    fprintf(stderr, "ERROR: unknown option: %s\n", argv[i]);
+    YAP_print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  if (indextexts_dirpath == NULL) {
+    fprintf(stderr, "ERROR: missing required option -l\n");
+    YAP_print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  if (server_num == 0) {
+    fprintf(stderr, "ERROR: missing required option -s\n");
+    YAP_print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
   }
 
   server_socket = (int *)YAP_malloc(sizeof(int) * server_num);
-
-  if (server_num == 0) {
-    printf("server option -s\n");
-    exit(EXIT_FAILURE);
-  }
 
   if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
     perror("ERROR: invalid index dir");
@@ -733,10 +830,12 @@ int main(int argc, char *argv[]) {
   /*
    *シグナル処理
    */
-  signal(SIGTERM, YAP_request_shutdown);
-  signal(SIGINT, YAP_request_shutdown);
-  signal(SIGPIPE, SIG_IGN);
+  if (YAP_install_signal_handlers() != 0) {
+    perror("ERROR: sigaction");
+    return EXIT_FAILURE;
+  }
 
-  start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr);
+  start_deamon_thread(indextexts_dirpath, server_num, server_socket, server_addr, listen_port,
+                      core_port);
   return EXIT_SUCCESS;
 }
