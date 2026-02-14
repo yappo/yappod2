@@ -6,7 +6,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+
+static int set_socket_timeout(int fd, int seconds) {
+  struct timeval tv;
+
+  if (fd < 0 || seconds <= 0) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  tv.tv_sec = seconds;
+  tv.tv_usec = 0;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0 ||
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
+    return -1;
+  }
+
+  return 0;
+}
 
 static int connect_localhost(int port) {
   int fd;
@@ -14,6 +33,10 @@ static int connect_localhost(int port) {
 
   fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
+    return -1;
+  }
+  if (set_socket_timeout(fd, 2) != 0) {
+    close(fd);
     return -1;
   }
 
