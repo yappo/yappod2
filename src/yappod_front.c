@@ -206,11 +206,15 @@ void search_result_print(YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, i
 
     for (i = start; i < end; i++) {
       if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
+        const char *url = filedata.url;
         title = filedata.title;
-        if (title == NULL) {
-          title = filedata.url;
+        if (url == NULL) {
+          url = "";
         }
-        if (YAP_writef(socket, "%s\t%s\t%d\t%ld\t%.2f\n", filedata.url, title, filedata.size,
+        if (title == NULL) {
+          title = (char *)url;
+        }
+        if (YAP_writef(socket, "%s\t%s\t%d\t%ld\t%.2f\n", url, title, filedata.size,
                        (long)filedata.lastmod, p->docs_list[i].score) != 0 ||
             YAP_flush_or_log(socket) != 0) {
           YAP_Index_Filedata_free(&filedata);

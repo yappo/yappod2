@@ -28,6 +28,7 @@ INDEX_DIR_OK15="${TMP_ROOT}/ok15"
 INDEX_DIR_OK16="${TMP_ROOT}/ok16"
 INDEX_DIR_OK17="${TMP_ROOT}/ok17"
 INDEX_DIR_OK18="${TMP_ROOT}/ok18"
+INDEX_DIR_OK19="${TMP_ROOT}/ok19"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -521,5 +522,72 @@ with open(filekeywordnum_path, "r+b") as f:
     f.write(struct.pack("<i", 0))
 PY
 assert_hit_finite_score "${INDEX_DIR_OK18}" "OpenAI2025" "http://example.com/doc1"
+
+# Case 2-18: filedataの文字列欠損時でも "(null)" を出さずに応答できること
+case_begin "Case 2-18: missing filedata strings should not print literal null"
+make_index "${INDEX_DIR_OK19}"
+python3 - "${INDEX_DIR_OK19}" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+base = Path(sys.argv[1])
+size_path = base / "filedata_size"
+index_path = base / "filedata_index"
+data_path = base / "filedata"
+fileindex = 1
+off = 4 * fileindex
+
+with index_path.open("r+b") as f:
+    f.seek(off)
+    raw = f.read(4)
+    if len(raw) != 4:
+        sys.exit(1)
+    data_index = struct.unpack("=i", raw)[0]
+
+# url_len=0, title_len=0, comment_len=1("x"), size=1, keyword_num=1, lastmod=0, domainid=0, other_len=0
+payload = (
+    struct.pack("=Q", 0) +
+    struct.pack("=Q", 0) +
+    struct.pack("=Q", 1) + b"x" +
+    struct.pack("=i", 1) +
+    struct.pack("=i", 1) +
+    struct.pack("=q", 0) +
+    struct.pack("=i", 0) +
+    struct.pack("=i", 0)
+)
+
+with data_path.open("r+b") as f:
+    f.seek(data_index)
+    f.write(payload)
+with size_path.open("r+b") as f:
+    f.seek(off)
+    f.write(struct.pack("=i", len(payload)))
+PY
+SEARCH_OUT="$("${BUILD_DIR}/search" -l "${INDEX_DIR_OK19}" "OpenAI2025" 2>&1)"
+if echo "${SEARCH_OUT}" | grep -q "(null)"; then
+  echo "search output contains literal '(null)'" >&2
+  echo "${SEARCH_OUT}" >&2
+  exit 1
+fi
+if ! echo "${SEARCH_OUT}" | grep -q "^URL:"; then
+  echo "search output did not render filedata fields" >&2
+  echo "${SEARCH_OUT}" >&2
+  exit 1
+fi
+start_daemons "${INDEX_DIR_OK19}"
+RESP="$(send_http_capture $'GET /yappo/100000/AND/0-10?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+if echo "${RESP}" | grep -q "(null)"; then
+  echo "front response contains literal '(null)'" >&2
+  echo "${RESP}" >&2
+  exit 1
+fi
+if ! echo "${RESP}" | grep -q $'^\t'; then
+  echo "front response did not include empty URL/title record as expected" >&2
+  echo "${RESP}" >&2
+  exit 1
+fi
+assert_daemons_alive "missing-filedata-strings request"
+stop_daemons
 
 exit 0
