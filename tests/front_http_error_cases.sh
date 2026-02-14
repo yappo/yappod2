@@ -215,6 +215,18 @@ RESP="$(send_http_capture $'GET /yappo/100000/AND/notrange?OpenAI2025 HTTP/1.1\r
 expect_bad_request "${RESP}" "invalid range"
 assert_daemons_alive "invalid range"
 
+RESP="$(send_http_capture $'GET /yappo/100000/AND/-1-10?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+expect_bad_request "${RESP}" "negative start"
+assert_daemons_alive "negative start"
+
+RESP="$(send_http_capture $'GET /yappo/100000/AND/10-1?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+expect_bad_request "${RESP}" "end before start"
+assert_daemons_alive "end before start"
+
+RESP="$(send_http_capture $'GET /yappo/0/AND/0-10?OpenAI2025 HTTP/1.1\r\nHost: localhost\r\n\r\n')"
+expect_bad_request "${RESP}" "invalid max_size"
+assert_daemons_alive "invalid max_size"
+
 RESP="$(send_http_long_header_capture 20000)"
 expect_bad_request "${RESP}" "oversized header"
 assert_daemons_alive "oversized header"

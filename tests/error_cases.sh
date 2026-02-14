@@ -26,6 +26,7 @@ INDEX_DIR_OK13="${TMP_ROOT}/ok13"
 INDEX_DIR_OK14="${TMP_ROOT}/ok14"
 INDEX_DIR_OK15="${TMP_ROOT}/ok15"
 INDEX_DIR_OK16="${TMP_ROOT}/ok16"
+INDEX_DIR_OK17="${TMP_ROOT}/ok17"
 INDEX_DIR_BAD="${TMP_ROOT}/no_pos"
 DAEMON_RUN_DIR="${TMP_ROOT}/daemon"
 CORE_PID=""
@@ -81,14 +82,15 @@ fi
 assert_not_segv() {
   local index_dir="$1"
   local query="$2"
+  local rc
 
   set +e
   "${BUILD_DIR}/search" -l "${index_dir}" "${query}" >/dev/null 2>&1
   rc=$?
   set -e
 
-  if [ "${rc}" -eq 139 ]; then
-    echo "search crashed with SIGSEGV: index=${index_dir} query=${query}" >&2
+  if [ "${rc}" -ge 128 ]; then
+    echo "search crashed by signal (rc=${rc}): index=${index_dir} query=${query}" >&2
     exit 1
   fi
 }
@@ -297,6 +299,56 @@ case_begin "Case 2-6: truncated score file"
 make_index "${INDEX_DIR_OK6}"
 truncate -s 1 "${INDEX_DIR_OK6}/score"
 assert_not_segv "${INDEX_DIR_OK6}" "テスト"
+
+# Case 2-6b: postings破損（巨大pos_len）でも search がシグナル終了しないこと
+case_begin "Case 2-6b: malformed postings payload"
+make_index "${INDEX_DIR_OK17}"
+python3 - "${INDEX_DIR_OK17}" <<'PY'
+import os
+import struct
+import sys
+
+base = sys.argv[1]
+keywordnum_path = os.path.join(base, "keywordnum")
+index_path = os.path.join(base, "pos", "0_index")
+size_path = os.path.join(base, "pos", "0_size")
+data_path = os.path.join(base, "pos", "0")
+
+with open(keywordnum_path, "rb") as f:
+    data = f.read(4)
+if len(data) != 4:
+    sys.exit(0)
+keyword_num = struct.unpack("<i", data)[0]
+if keyword_num <= 0:
+    sys.exit(0)
+
+vals = [1, 1000000]
+enc = bytearray()
+for v in vals:
+    while True:
+        b = v & 0x7F
+        v >>= 7
+        if v:
+            enc.append(b | 0x80)
+        else:
+            enc.append(b)
+            break
+
+with open(index_path, "r+b") as fidx, open(size_path, "r+b") as fsize, open(data_path, "r+b") as fdata:
+    for kid in range(1, keyword_num + 1):
+        fidx.seek(4 * kid)
+        raw = fidx.read(4)
+        if len(raw) != 4:
+            break
+        idx = struct.unpack("<i", raw)[0]
+        if idx < 0:
+            continue
+        fdata.seek(idx)
+        fdata.write(enc)
+        fsize.seek(4 * kid)
+        fsize.write(struct.pack("<i", len(enc)))
+PY
+assert_not_segv "${INDEX_DIR_OK17}" "テスト"
 
 # Case 2-7: 不正な%エスケープを含むクエリで search が SIGSEGV しないこと
 case_begin "Case 2-7: invalid percent escapes"

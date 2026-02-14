@@ -8,6 +8,8 @@
 #include <time.h>
 #include <ctype.h>
 #include <string.h>
+#include <limits.h>
+#include <stdint.h>
 
 #include "yappo_index.h"
 #include "yappo_index_pos.h"
@@ -212,60 +214,33 @@ SEARCH_RESULT *YAP_Search_result_delete(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) 
  */
 int YAP_Search_word_pos(int *left_pos, int left_pos_len, int *right_pos, int right_pos_len,
                         int order) {
-  int base_len, target_len;
-  int base_i, target_i;
-  int base_last, target_last;
-  int *base, *target;
+  int left_i, right_i;
+  int left_last, right_last;
 
-  /* 配列が短いほうを基本にする */
-  if (left_pos_len > right_pos_len) {
-    base = right_pos;
-    base_len = right_pos_len;
-    target = left_pos;
-    target_len = left_pos_len;
-
-    /* orderの逆転 */
-    order = 0 - order;
-  } else {
-    base = left_pos;
-    base_len = left_pos_len;
-    target = right_pos;
-    target_len = right_pos_len;
+  if (left_pos == NULL || right_pos == NULL || left_pos_len <= 0 || right_pos_len <= 0) {
+    return 1;
   }
 
-  base_i = target_i = 0;
-  base_last = base[0];
-  target_last = target[0];
-  while (1) {
-    if (target_last - base_last == order) {
-      /* ヒット */
+  left_i = right_i = 0;
+  left_last = left_pos[0];
+  right_last = right_pos[0];
+  while (left_i < left_pos_len && right_i < right_pos_len) {
+    int diff = right_last - left_last;
+    if (diff == order) {
       return 0;
-    } else if (base_last > target_last) {
-      /* targetのカウンタを上げる */
-      if ((target_i + 1) < target_len) {
-        target_i++;
-        target_last += target[target_i];
-      }
-    } else if (base_last < target_last) {
-      /* baseのカウンタを上げる */
-      if ((base_i + 1) < base_len) {
-        base_i++;
-        base_last += base[base_i];
-      }
-    } else {
-      /*
-       *両方同じなので(要するに同じ文字列の連続判定をする事になる)
-       *targetのカウンタを上げる
-       */
-      if ((target_i + 1) < target_len) {
-        target_i++;
-        target_last += target[target_i];
-      }
     }
-
-    if (!(target_i < target_len && base_i < base_len)) {
-      /* 一致しなかった */
-      return 1;
+    if (diff < order) {
+      right_i++;
+      if (right_i >= right_pos_len) {
+        break;
+      }
+      right_last += right_pos[right_i];
+    } else {
+      left_i++;
+      if (left_i >= left_pos_len) {
+        break;
+      }
+      left_last += left_pos[left_i];
     }
   }
 
@@ -691,14 +666,28 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
                                          int total_num, int docs_num, int *ret_docs_num) {
   int ret, i, df;
   unsigned char *posbuf, *posbuf_tmp;
-  int posbuf_len, posbuf_len_tmp;
+  int posbuf_len;
+  size_t posbuf_len_tmp, posbuf_cap;
   int *pos, pos_len;
   SEARCH_DOCUMENT *docs_list;
   double base_idf;
   int max_pos_file;
+  int docs_cap;
+  int malformed;
+
+  if (ydfp == NULL || ydfp->cache == NULL || ret_docs_num == NULL) {
+    return NULL;
+  }
+  *ret_docs_num = 0;
+  if (docs_num <= 0 || total_num <= 0 || ydfp->total_filenum == 0) {
+    return NULL;
+  }
 
   /* 全文書中の対象文書の出現率を求める */
-  base_idf = log(ydfp->total_filenum / docs_num) + 1.0;
+  base_idf = log((double)ydfp->total_filenum / (double)docs_num) + 1.0;
+  if (!(base_idf > 0.0)) {
+    base_idf = 1.0;
+  }
 
   printf("get %s/%d pos start: %ld\n", key, keyword_id, (long)time(NULL));
 
@@ -706,8 +695,9 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
    *ポジションリストを取得
    *全ポジションファイルから掻き集める
    */
-  posbuf_tmp = (unsigned char *)YAP_malloc(sizeof(int) * (total_num + docs_num + docs_num) * 2);
+  posbuf_tmp = NULL;
   posbuf_len_tmp = 0;
+  posbuf_cap = 0;
   max_pos_file = (int)(ydfp->total_filenum / MAX_POS_URL);
   for (i = 0; i <= max_pos_file; i++) {
     if (YAP_Db_pos_open(ydfp, i)) {
@@ -727,15 +717,33 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
       YAP_Db_pos_close(ydfp);
 
       printf("[%d]ret: %d/ len: %d\n", i, ret, posbuf_len);
-      if (ret == 0) {
-        memcpy(posbuf_tmp + posbuf_len_tmp, posbuf, posbuf_len);
-        posbuf_len_tmp += posbuf_len;
+      if (ret == 0 && posbuf_len > 0) {
+        size_t needed = posbuf_len_tmp + (size_t)posbuf_len;
+        if (needed > posbuf_cap) {
+          size_t new_cap = (posbuf_cap == 0) ? 4096U : posbuf_cap;
+          while (new_cap < needed) {
+            if (new_cap > (SIZE_MAX / 2U)) {
+              free(posbuf);
+              free(posbuf_tmp);
+              return NULL;
+            }
+            new_cap *= 2U;
+          }
+          posbuf_tmp = (unsigned char *)YAP_realloc(posbuf_tmp, new_cap);
+          posbuf_cap = new_cap;
+        }
+        memcpy(posbuf_tmp + posbuf_len_tmp, posbuf, (size_t)posbuf_len);
+        posbuf_len_tmp += (size_t)posbuf_len;
         free(posbuf);
       }
     }
   }
+  if (posbuf_len_tmp == 0 || posbuf_tmp == NULL || posbuf_len_tmp > (size_t)INT_MAX) {
+    free(posbuf_tmp);
+    return NULL;
+  }
   printf("get pos decode start: %ld\n", (long)time(NULL));
-  pos = YAP_Index_8bit_decode(posbuf_tmp, &pos_len, posbuf_len_tmp);
+  pos = YAP_Index_8bit_decode(posbuf_tmp, &pos_len, (int)posbuf_len_tmp);
   free(posbuf_tmp);
 
   printf("get pos end: %ld\n", (long)time(NULL));
@@ -743,9 +751,14 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   if (pos_len > 0) {
     int size, urllen, filekeywordnum;
     int now_index;
-    double tf, idf, tmp, score;
+    double tf, idf, score;
 
-    docs_list = (SEARCH_DOCUMENT *)YAP_malloc(sizeof(SEARCH_DOCUMENT) * docs_num * 2);
+    docs_cap = pos_len / 2;
+    if (docs_cap <= 0) {
+      free(pos);
+      return NULL;
+    }
+    docs_list = (SEARCH_DOCUMENT *)YAP_malloc(sizeof(SEARCH_DOCUMENT) * docs_cap);
 
     /* ロック開始 */
     pthread_mutex_lock(&(ydfp->cache->score_mutex));
@@ -755,7 +768,10 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
 
     df = 0;
     i = 0;
+    malformed = 0;
     while (i < pos_len) {
+      int fileindex;
+      int filepos_len;
 
       /*
   printf("pos: %d / i = %d /  df = %d / %d\n",pos_len, i, df, docs_num);
@@ -768,10 +784,40 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
         continue;
       }
 
-      docs_list[df].fileindex = pos[i];
+      if (i + 1 >= pos_len) {
+        malformed = 1;
+        break;
+      }
+      fileindex = pos[i];
       i++;
-      docs_list[df].pos_len = pos[i];
+      filepos_len = pos[i];
       i++;
+
+      if (fileindex <= 0 || fileindex > (int)ydfp->total_filenum) {
+        if (filepos_len < 0 || i + filepos_len > pos_len) {
+          malformed = 1;
+          break;
+        }
+        i += filepos_len;
+        continue;
+      }
+      if (filepos_len <= 0) {
+        if (filepos_len < 0) {
+          malformed = 1;
+          break;
+        }
+        continue;
+      }
+      if (i + filepos_len > pos_len) {
+        malformed = 1;
+        break;
+      }
+      if (df >= docs_cap) {
+        malformed = 1;
+        break;
+      }
+      docs_list[df].fileindex = fileindex;
+      docs_list[df].pos_len = filepos_len;
 
       /* 位置リストのコピー */
       /*
@@ -813,13 +859,25 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
         if (now_index < ydfp->cache->filekeywordnum_num) {
           filekeywordnum = ydfp->cache->filekeywordnum[now_index];
         }
+        if (score <= 0.0) {
+          score = 1.0;
+        }
+        if (size <= 0) {
+          size = 1;
+        }
+        if (urllen <= 0) {
+          urllen = 1;
+        }
+        if (filekeywordnum <= 0) {
+          filekeywordnum = 1;
+        }
       }
 
       /*
        *スコアの計算
        */
       {
-        tf = idf = tmp = 0.0;
+        tf = idf = 0.0;
         score = log(score) + 1.0;
 
         /* idfを文書サイズで正規化 */
@@ -847,11 +905,20 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
 
     free(pos);
 
+    if (malformed || df == 0) {
+      for (i = 0; i < df; i++) {
+        free(docs_list[i].pos);
+      }
+      free(docs_list);
+      return NULL;
+    }
+
     printf("RETURN get pos end end: %ld %d\n", (long)time(NULL), df);
 
     *ret_docs_num = df; /* 本来の文書数を返す */
     return docs_list;
   }
+  free(pos);
   *ret_docs_num = 0; /* 本来の文書数を返す */
   return NULL;
 }
@@ -961,6 +1028,10 @@ SEARCH_RESULT *YAP_Search_gram(YAPPO_DB_FILES *ydfp, unsigned char *key) {
     /* キーワードが有った */
 
     if (YAP_Search_keyword_stat_get(ydfp, keyword_id, &keyword_total_num, &keyword_docs_num) != 0) {
+      free(result);
+      return NULL;
+    }
+    if (keyword_total_num <= 0 || keyword_docs_num <= 0) {
       free(result);
       return NULL;
     }

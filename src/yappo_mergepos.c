@@ -117,6 +117,7 @@ int main(int argc, char *argv[]) {
   int tmp_size;
   int new_index;
   int seek_stops = 0;
+  int merge_error = 0;
 
   /*
    *オプションを取得
@@ -322,16 +323,27 @@ int main(int argc, char *argv[]) {
             /* 読み込み */
             /*\t    printf("size:%d\tindex:%d\n", size, index);*/
 
-            if (size) {
-              buf = (unsigned char *)YAP_malloc(size);
+            if (size < 0 || index < 0) {
+              fprintf(stderr, "malformed pos shard header: key=%d shard=%d size=%d index=%d\n",
+                      key_pos, i + start, size, index);
+              merge_error = 1;
+              break;
+            }
+            if (size > 0) {
+              if (total_size > INT_MAX - size) {
+                fprintf(stderr, "postings size overflow: key=%d shard=%d\n", key_pos, i + start);
+                merge_error = 1;
+                break;
+              }
+              buf = (unsigned char *)YAP_malloc((size_t)size);
               if (YAP_fseek_set(inputs[i]->data_fp, index) != 0 ||
-                  YAP_fread_exact(inputs[i]->data_fp, buf, 1, size) != 0) {
+                  YAP_fread_exact(inputs[i]->data_fp, buf, 1, (size_t)size) != 0) {
                 free(buf);
                 continue;
               }
 
-              bufs = (unsigned char *)YAP_realloc(bufs, size + total_size);
-              memcpy(bufs + total_size, buf, size);
+              bufs = (unsigned char *)YAP_realloc(bufs, (size_t)size + (size_t)total_size);
+              memcpy(bufs + total_size, buf, (size_t)size);
               free(buf);
               total_size += size;
             }
@@ -339,12 +351,16 @@ int main(int argc, char *argv[]) {
         }
       }
     }
+    if (merge_error) {
+      free(bufs);
+      break;
+    }
 
     /*
      * ポシションリストを解凍する
      */
     pos = YAP_Index_8bit_decode(bufs, &pos_len, total_size);
-    new_pos = (int *)YAP_malloc(sizeof(int) * pos_len);
+    new_pos = NULL;
     new_pos_len = 0;
     new_pos_i = 0;
 
@@ -352,20 +368,34 @@ int main(int argc, char *argv[]) {
     if (pos_len > 0) {
       int fileindex, filepos_len;
       int delete_seek, delete_bit, delete_f;
+      int malformed = 0;
       int key_pos_seek;
       unsigned char *new_bufs;
+      new_pos = (int *)YAP_malloc(sizeof(int) * (size_t)pos_len);
 
       i = 0;
       while (i < pos_len) {
+        if (i + 1 >= pos_len) {
+          malformed = 1;
+          break;
+        }
         fileindex = pos[i];
         i++;
         filepos_len = pos[i];
         i++;
+        if (filepos_len < 0 || i + filepos_len > pos_len) {
+          malformed = 1;
+          break;
+        }
 
         /*
    * 削除済かどうか調べる
    */
         delete_f = 0;
+        if (fileindex <= 0) {
+          i += filepos_len;
+          continue;
+        }
         delete_seek = fileindex / 8;
         delete_bit = fileindex % 8;
         if (YAP_fseek_set(delete_fp, delete_seek) != 0 ||
@@ -375,40 +405,48 @@ int main(int argc, char *argv[]) {
         if (delete_f & (1 << delete_bit)) {
           /*printf("[D]");*/
         } else {
+          if (new_pos_i + 2 + filepos_len > pos_len) {
+            malformed = 1;
+            break;
+          }
           new_pos[new_pos_i] = fileindex;
           new_pos_i++;
           new_pos[new_pos_i] = filepos_len;
           new_pos_i++;
-          memcpy(new_pos + new_pos_i, pos + i, sizeof(int) * filepos_len);
+          memcpy(new_pos + new_pos_i, pos + i, sizeof(int) * (size_t)filepos_len);
           new_pos_i += filepos_len;
         }
         i += filepos_len;
         /*printf("{%d/%d}", fileindex, filepos_len);*/
       }
 
-      new_bufs = YAP_Index_8bit_encode(new_pos, new_pos_i, &new_pos_len);
-      if (new_pos_len > 0) {
-        /*\tprintf("\nNEW SIZE: %d\n\n\n", new_pos_len);*/
+      if (malformed) {
+        fprintf(stderr, "malformed postings payload: key=%d\n", key_pos);
+        merge_error = 1;
+      } else {
+        new_bufs = YAP_Index_8bit_encode(new_pos, new_pos_i, &new_pos_len);
+        if (new_pos_len > 0) {
+          /*\tprintf("\nNEW SIZE: %d\n\n\n", new_pos_len);*/
 
-        /*
-   * 保存する
-   */
-        key_pos_seek = sizeof(int) * key_pos;
-        if (YAP_fseek_set(output->index_fp, key_pos_seek) != 0 ||
-            YAP_fseek_set(output->size_fp, key_pos_seek) != 0 ||
-            YAP_fwrite_exact(output->data_fp, new_bufs, sizeof(char), new_pos_len) != 0 ||
-            YAP_fwrite_exact(output->index_fp, &new_index, sizeof(int), 1) != 0 ||
-            YAP_fwrite_exact(output->size_fp, &new_pos_len, sizeof(int), 1) != 0) {
-          free(new_bufs);
-          break;
+          /*
+     * 保存する
+     */
+          key_pos_seek = sizeof(int) * key_pos;
+          if (YAP_fseek_set(output->index_fp, key_pos_seek) != 0 ||
+              YAP_fseek_set(output->size_fp, key_pos_seek) != 0 ||
+              YAP_fwrite_exact(output->data_fp, new_bufs, sizeof(char), new_pos_len) != 0 ||
+              YAP_fwrite_exact(output->index_fp, &new_index, sizeof(int), 1) != 0 ||
+              YAP_fwrite_exact(output->size_fp, &new_pos_len, sizeof(int), 1) != 0) {
+            merge_error = 1;
+          } else {
+            new_index += new_pos_len;
+          }
         }
-
-        new_index += new_pos_len;
         free(new_bufs);
       }
-      free(pos);
-      free(new_pos);
     }
+    free(pos);
+    free(new_pos);
 
     /*
     for (pos_i = 0;pos_i < pos_len;pos_i++){
@@ -417,6 +455,9 @@ int main(int argc, char *argv[]) {
     */
 
     free(bufs);
+    if (merge_error) {
+      break;
+    }
     if (key_pos > 10 && 0) {
       exit(EXIT_FAILURE);
     }
@@ -436,7 +477,7 @@ int main(int argc, char *argv[]) {
     fclose(inputs[i]->index_fp);
     fclose(inputs[i]->size_fp);
   }
-  return EXIT_SUCCESS;
+  return merge_error ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 #ifdef AAAA

@@ -179,6 +179,16 @@ void search_result_print(YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, i
     return;
   }
 
+  if (start < 0) {
+    start = 0;
+  }
+  if (end < 0) {
+    end = 0;
+  }
+  if (end < start) {
+    end = start;
+  }
+
   if (p == NULL || start >= p->keyword_docs_num) {
     if (YAP_writef(socket, "0\n\n") != 0 || YAP_flush_or_log(socket) != 0) {
       return;
@@ -320,6 +330,9 @@ static int YAP_parse_request_target(const char *target, char *dict, int *max_siz
     return -1;
   }
   if (dict[0] == '\0' || op[0] == '\0' || keyword[0] == '\0') {
+    return -1;
+  }
+  if (*max_size <= 0 || *start < 0 || *end < 0 || *end < *start) {
     return -1;
   }
 
