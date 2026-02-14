@@ -22,9 +22,14 @@
 
 static int YAP_Search_keyword_stat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
                                        int *keyword_total_num, int *keyword_docs_num) {
-  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+  long seek;
+
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, seek) != 0 ||
       YAP_fread_exact(ydfp->keyword_totalnum_file, keyword_total_num, sizeof(int), 1) != 0 ||
-      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, seek) != 0 ||
       YAP_fread_exact(ydfp->keyword_docsnum_file, keyword_docs_num, sizeof(int), 1) != 0) {
     return -1;
   }

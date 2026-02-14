@@ -19,14 +19,16 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
                       int *postings_buf_len) {
   int ret;
   int pos_size, pos_index;
-  int seek;
+  long seek;
 
   if (ydfp->pos_num < keyword_id) {
     /*対象となるIDは存在していない*/
     return -1;
   }
 
-  seek = sizeof(int) * keyword_id;
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
 
   /*サイズの読みこみ*/
   if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0) {
@@ -71,14 +73,16 @@ int YAP_Index_Pos_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
 int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned char *postings_buf,
                       int postings_buf_len) {
   int pos_index;
-  int seek;
+  long seek;
 
   if (ydfp->mode == YAPPO_DB_READ) {
     /*読みこみモードではエラー*/
     return -1;
   }
 
-  seek = sizeof(int) * keyword_id;
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
 
   /*サイズの書きこみ*/
   if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0 ||
@@ -111,14 +115,16 @@ int YAP_Index_Pos_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id, unsigned c
  */
 int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id) {
   int c = 0;
-  int seek;
+  long seek;
 
   if (ydfp->mode == YAPPO_DB_READ) {
     /*読みこみモードではエラー*/
     return -1;
   }
 
-  seek = sizeof(int) * keyword_id;
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
 
   /*サイズの書きこみ*/
   if (YAP_fseek_set(ydfp->pos_size_file, seek) != 0 ||
@@ -142,7 +148,8 @@ int YAP_Index_Pos_del(YAPPO_DB_FILES *ydfp, unsigned long keyword_id) {
 int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_index) {
   int i;
   long pos_num;
-  int seek, index, index_tmp, size, tmp;
+  long seek;
+  int index, index_tmp, size, tmp;
   char *pos_tmp, *pos_index_tmp;
   FILE *pos_file, *pos_size_file, *pos_index_file;
   FILE *pos_tmp_file, *pos_index_tmp_file;
@@ -220,7 +227,9 @@ int YAP_Index_Pos_gc(YAPPO_DB_FILES *ydfp, char *pos, char *pos_size, char *pos_
 
   /*位置情報のコピー*/
   for (i = 1; (unsigned int)i <= ydfp->total_keywordnum; i++) {
-    seek = sizeof(int) * i;
+    if (YAP_seek_offset_index(sizeof(int), (unsigned long)i, &seek) != 0) {
+      break;
+    }
 
     /*サイズの読みこみ*/
     if (YAP_fread_exact(pos_size_file, &size, sizeof(int), 1) != 0) {

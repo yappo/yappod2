@@ -71,6 +71,35 @@ int __YAP_ftell_int(char *filename, int line, FILE *fp, int *offset_out) {
   return 0;
 }
 
+int __YAP_seek_offset_index(char *filename, int line, size_t item_size, unsigned long index,
+                            long *offset_out) {
+  unsigned long max_index;
+
+  if (offset_out == NULL) {
+    fprintf(stderr, "YAP_seek_offset_index: null output pointer: %s:%d\n", filename, line);
+    return -1;
+  }
+  if (item_size == 0) {
+    *offset_out = 0L;
+    return 0;
+  }
+  if (item_size > (size_t)LONG_MAX) {
+    fprintf(stderr, "YAP_seek_offset_index: invalid item size: %s:%d: size=%lu\n", filename, line,
+            (unsigned long)item_size);
+    return -1;
+  }
+
+  max_index = ((unsigned long)LONG_MAX) / (unsigned long)item_size;
+  if (index > max_index) {
+    fprintf(stderr, "YAP_seek_offset_index: offset overflow: %s:%d: size=%lu index=%lu\n", filename,
+            line, (unsigned long)item_size, index);
+    return -1;
+  }
+
+  *offset_out = (long)((unsigned long)item_size * index);
+  return 0;
+}
+
 int __YAP_fread_exact(char *filename, int line, FILE *fp, void *ptr, size_t size, size_t nmemb) {
   size_t got;
 

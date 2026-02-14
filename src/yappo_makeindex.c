@@ -139,9 +139,14 @@ static void YAP_reset_line_buffer(char **line_buf) {
 
 static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
                                int *keyword_total_num, int *keyword_docs_num) {
-  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+  long seek;
+
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, seek) != 0 ||
       YAP_fread_exact(ydfp->keyword_totalnum_file, keyword_total_num, sizeof(int), 1) != 0 ||
-      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, seek) != 0 ||
       YAP_fread_exact(ydfp->keyword_docsnum_file, keyword_docs_num, sizeof(int), 1) != 0) {
     return -1;
   }
@@ -150,9 +155,14 @@ static int YAP_KeywordStat_get(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
 
 static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
                                int keyword_total_num, int keyword_docs_num) {
-  if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+  long seek;
+
+  if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0) {
+    return -1;
+  }
+  if (YAP_fseek_set(ydfp->keyword_totalnum_file, seek) != 0 ||
       YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-      YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+      YAP_fseek_set(ydfp->keyword_docsnum_file, seek) != 0 ||
       YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
     return -1;
   }
@@ -164,7 +174,8 @@ static int YAP_KeywordStat_put(YAPPO_DB_FILES *ydfp, unsigned long keyword_id,
  */
 int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp) {
   int i;
-  int len, seek;
+  int len;
+  long seek, score_seek;
   double score = 1.0;
 
   for (i = 0; i < stack_count; i++) {
@@ -174,7 +185,9 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
     }
     YAP_Index_Filedata_put(ydfp, index_stack[i].fileindex, &index_stack[i].filedata);
 
-    seek = sizeof(int) * index_stack[i].fileindex;
+    if (YAP_seek_offset_index(sizeof(int), (unsigned long)index_stack[i].fileindex, &seek) != 0) {
+      return -1;
+    }
 
     if (YAP_fseek_set(ydfp->size_file, seek) != 0 ||
         YAP_fwrite_exact(ydfp->size_file, &(index_stack[i].filedata.size), sizeof(int), 1) != 0) {
@@ -187,7 +200,9 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
       return -1;
     }
 
-    if (YAP_fseek_set(ydfp->score_file, sizeof(double) * index_stack[i].fileindex) != 0 ||
+    if (YAP_seek_offset_index(sizeof(double), (unsigned long)index_stack[i].fileindex,
+                              &score_seek) != 0 ||
+        YAP_fseek_set(ydfp->score_file, score_seek) != 0 ||
         YAP_fwrite_exact(ydfp->score_file, &score, sizeof(double), 1) != 0) {
       return -1;
     }
@@ -217,6 +232,7 @@ int add_url_dict(INDEX_STACK *index_stack, int stack_count, YAPPO_DB_FILES *ydfp
  */
 int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp) {
   unsigned long keyword_id;
+  long seek;
   int keyword_total_num, keyword_docs_num;
   unsigned char *postings_buf;
 
@@ -241,9 +257,10 @@ int add_keyword_dict_set(MINIBTREE *btree_this, YAPPO_DB_FILES *ydfp) {
       keyword_total_num = ((BTREE_DATA *)btree_this->data)->keyword_total_num;
       keyword_docs_num = ((BTREE_DATA *)btree_this->data)->keyword_docs_num;
 
-      if (YAP_fseek_set(ydfp->keyword_totalnum_file, sizeof(int) * keyword_id) != 0 ||
+      if (YAP_seek_offset_index(sizeof(int), keyword_id, &seek) != 0 ||
+          YAP_fseek_set(ydfp->keyword_totalnum_file, seek) != 0 ||
           YAP_fwrite_exact(ydfp->keyword_totalnum_file, &keyword_total_num, sizeof(int), 1) != 0 ||
-          YAP_fseek_set(ydfp->keyword_docsnum_file, sizeof(int) * keyword_id) != 0 ||
+          YAP_fseek_set(ydfp->keyword_docsnum_file, seek) != 0 ||
           YAP_fwrite_exact(ydfp->keyword_docsnum_file, &keyword_docs_num, sizeof(int), 1) != 0) {
         return -1;
       }
