@@ -1,0 +1,8 @@
+# query_id<TAB>document_id<TAB>relevance(0..3)
+q001	http://example.com/doc1	2
+q001	http://example.com/doc2	3
+q002	http://example.com/doc2	3
+q003	https://example.com/doc3	3
+q004	http://example.com/doc1	3
+q005	http://example.com/doc5	3
+q006	http://example.com/doc5	3
