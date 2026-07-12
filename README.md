@@ -273,6 +273,11 @@ yappod_front -l /tmp/yappoindex \
   -s search-server3
 ```
 
+稼働確認には検索を実行しない `GET /healthz` を使えます。HTTP 200 と
+`{"status":"ok","service":"yappod_front"}` を返すため、ロードバランサの liveness probe
+に利用できます。検索 API の JSON 応答が必要なクライアントは
+[v2 JSON 検索 API](docs/search_json_api.md) を参照してください。
+
 ポート指定例（front/core を既定以外で起動）:
 
 ```bash
@@ -337,6 +342,20 @@ URL\tタイトル\t文書サイズ\t最終更新時刻(epoch)\tスコア
 注意:
 
 - `op` に `AND` / `OR` 以外を指定しても、現実装ではエラーではなく **AND 扱い** になります。
+
+## 運用・リリースチェック
+
+リリース前は次の順に確認します。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+cmake --install build --prefix /tmp/yappod-release-smoke
+```
+
+検索品質・P95 レイテンシの smoke baseline は `ctest --test-dir build -R search_quality` で確認します。
+v2 index を公開する場合は segment の checksum と manifest generation を検証し、旧 generation と混在させないでください。CI の macOS/Ubuntu、sanitizer、install smoke が全て成功した状態を release gate とします。詳細な rollback、監視、負荷試験の基準は [運用・リリース手順](docs/operations_release.md) にまとめています。
 
 ## トークナイズ方針（現状）
 

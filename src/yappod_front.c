@@ -133,6 +133,16 @@ static int YAP_send_bad_request(int fd, int thread_id) {
   return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
 }
 
+static int YAP_send_health_response(int fd, int thread_id) {
+  const char *msg = "HTTP/1.0 200 OK\r\n"
+                    "Server: Yappo Search/2.0\r\n"
+                    "Content-Type: application/json; charset=utf-8\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "\r\n"
+                    "{\"status\":\"ok\",\"service\":\"yappod_front\"}\n";
+  return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
+}
+
 static void YAP_drain_oversized_line(FILE *socket, char *socket_buf, size_t chunk_len) {
   while (chunk_len == (size_t)(BUF_SIZE - 1) && socket_buf[chunk_len - 1] != '\n') {
     if (fgets(socket_buf, BUF_SIZE, socket) == NULL) {
@@ -593,6 +603,21 @@ static int YAP_parse_request_line(const char *line, char *dict, int *max_size, c
   return -1;
 }
 
+static int YAP_parse_health_request_line(const char *line) {
+  char method[16];
+  char target[BUF_SIZE];
+  char version[32];
+
+  if (line == NULL || sscanf(line, "%15s %1023s %31s", method, target, version) != 3) {
+    return -1;
+  }
+  if (strcmp(method, "GET") != 0 || strcmp(target, "/healthz") != 0 ||
+      strncmp(version, "HTTP/", 5) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
 static int YAP_drain_http_headers(FILE *socket) {
   while (1) {
     char *line = NULL;
@@ -675,6 +700,20 @@ void *thread_server(void *ip) {
       } else if (read_rc < 0) {
         YAP_log_thread_error(p->id, "read request line failed");
       }
+      YAP_Net_close_stream(&socket, &accept_socket);
+      continue;
+    }
+
+    if (YAP_parse_health_request_line(line) == 0) {
+      header_rc = YAP_drain_http_headers(socket);
+      if (header_rc > 0) {
+        YAP_send_health_response(accept_socket, p->id);
+      } else if (header_rc == -2) {
+        YAP_send_bad_request(accept_socket, p->id);
+      } else if (header_rc < 0) {
+        YAP_log_thread_error(p->id, "read health headers failed");
+      }
+      free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
     }
