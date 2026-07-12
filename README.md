@@ -133,6 +133,13 @@ ctest --test-dir build -R search_quality --output-on-failure
 cmake --install build
 ```
 
+v2 canonical入力を検索passageへ正規化するには次を実行します。入力契約は
+[`docs/canonical_ingest.md`](docs/canonical_ingest.md)を参照してください。
+
+```sh
+yappo_makeindex prepare --config config.toml --input documents.ndjson --output passages.ndjson
+```
+
 インストール先を指定する場合:
 
 ```bash

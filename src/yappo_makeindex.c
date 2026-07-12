@@ -24,6 +24,7 @@
 #include "yappo_stat.h"
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
+#include "yappo_ingest.h"
 
 #define GZ_BUF_SIZE 1024
 #define MAX_STACK_SIZE 2040
@@ -902,6 +903,10 @@ int main(int argc, char *argv[]) {
   struct stat f_stats;
 
   memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
+
+  if (argc > 1 && strcmp(argv[1], "prepare") == 0) {
+    return YAP_V2_prepare_main(argc - 1, argv + 1);
+  }
 
   /*
    *オプションを取得
