@@ -45,14 +45,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev
+          sudo apt-get install -y cmake g++ libdb-dev zlib1g-dev libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev
 
       - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install berkeley-db cmocka
+          brew install berkeley-db cmocka icu4c libevent curl
 
       - name: Configure (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -63,8 +63,10 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           BDB_PREFIX="$(brew --prefix berkeley-db)"
+          MODERN_PREFIXES="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)"
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${MODERN_PREFIXES}" \
             -DBDB_INCLUDE_DIR="${BDB_PREFIX}/include" \
             -DBDB_LIB="${BDB_PREFIX}/lib/libdb.dylib"
 
@@ -183,14 +185,16 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev clang
+          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev clang
 
       - name: Configure (sanitizer)
         run: |
           cmake -S . -B build-sanitizer \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_FLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
       - name: Build (sanitizer)
