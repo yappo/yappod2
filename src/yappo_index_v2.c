@@ -39,7 +39,7 @@ static int c_string_validate(const char *value, size_t max_bytes, int required) 
   return YAP_V2_OK;
 }
 
-static int segment_id_is_safe(const char *value) {
+int YAP_V2_segment_id_validate(const char *value) {
   size_t i;
   int status = c_string_validate(value, YAP_V2_MAX_IDENTIFIER_BYTES, 1);
 
@@ -70,6 +70,10 @@ const char *YAP_V2_status_string(YAP_V2_STATUS status) {
       return "duplicate";
     case YAP_V2_ALLOCATION_FAILED:
       return "allocation failed";
+    case YAP_V2_IO_ERROR:
+      return "I/O error";
+    case YAP_V2_CHECKSUM_MISMATCH:
+      return "checksum mismatch";
     default:
       return "unknown status";
   }
@@ -195,7 +199,7 @@ int YAP_V2_manifest_add_segment(YAP_V2_MANIFEST *manifest,
   if (manifest == NULL || segment == NULL) {
     return YAP_V2_INVALID_ARGUMENT;
   }
-  status = segment_id_is_safe(segment->id);
+  status = YAP_V2_segment_id_validate(segment->id);
   if (status != YAP_V2_OK) {
     return status;
   }
@@ -231,7 +235,7 @@ int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
     return YAP_V2_INVALID_FORMAT;
   }
   for (i = 0; i < manifest->segment_count; i++) {
-    int status = segment_id_is_safe(manifest->segments[i].id);
+    int status = YAP_V2_segment_id_validate(manifest->segments[i].id);
     if (status != YAP_V2_OK) {
       return status;
     }
