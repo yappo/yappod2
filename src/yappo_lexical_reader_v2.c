@@ -162,13 +162,13 @@ static int validate_payloads(YAP_V2_LEXICAL_SEGMENT *segment) {
   const unsigned char *positions = (const unsigned char *)segment->maps[2];
   size_t postings_size = segment->map_bytes[1];
   size_t positions_size = segment->map_bytes[2];
-  size_t posting_cursor = YAP_V2_FILE_HEADER_BYTES + 32U;
+  size_t posting_cursor = YAP_V2_FILE_HEADER_BYTES + 56U;
   size_t position_cursor = YAP_V2_FILE_HEADER_BYTES + 12U;
   uint64_t counted_postings = 0U;
   uint64_t counted_positions = 0U;
   size_t term_index;
 
-  if (!range_valid(YAP_V2_FILE_HEADER_BYTES, 32U, postings_size) ||
+  if (!range_valid(YAP_V2_FILE_HEADER_BYTES, 56U, postings_size) ||
       get_u32(postings + YAP_V2_FILE_HEADER_BYTES) != YAP_V2_LEXICAL_PAYLOAD_VERSION ||
       get_u32(postings + YAP_V2_FILE_HEADER_BYTES + 4U) != YAP_V2_POSTINGS_BLOCK_SIZE ||
       !range_valid(YAP_V2_FILE_HEADER_BYTES, 12U, positions_size) ||
@@ -177,6 +177,9 @@ static int validate_payloads(YAP_V2_LEXICAL_SEGMENT *segment) {
   segment->document_count = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 8U);
   segment->passage_count = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 16U);
   segment->posting_count = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 24U);
+  segment->field_token_count[0] = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 32U);
+  segment->field_token_count[1] = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 40U);
+  segment->field_token_count[2] = get_u64(postings + YAP_V2_FILE_HEADER_BYTES + 48U);
   segment->position_count = get_u64(positions + YAP_V2_FILE_HEADER_BYTES + 4U);
 
   for (term_index = 0U; term_index < segment->term_count; term_index++) {
@@ -269,9 +272,13 @@ static int validate_payloads(YAP_V2_LEXICAL_SEGMENT *segment) {
         uint32_t length;
         parse_posting(postings + posting_data + posting_index * POSTING_BYTES, &posting);
         tf = posting.term_frequency[0] + posting.term_frequency[1] + posting.term_frequency[2];
-        length = posting.term_frequency[0] > 0U   ? posting.field_length[0]
-                 : posting.term_frequency[1] > 0U ? posting.field_length[1]
-                                                  : posting.field_length[2];
+        length = UINT32_MAX;
+        if (posting.term_frequency[0] > 0U && posting.field_length[0] < length)
+          length = posting.field_length[0];
+        if (posting.term_frequency[1] > 0U && posting.field_length[1] < length)
+          length = posting.field_length[1];
+        if (posting.term_frequency[2] > 0U && posting.field_length[2] < length)
+          length = posting.field_length[2];
         if (tf > max_tf)
           max_tf = tf;
         if (length < min_length)
@@ -421,5 +428,25 @@ int YAP_V2_position_iterator_next(YAP_V2_POSITION_ITERATOR *iterator, YAP_V2_POS
   position->position = get_u32(data + 4U);
   iterator->offset += 8U;
   iterator->index++;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_posting_position_at(const YAP_V2_LEXICAL_SEGMENT *segment, const YAP_V2_TERM_ENTRY *term,
+                               const YAP_V2_POSTING *posting, size_t index,
+                               YAP_V2_POSITION *position) {
+  const unsigned char *data;
+  size_t offset;
+  if (segment == NULL || term == NULL || posting == NULL || position == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  if (index >= posting->position_count || term->positions_offset > SIZE_MAX ||
+      posting->position_offset > SIZE_MAX - index)
+    return YAP_V2_OUT_OF_RANGE;
+  offset = YAP_V2_FILE_HEADER_BYTES + (size_t)term->positions_offset + 16U +
+           ((size_t)posting->position_offset + index) * 8U;
+  if (!range_valid(offset, 8U, segment->map_bytes[2]))
+    return YAP_V2_INVALID_FORMAT;
+  data = (const unsigned char *)segment->maps[2] + offset;
+  position->field = get_u32(data);
+  position->position = get_u32(data + 4U);
   return YAP_V2_OK;
 }

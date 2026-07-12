@@ -220,7 +220,7 @@ static int occurrence_add(OCCURRENCES *occurrences, const char *term, size_t ter
 }
 
 static int tokenize_field(OCCURRENCES *occurrences, YAP_V2_BYTES_VIEW text, uint32_t object_type,
-                          uint64_t object_ordinal, uint32_t field) {
+                          uint64_t object_ordinal, uint32_t field, uint64_t *field_total) {
   YAP_V2_TOKEN_SEQUENCE sequence = {0};
   size_t i;
   int status;
@@ -233,6 +233,11 @@ static int tokenize_field(OCCURRENCES *occurrences, YAP_V2_BYTES_VIEW text, uint
     YAP_V2_token_sequence_free(&sequence);
     return YAP_V2_OUT_OF_RANGE;
   }
+  if (sequence.token_count > UINT64_MAX - *field_total) {
+    YAP_V2_token_sequence_free(&sequence);
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  *field_total += sequence.token_count;
   for (i = 0U; status == YAP_V2_OK && i < sequence.token_count; i++) {
     const YAP_V2_TOKEN *token = &sequence.tokens[i];
     status = occurrence_add(occurrences, sequence.normalized_utf8 + token->byte_start,
@@ -272,8 +277,9 @@ static int same_object(const OCCURRENCE *a, const OCCURRENCE *b) {
 }
 
 static int build_payloads(OCCURRENCES *occurrences, size_t document_count, size_t passage_count,
-                          BUFFER *terms, BUFFER *postings, BUFFER *positions,
-                          uint64_t *term_count_out, uint64_t *posting_count_out) {
+                          const uint64_t field_totals[3], BUFFER *terms, BUFFER *postings,
+                          BUFFER *positions, uint64_t *term_count_out,
+                          uint64_t *posting_count_out) {
   size_t term_start;
   uint64_t term_ordinal = 0U;
   uint64_t posting_total = 0U;
@@ -294,6 +300,12 @@ static int build_payloads(OCCURRENCES *occurrences, size_t document_count, size_
     status = append_u64(postings, passage_count);
   if (status == YAP_V2_OK)
     status = append_u64(postings, 0U);
+  if (status == YAP_V2_OK)
+    status = append_u64(postings, field_totals[0]);
+  if (status == YAP_V2_OK)
+    status = append_u64(postings, field_totals[1]);
+  if (status == YAP_V2_OK)
+    status = append_u64(postings, field_totals[2]);
   if (status == YAP_V2_OK)
     status = append_u32(positions, YAP_V2_LEXICAL_PAYLOAD_VERSION);
   if (status == YAP_V2_OK)
@@ -390,12 +402,15 @@ static int build_payloads(OCCURRENCES *occurrences, size_t document_count, size_
         while (block_end < term_end && block_objects < YAP_V2_POSTINGS_BLOCK_SIZE) {
           size_t object_end = block_end + 1U;
           uint32_t tf = 0U;
-          uint32_t length = 0U;
+          uint32_t length = UINT32_MAX;
+          size_t occurrence_index;
           while (object_end < term_end &&
                  same_object(&occurrences->items[block_end], &occurrences->items[object_end]))
             object_end++;
           tf = (uint32_t)(object_end - block_end);
-          length = occurrences->items[block_end].field_length;
+          for (occurrence_index = block_end; occurrence_index < object_end; occurrence_index++)
+            if (occurrences->items[occurrence_index].field_length < length)
+              length = occurrences->items[occurrence_index].field_length;
           if (tf > max_tf)
             max_tf = tf;
           if (length < min_length)
@@ -453,6 +468,7 @@ int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
   uint64_t term_count = 0U;
   uint64_t posting_count = 0U;
   uint64_t records[3];
+  uint64_t field_totals[3] = {0U, 0U, 0U};
   size_t i;
   int status = YAP_V2_OK;
 
@@ -464,20 +480,20 @@ int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
     status = YAP_V2_document_validate(&documents[i]);
     if (status == YAP_V2_OK)
       status = tokenize_field(&occurrences, documents[i].title, YAP_V2_LEXICAL_DOCUMENT, i,
-                              YAP_V2_FIELD_TITLE);
+                              YAP_V2_FIELD_TITLE, &field_totals[0]);
     if (status == YAP_V2_OK)
       status = tokenize_field(&occurrences, documents[i].body, YAP_V2_LEXICAL_DOCUMENT, i,
-                              YAP_V2_FIELD_BODY);
+                              YAP_V2_FIELD_BODY, &field_totals[1]);
   }
   for (i = 0U; status == YAP_V2_OK && i < passage_count; i++) {
     status = YAP_V2_passage_validate(&passages[i]);
     if (status == YAP_V2_OK)
       status = tokenize_field(&occurrences, passages[i].text, YAP_V2_LEXICAL_PASSAGE, i,
-                              YAP_V2_FIELD_PASSAGE);
+                              YAP_V2_FIELD_PASSAGE, &field_totals[2]);
   }
   if (status == YAP_V2_OK)
-    status = build_payloads(&occurrences, document_count, passage_count, &payloads[0], &payloads[1],
-                            &payloads[2], &term_count, &posting_count);
+    status = build_payloads(&occurrences, document_count, passage_count, field_totals, &payloads[0],
+                            &payloads[1], &payloads[2], &term_count, &posting_count);
   records[0] = term_count;
   records[1] = posting_count;
   records[2] = occurrences.count;

@@ -160,6 +160,8 @@ positionはfield、token ordinal順に決定的に並びます。
 
 - termsはterm bytes、document frequency、対応するpostings/positions payloadのoffsetとbytesを保持します。
 - postingsはdocument/passageの種別とordinal、title/body/passage別のterm frequencyとfield length、position範囲を保持します。
+- postings payload headerはdocument数、passage数、posting総数に加え、title/body/passageの
+  全token数を保持し、BM25Fの平均field lengthをsegment単位で決定可能にします。
 - 128 postingごとのblock metadataは先頭posting ordinal、件数、最大term frequency、最小field lengthを保持します。
 - positionsはfield IDとfield内のzero-based token ordinalを保持します。
 - readerはterm順序、object順序、offset、件数、block範囲を検証してからiteratorを公開します。
@@ -167,6 +169,16 @@ positionはfield、token ordinal順に決定的に並びます。
   全体の連続性、TFとpositionの整合、block-max再計算値をopen時に検証します。
 - `YAP_V2_LEXICAL_SEGMENT`はinit後にopenし、利用中はmapped fileを変更・削除せず、最後に
   closeします。term/posting/positionのviewとiteratorはsegment closeまでだけ有効です。
+
+## v2 lexical ranking
+
+- queryもindexと同じUnicode tokenizerで正規化し、OR、AND、連続token phraseを扱います。
+- scoreはfield lengthで正規化したtitle/body/passageのweighted TFを合成し、IDFを一度だけ
+  適用するBM25Fです。既定boostはtitle=2、body=1、passage=1です。
+- OR top-kは現在blockの最大TF・最小field lengthから安全な上限を計算するblock-max WANDで
+  評価対象をskipします。ANDはobject keyのposting intersection、phraseは同一field内の連続
+  positionを要求します。
+- score降順、同点はobject type、object ordinal昇順の決定的順序です。
 
 ## C APIの所有権
 

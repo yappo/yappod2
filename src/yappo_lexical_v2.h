@@ -55,6 +55,7 @@ typedef struct {
   uint64_t passage_count;
   uint64_t posting_count;
   uint64_t position_count;
+  uint64_t field_token_count[3];
   YAP_V2_TERM_ENTRY *terms;
   size_t term_count;
 } YAP_V2_LEXICAL_SEGMENT;
@@ -93,5 +94,8 @@ int YAP_V2_position_iterator_init(const YAP_V2_LEXICAL_SEGMENT *segment,
                                   const YAP_V2_TERM_ENTRY *term,
                                   YAP_V2_POSITION_ITERATOR *iterator);
 int YAP_V2_position_iterator_next(YAP_V2_POSITION_ITERATOR *iterator, YAP_V2_POSITION *position);
+int YAP_V2_posting_position_at(const YAP_V2_LEXICAL_SEGMENT *segment, const YAP_V2_TERM_ENTRY *term,
+                               const YAP_V2_POSTING *posting, size_t index,
+                               YAP_V2_POSITION *position);
 
 #endif
