@@ -46,6 +46,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_index_pos.c
   ${SRC_DIR}/yappo_index_filedata.c
   ${SRC_DIR}/yappo_index_deletefile.c
+  ${SRC_DIR}/yappo_index_v2.c
 )
 
 set(YAPPO_SEARCH_SOURCES
@@ -266,6 +267,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pos_index_bounds_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_index_pos.c
+  )
+  add_yappod_cmocka_test(
+    index_v2_contracts
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_v2_contracts_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c
   )
 
   add_yappod_cmocka_test(
