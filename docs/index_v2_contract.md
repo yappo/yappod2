@@ -152,6 +152,18 @@ repeat passage_count:
 
 document recordは先に、passage recordは後に並びます。writerは文書ID・passage ID・同一親文書内のordinalを一意にし、passageの親文書が同じsegmentに存在することを検証します。readerはレコード長、件数、各フィールドの上限、親文書参照、CRC32C、SHA-256をすべて検証してから公開します。
 
+## lexical component payload
+
+`terms.yap2`、`postings.yap2`、`positions.yap2` は同じ tokenizer 出力から一括生成します。
+payload version は1で、termは正規化済みUTF-8 byte順、postingはobject type、object ordinal順、
+positionはfield、token ordinal順に決定的に並びます。
+
+- termsはterm bytes、document frequency、対応するpostings/positions payloadのoffsetとbytesを保持します。
+- postingsはdocument/passageの種別とordinal、title/body/passage別のterm frequencyとfield length、position範囲を保持します。
+- 128 postingごとのblock metadataは先頭posting ordinal、件数、最大term frequency、最小field lengthを保持します。
+- positionsはfield IDとfield内のzero-based token ordinalを保持します。
+- readerはterm順序、object順序、offset、件数、block範囲を検証してからiteratorを公開します。
+
 ## C APIの所有権
 
 - `YAP_V2_*_VIEW`の入力バイト列は呼び出し側が所有し、validate関数はコピーしません。
