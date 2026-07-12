@@ -59,6 +59,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_lexical_v2.c
   ${SRC_DIR}/yappo_lexical_reader_v2.c
+  ${SRC_DIR}/yappo_lexical_search_v2.c
   ${SRC_DIR}/yappo_search_api.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
@@ -373,6 +374,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_reader_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c
+  )
+  add_yappod_cmocka_test(
+    lexical_v2_ranking
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_ranking_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c
   )
   add_yappod_cmocka_test(
     search_api
