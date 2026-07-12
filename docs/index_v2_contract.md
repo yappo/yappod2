@@ -60,6 +60,9 @@ metric = "cosine"
 - `vector.enabled=false`の場合、model IDは空、dimensionsは0、metricは`disabled`相当として扱います。
 - 有効なvectorはmodel ID、dimensions（1〜65536）、`cosine`/`dot`/`l2`を必須とします。
 - vectorのdimension、metric、model IDは同一index内で固定し、検索時に不一致を拒否します。
+- 省略可能な値のdefaultはtokenizer `unicode_nfkc_casefold_v2`、chunk max 1200、overlap 200、vector disabledです。
+- 未知のtop-level key、table、table内keyは将来の綴り間違いを黙認しないため拒否します。
+- fingerprintはdefault適用後の全設定を固定順のcanonical表現へ変換し、SHA-256を計算した32-byte値です。空白、コメント、key順序の違いはfingerprintへ影響しません。
 
 ## manifest.json
 
