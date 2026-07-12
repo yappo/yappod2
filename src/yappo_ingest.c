@@ -190,6 +190,9 @@ int YAP_V2_prepare_main(int argc,char **argv){
   if(YAP_V2_config_load(config_path,&config,error,sizeof(error))!=YAP_V2_OK){fprintf(stderr,"Config error: %s\n",error);goto done;}
   input=fopen(input_path,"r");output=fopen(output_path,"w");if(input==NULL||output==NULL){perror("prepare");goto done;}
   while((length=getline(&line,&capacity,input))>=0){YAP_V2_INGEST_OPERATION operation;YAP_V2_CHUNK_SEQUENCE chunks;size_t j;int status;if(length==0)continue;status=strcmp(format,"tsv")==0?YAP_V2_ingest_parse_tsv(line,&operation,error,sizeof(error)):YAP_V2_ingest_parse_ndjson(line,(size_t)length,&operation,error,sizeof(error));if(status!=YAP_V2_OK){fprintf(stderr,"Invalid input: %s\n",error);goto done;}if(operation.kind==YAP_V2_INGEST_DELETE){fputs("{\"operation\":\"delete\",\"id\":",output);write_json_string(output,operation.id);fputs("}\n",output);}else{status=YAP_V2_unicode_chunk(operation.id,operation.body,strlen(operation.body),config.chunk_max_chars,config.chunk_overlap_chars,&chunks);if(status!=YAP_V2_OK){YAP_V2_ingest_operation_free(&operation);goto done;}for(j=0;j<chunks.chunk_count;j++){fputs("{\"operation\":\"upsert\",\"document_id\":",output);write_json_string(output,operation.id);fputs(",\"passage_id\":",output);write_json_string(output,chunks.chunks[j].id);fprintf(output,",\"ordinal\":%u,\"start_char\":%u,\"end_char\":%u,\"text\":",chunks.chunks[j].ordinal,chunks.chunks[j].start_char,chunks.chunks[j].end_char);write_json_string(output,chunks.chunks[j].text);fputs(",\"metadata\":",output);fputs(operation.metadata_json,output);fputs("}\n",output);}YAP_V2_chunk_sequence_free(&chunks);}YAP_V2_ingest_operation_free(&operation);}
-  if(ferror(input)||fflush(output)!=0)goto done;result=EXIT_SUCCESS;
+  if (ferror(input) || fflush(output) != 0) {
+    goto done;
+  }
+  result = EXIT_SUCCESS;
 done:free(line);if(input)fclose(input);if(output)fclose(output);return result;
 }
