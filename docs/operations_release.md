@@ -1,5 +1,7 @@
 # 運用・リリース手順
 
+> **現在の状態:** v2 manifest、segment、vector、RAG、hybrid の基礎部品は検索・更新経路へ完全には接続されていません。この文書のv2運用手順は完成後の目標契約であり、現時点の製品機能を示すものではありません。完成判定は[現代検索基盤の完成契約](modern_search_completion_contract.md)に従います。
+
 ## 起動前チェック
 
 1. index directory と `pos/` の所有者・権限を確認する。

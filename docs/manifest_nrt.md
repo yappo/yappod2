@@ -1,5 +1,7 @@
 # v2 manifest と NRT publish
 
+> **現在の状態:** manifestのload/save/publish関数は実装済みですが、index writer、検索snapshot reload、compaction、GCには未接続です。この文書の更新手順だけでNRT機能が完成しているとは扱いません。統合範囲は[現代検索基盤の完成契約](modern_search_completion_contract.md)を参照してください。
+
 `manifest.json` は公開済み immutable segment のスナップショットです。検索側は一つの generation を読み続け、writer は新しい manifest を完成させてから atomic rename します。そのため検索中に未完成の segment 一覧を観測しません。
 
 ## API

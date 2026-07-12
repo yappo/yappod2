@@ -1,6 +1,6 @@
 # Vector search backend
 
-Task 8 では v2 vector 契約の参照実装として exact flat backend を追加しました。各 entry の float 配列を全件走査し、指定 metric で score を計算して top-k を返します。ANN/HNSW などの高速実装は同じ API の後段差し替え対象です。
+現在の v2 vector 契約には、参照実装として exact flat backend があります。各 entry の float 配列を全件走査し、指定 metric で score を計算して top-k を返します。このモジュール単体では、永続 vector の読み込み、query embedding、検索 runtime との接続、ANN/HNSW は提供しません。
 
 ## Metric
 
@@ -17,4 +17,4 @@ YAP_Vector_search(entries, entry_count, query, dimensions, YAP_V2_VECTOR_COSINE,
                   10, hits, 10, &hit_count);
 ```
 
-この flat backend は正確性・再現性を担保する基準実装です。大規模 index では後続タスクの ANN インデックスを導入し、metric・dimension・model ID を manifest/config と照合してから検索します。
+この flat backend は正確性・再現性を担保する基準実装です。製品として vector 検索を利用可能にするには、[現代検索基盤の完成契約](modern_search_completion_contract.md) に従って永続 vector、embedding provider、HNSW、manifest/config 検証、検索 API へ接続する必要があります。
