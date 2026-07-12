@@ -48,8 +48,8 @@ int YAP_V2_segment_id_validate(const char *value) {
   }
   for (i = 0; value[i] != '\0'; i++) {
     char c = value[i];
-    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-          c == '-' || c == '_' || c == '.')) {
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+          c == '_' || c == '.')) {
       return YAP_V2_INVALID_FORMAT;
     }
   }
@@ -58,26 +58,26 @@ int YAP_V2_segment_id_validate(const char *value) {
 
 const char *YAP_V2_status_string(YAP_V2_STATUS status) {
   switch (status) {
-    case YAP_V2_OK:
-      return "ok";
-    case YAP_V2_INVALID_ARGUMENT:
-      return "invalid argument";
-    case YAP_V2_INVALID_FORMAT:
-      return "invalid format";
-    case YAP_V2_OUT_OF_RANGE:
-      return "out of range";
-    case YAP_V2_DUPLICATE:
-      return "duplicate";
-    case YAP_V2_ALLOCATION_FAILED:
-      return "allocation failed";
-    case YAP_V2_IO_ERROR:
-      return "I/O error";
-    case YAP_V2_CHECKSUM_MISMATCH:
-      return "checksum mismatch";
-    case YAP_V2_CONFLICT:
-      return "conflict";
-    default:
-      return "unknown status";
+  case YAP_V2_OK:
+    return "ok";
+  case YAP_V2_INVALID_ARGUMENT:
+    return "invalid argument";
+  case YAP_V2_INVALID_FORMAT:
+    return "invalid format";
+  case YAP_V2_OUT_OF_RANGE:
+    return "out of range";
+  case YAP_V2_DUPLICATE:
+    return "duplicate";
+  case YAP_V2_ALLOCATION_FAILED:
+    return "allocation failed";
+  case YAP_V2_IO_ERROR:
+    return "I/O error";
+  case YAP_V2_CHECKSUM_MISMATCH:
+    return "checksum mismatch";
+  case YAP_V2_CONFLICT:
+    return "conflict";
+  default:
+    return "unknown status";
   }
 }
 
@@ -167,8 +167,7 @@ int YAP_V2_config_validate(const YAP_V2_CONFIG *config) {
   } else {
     if (config->vector_dimensions == 0U ||
         config->vector_dimensions > YAP_V2_MAX_VECTOR_DIMENSIONS ||
-        config->vector_metric < YAP_V2_VECTOR_COSINE ||
-        config->vector_metric > YAP_V2_VECTOR_L2) {
+        config->vector_metric < YAP_V2_VECTOR_COSINE || config->vector_metric > YAP_V2_VECTOR_L2) {
       return YAP_V2_OUT_OF_RANGE;
     }
   }
@@ -213,8 +212,8 @@ int YAP_V2_manifest_add_segment(YAP_V2_MANIFEST *manifest,
       return YAP_V2_DUPLICATE;
     }
   }
-  next = (YAP_V2_SEGMENT_DESCRIPTOR *)realloc(
-    manifest->segments, sizeof(*manifest->segments) * (manifest->segment_count + 1U));
+  next = (YAP_V2_SEGMENT_DESCRIPTOR *)realloc(manifest->segments, sizeof(*manifest->segments) *
+                                                                    (manifest->segment_count + 1U));
   if (next == NULL) {
     return YAP_V2_ALLOCATION_FAILED;
   }
@@ -224,9 +223,33 @@ int YAP_V2_manifest_add_segment(YAP_V2_MANIFEST *manifest,
   return YAP_V2_OK;
 }
 
+int YAP_V2_segment_descriptor_add_component(YAP_V2_SEGMENT_DESCRIPTOR *segment,
+                                            const YAP_V2_COMPONENT_DESCRIPTOR *component) {
+  size_t i;
+  size_t length;
+  if (segment == NULL || component == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  length = strnlen(component->name, sizeof(component->name));
+  if (length == 0U || length >= sizeof(component->name) || component->file_type == 0U ||
+      component->file_bytes < YAP_V2_FILE_HEADER_BYTES || strchr(component->name, '/') != NULL ||
+      strchr(component->name, '\\') != NULL) {
+    return YAP_V2_INVALID_FORMAT;
+  }
+  if (segment->component_count >= YAP_V2_MAX_COMPONENTS)
+    return YAP_V2_OUT_OF_RANGE;
+  for (i = 0U; i < segment->component_count; i++) {
+    if (strcmp(segment->components[i].name, component->name) == 0 ||
+        segment->components[i].file_type == component->file_type)
+      return YAP_V2_DUPLICATE;
+  }
+  segment->components[segment->component_count++] = *component;
+  return YAP_V2_OK;
+}
+
 int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
   size_t i;
   size_t j;
+  int fingerprint_present = 0;
 
   if (manifest == NULL) {
     return YAP_V2_INVALID_ARGUMENT;
@@ -236,10 +259,30 @@ int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
       (manifest->segment_count > 0U && manifest->segments == NULL)) {
     return YAP_V2_INVALID_FORMAT;
   }
+  for (i = 0U; i < sizeof(manifest->config_fingerprint); i++) {
+    if (manifest->config_fingerprint[i] != 0U) {
+      fingerprint_present = 1;
+      break;
+    }
+  }
+  if (!fingerprint_present)
+    return YAP_V2_INVALID_FORMAT;
   for (i = 0; i < manifest->segment_count; i++) {
     int status = YAP_V2_segment_id_validate(manifest->segments[i].id);
     if (status != YAP_V2_OK) {
       return status;
+    }
+    if (manifest->segments[i].component_count == 0U ||
+        manifest->segments[i].component_count > YAP_V2_MAX_COMPONENTS) {
+      return YAP_V2_INVALID_FORMAT;
+    }
+    for (j = 0U; j < manifest->segments[i].component_count; j++) {
+      YAP_V2_SEGMENT_DESCRIPTOR copy = manifest->segments[i];
+      YAP_V2_COMPONENT_DESCRIPTOR component = copy.components[j];
+      copy.component_count = j;
+      status = YAP_V2_segment_descriptor_add_component(&copy, &component);
+      if (status != YAP_V2_OK)
+        return status;
     }
     for (j = 0; j < i; j++) {
       if (strcmp(manifest->segments[i].id, manifest->segments[j].id) == 0) {
@@ -291,7 +334,7 @@ int YAP_V2_file_header_encode(const YAP_V2_FILE_HEADER *header,
                               unsigned char output[YAP_V2_FILE_HEADER_BYTES]) {
   if (header == NULL || output == NULL || header->format_version != YAP_V2_FORMAT_VERSION ||
       header->header_bytes != YAP_V2_FILE_HEADER_BYTES || header->file_type == 0U ||
-      header->file_type > YAP_V2_FILE_VECTORS || header->generation == 0U) {
+      header->file_type > YAP_V2_FILE_TOMBSTONES || header->generation == 0U) {
     return YAP_V2_INVALID_FORMAT;
   }
   memset(output, 0, YAP_V2_FILE_HEADER_BYTES);
@@ -310,8 +353,8 @@ int YAP_V2_file_header_encode(const YAP_V2_FILE_HEADER *header,
 
 int YAP_V2_file_header_decode(const unsigned char input[YAP_V2_FILE_HEADER_BYTES],
                               YAP_V2_FILE_HEADER *header) {
-  if (input == NULL || header == NULL || input[0] != YAP_V2_MAGIC_0 ||
-      input[1] != YAP_V2_MAGIC_1 || input[2] != YAP_V2_MAGIC_2 || input[3] != YAP_V2_MAGIC_3) {
+  if (input == NULL || header == NULL || input[0] != YAP_V2_MAGIC_0 || input[1] != YAP_V2_MAGIC_1 ||
+      input[2] != YAP_V2_MAGIC_2 || input[3] != YAP_V2_MAGIC_3) {
     return YAP_V2_INVALID_FORMAT;
   }
   header->format_version = get_u16_le(input + 4U);
@@ -322,7 +365,7 @@ int YAP_V2_file_header_decode(const unsigned char input[YAP_V2_FILE_HEADER_BYTES
   header->payload_crc32c = get_u32_le(input + 28U);
   if (header->format_version != YAP_V2_FORMAT_VERSION ||
       header->header_bytes != YAP_V2_FILE_HEADER_BYTES || header->file_type == 0U ||
-      header->file_type > YAP_V2_FILE_VECTORS || header->generation == 0U) {
+      header->file_type > YAP_V2_FILE_TOMBSTONES || header->generation == 0U) {
     return YAP_V2_INVALID_FORMAT;
   }
   return YAP_V2_OK;
