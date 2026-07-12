@@ -20,6 +20,7 @@
 #include "yappo_alloc.h"
 #include "yappo_io.h"
 #include "yappo_ngram.h"
+#include "yappo_bm25.h"
 #include "yappo_search.h"
 #include "yappo_limits.h"
 
@@ -725,7 +726,6 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   size_t posbuf_len_tmp, posbuf_cap;
   int *pos, pos_len;
   SEARCH_DOCUMENT *docs_list;
-  double base_idf;
   int max_pos_file;
   int docs_cap;
   int malformed;
@@ -737,12 +737,6 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   *ret_docs_num = 0;
   if (docs_num <= 0 || total_num <= 0 || ydfp->total_filenum == 0) {
     return NULL;
-  }
-
-  /* 全文書中の対象文書の出現率を求める */
-  base_idf = log((double)ydfp->total_filenum / (double)docs_num) + 1.0;
-  if (!(base_idf > 0.0)) {
-    base_idf = 1.0;
   }
 
   printf("get %s/%d pos start: %ld\n", key, keyword_id, (long)time(NULL));
@@ -817,9 +811,10 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
   printf("get pos end: %ld\n", (long)time(NULL));
 
   if (pos_len > 0) {
-    int size, urllen, filekeywordnum;
     int now_index;
-    double tf, idf, score;
+    double average_document_length;
+    double average_length_sum;
+    size_t average_length_count;
 
     docs_cap = pos_len / 2;
     if (docs_cap <= 0) {
@@ -830,9 +825,22 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
 
     /* ロック開始 */
     pthread_mutex_lock(&(ydfp->cache->score_mutex));
-    pthread_mutex_lock(&(ydfp->cache->size_mutex));
-    pthread_mutex_lock(&(ydfp->cache->urllen_mutex));
     pthread_mutex_lock(&(ydfp->cache->filekeywordnum_mutex));
+
+    average_length_sum = 0.0;
+    average_length_count = 0U;
+    if (ydfp->cache->filekeywordnum != NULL && ydfp->cache->filekeywordnum_num > 0) {
+      int length_index;
+      for (length_index = 0; length_index < ydfp->cache->filekeywordnum_num; length_index++) {
+        if (ydfp->cache->filekeywordnum[length_index] > 0U) {
+          average_length_sum += (double)ydfp->cache->filekeywordnum[length_index];
+          average_length_count++;
+        }
+      }
+    }
+    average_document_length = average_length_count > 0U
+                                 ? average_length_sum / (double)average_length_count
+                                 : 1.0;
 
     df = 0;
     i = 0;
@@ -904,93 +912,28 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
       i += docs_list[df].pos_len;
 
       {
-        score = 1.0;
-        size = urllen = filekeywordnum = 1;
+        unsigned int document_length = 1U;
+        double boost = 1.0;
+        double base_score = 1.0;
+
         now_index = docs_list[df].fileindex;
-
-        /* スコアファイル取得 */
-        if ((unsigned int)now_index < ydfp->cache->score_num) {
-          score = ydfp->cache->score[now_index];
+        if ((unsigned int)now_index < ydfp->cache->score_num && ydfp->cache->score != NULL) {
+          base_score = ydfp->cache->score[now_index];
         }
-
-        /* ファイルサイズ取得 */
-        if ((unsigned int)now_index < ydfp->cache->size_num) {
-          size = ydfp->cache->size[now_index];
+        if ((unsigned int)now_index < (unsigned int)ydfp->cache->filekeywordnum_num &&
+            ydfp->cache->filekeywordnum != NULL &&
+            ydfp->cache->filekeywordnum[now_index] > 0U) {
+          document_length = ydfp->cache->filekeywordnum[now_index];
         }
-
-        /* URLの長さ取得 */
-        if ((unsigned int)now_index < ydfp->cache->urllen_num) {
-          urllen = ydfp->cache->urllen[now_index];
+        if (isfinite(base_score) && base_score > 0.0) {
+          boost = log(base_score) + 1.0;
+          if (!isfinite(boost) || boost <= 0.0) {
+            boost = 1.0;
+          }
         }
-
-        /* 文書中のキーワード数の取得 */
-        if (now_index < ydfp->cache->filekeywordnum_num) {
-          filekeywordnum = ydfp->cache->filekeywordnum[now_index];
-        }
-        if (!isfinite(score) || score <= 0.0) {
-          score = 1.0;
-        }
-        if (size <= 0) {
-          size = 1;
-        }
-        if (urllen <= 0) {
-          urllen = 1;
-        }
-        if (filekeywordnum <= 0) {
-          filekeywordnum = 1;
-        }
-      }
-
-      /*
-       *スコアの計算
-       */
-      {
-        double size_norm;
-        double tf_log;
-        double urllen_norm;
-
-        tf = idf = 0.0;
-        score = log(score) + 1.0;
-        if (!isfinite(score) || score <= 0.0) {
-          score = 1.0;
-        }
-
-        /* idfを文書サイズで正規化 */
-        size_norm = log10((double)size) + 1.0;
-        if (!isfinite(size_norm) || size_norm <= 0.0) {
-          size_norm = 1.0;
-        }
-        idf = ((base_idf + 1.0) / size_norm * 100.0) + 1.0;
-        if (!isfinite(idf) || idf <= 0.0) {
-          idf = 1.0;
-        }
-        idf = score / idf * 100.0; /* スコアで正規化 */
-        if (!isfinite(idf) || idf <= 0.0) {
-          idf = 1.0;
-        }
-
-        /* 文書中のキーワード出現率 */
-        tf = ((double)docs_list[df].pos_len / (double)filekeywordnum * 100.0) + 1.0;
-        if (!isfinite(tf) || tf <= 0.0) {
-          tf = 1.0;
-        }
-        tf_log = log10(tf) + 1.0;
-        if (!isfinite(tf_log) || tf_log <= 0.0) {
-          tf_log = 1.0;
-        }
-        urllen_norm = ((double)urllen * (double)urllen);
-        if (!isfinite(urllen_norm) || urllen_norm <= 0.0) {
-          urllen_norm = 1.0;
-        }
-
-        /* スコアリング */
-        /*
-    score = score * score * score;
-  */
-        docs_list[df].score = idf * tf * tf_log * score / urllen_norm;
-        if (!isfinite(docs_list[df].score) || docs_list[df].score < 0.0) {
-          docs_list[df].score = 0.0;
-        }
+        docs_list[df].score = YAP_BM25_score((size_t)docs_list[df].pos_len, (size_t)docs_num,
+                                             (size_t)ydfp->total_filenum, document_length,
+                                             average_document_length, boost);
       }
 
       df++;
@@ -998,8 +941,6 @@ SEARCH_DOCUMENT *YAP_Search_position_get(YAPPO_DB_FILES *ydfp, unsigned char *ke
 
     /* ロック解除 */
     pthread_mutex_unlock(&(ydfp->cache->score_mutex));
-    pthread_mutex_unlock(&(ydfp->cache->size_mutex));
-    pthread_mutex_unlock(&(ydfp->cache->urllen_mutex));
     pthread_mutex_unlock(&(ydfp->cache->filekeywordnum_mutex));
 
     free(pos);
