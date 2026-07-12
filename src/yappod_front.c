@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
@@ -26,6 +27,7 @@
 #include "yappo_index_filedata.h"
 #include "yappo_linklist.h"
 #include "yappo_proto.h"
+#include "yappo_search_api.h"
 
 #define BUF_SIZE 1024
 #define MAX_HTTP_LINE_SIZE (16 * 1024)
@@ -290,6 +292,180 @@ void search_result_print(YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *p, i
   YAP_flush_or_log(socket);
 }
 
+static int YAP_hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static int YAP_copy_query_value(const char *value, size_t value_len, char *out, size_t out_size) {
+  size_t i;
+  size_t out_len = 0U;
+
+  if (value == NULL || out == NULL || out_size == 0U) return -1;
+  for (i = 0U; i < value_len; i++) {
+    unsigned char c = (unsigned char)value[i];
+    if (c == '%') {
+      int hi, lo;
+      if (i + 2U >= value_len || (hi = YAP_hex_digit(value[i + 1U])) < 0 ||
+          (lo = YAP_hex_digit(value[i + 2U])) < 0 || (hi == 0 && lo == 0)) {
+        return -1;
+      }
+      c = (unsigned char)((hi << 4) | lo);
+      i += 2U;
+    }
+    if (c < 0x20U || c == 0x7fU) return -1;
+    if (out_len + 1U >= out_size) return -1;
+    out[out_len++] = (char)c;
+  }
+  if (out_len == 0U) return -1;
+  out[out_len] = '\0';
+  return 0;
+}
+
+static int YAP_parse_positive_int(const char *value, size_t value_len, int *out) {
+  char buf[64];
+  char *endptr;
+  long parsed;
+
+  if (value_len == 0U || value_len >= sizeof(buf) || out == NULL) return -1;
+  memcpy(buf, value, value_len);
+  buf[value_len] = '\0';
+  errno = 0;
+  parsed = strtol(buf, &endptr, 10);
+  if (errno != 0 || endptr == buf || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX) return -1;
+  *out = (int)parsed;
+  return 0;
+}
+
+static int YAP_parse_v2_request_line(const char *line, char *dict, int *max_size, char *op,
+                                     char *keyword, size_t *limit_out, char *cursor) {
+  char method[16], target[BUF_SIZE], version[32];
+  const char *query, *part;
+  int have_dict = 0, have_op = 0, have_query = 0, have_max_size = 0, have_limit = 0,
+      have_cursor = 0;
+  int parsed_max_size = INT_MAX;
+  size_t parsed_limit = YAP_SEARCH_API_DEFAULT_LIMIT;
+
+  if (line == NULL || dict == NULL || max_size == NULL || op == NULL || keyword == NULL ||
+      limit_out == NULL || cursor == NULL || sscanf(line, "%15s %1023s %31s", method, target,
+                                                       version) != 3 ||
+      strcmp(method, "GET") != 0 || strncmp(version, "HTTP/", 5) != 0) {
+    return -1;
+  }
+  if (strncmp(target, "/v2/search?", 11) != 0 || target[11] == '\0') return -1;
+  query = target + 11;
+  dict[0] = op[0] = keyword[0] = cursor[0] = '\0';
+
+  for (part = query; part != NULL && *part != '\0';) {
+    const char *next = strchr(part, '&');
+    const char *equals = memchr(part, '=', next == NULL ? strlen(part) : (size_t)(next - part));
+    size_t segment_len = next == NULL ? strlen(part) : (size_t)(next - part);
+    size_t key_len;
+    const char *value;
+    size_t value_len;
+    if (equals == NULL || equals >= part + segment_len) return -1;
+    key_len = (size_t)(equals - part);
+    value = equals + 1;
+    value_len = segment_len - key_len - 1U;
+    if (key_len == 0U || value_len == 0U) return -1;
+    if (key_len == 4U && strncmp(part, "dict", 4U) == 0) {
+      if (have_dict || YAP_copy_query_value(value, value_len, dict, BUF_SIZE) != 0) return -1;
+      have_dict = 1;
+    } else if (key_len == 2U && strncmp(part, "op", 2U) == 0) {
+      if (have_op || YAP_copy_query_value(value, value_len, op, BUF_SIZE) != 0 ||
+          (strcmp(op, "AND") != 0 && strcmp(op, "OR") != 0)) return -1;
+      have_op = 1;
+    } else if (key_len == 1U && part[0] == 'q') {
+      if (have_query || YAP_copy_query_value(value, value_len, keyword, BUF_SIZE) != 0) return -1;
+      have_query = 1;
+    } else if (key_len == 8U && strncmp(part, "max_size", 8U) == 0) {
+      if (have_max_size || YAP_parse_positive_int(value, value_len, &parsed_max_size) != 0)
+        return -1;
+      have_max_size = 1;
+    } else if (key_len == 5U && strncmp(part, "limit", 5U) == 0) {
+      int parsed;
+      if (have_limit || YAP_parse_positive_int(value, value_len, &parsed) != 0 ||
+          parsed > YAP_SEARCH_API_MAX_LIMIT) return -1;
+      parsed_limit = (size_t)parsed;
+      have_limit = 1;
+    } else if (key_len == 6U && strncmp(part, "cursor", 6U) == 0) {
+      if (have_cursor || YAP_copy_query_value(value, value_len, cursor, BUF_SIZE) != 0) return -1;
+      have_cursor = 1;
+    } else {
+      return -1;
+    }
+    part = next == NULL ? NULL : next + 1;
+    if (part != NULL && *part == '\0') return -1;
+  }
+  if (!have_dict || !have_op || !have_query) return -1;
+  *max_size = parsed_max_size;
+  *limit_out = parsed_limit;
+  return 0;
+}
+
+static int YAP_search_result_print_json(YAPPO_DB_FILES *ydfp, FILE *socket, SEARCH_RESULT *result,
+                                        size_t limit, const char *cursor) {
+  YAP_SEARCH_API_DOCUMENT documents[YAP_SEARCH_API_MAX_LIMIT];
+  char *urls[YAP_SEARCH_API_MAX_LIMIT];
+  char *titles[YAP_SEARCH_API_MAX_LIMIT];
+  size_t total = result == NULL ? 0U : (size_t)result->keyword_docs_num;
+  size_t start, end, i, count;
+
+  memset(urls, 0, sizeof(urls));
+  memset(titles, 0, sizeof(titles));
+  if (YAP_Search_api_page(total, limit, cursor, &start, &end) != 0) {
+    return -1;
+  }
+  count = end - start;
+  for (i = 0U; i < count; i++) {
+    FILEDATA filedata;
+    const char *url = "";
+    const char *title = "";
+    memset(&filedata, 0, sizeof(filedata));
+    if (YAP_Index_Filedata_get(ydfp, result->docs_list[start + i].fileindex, &filedata) == 0) {
+      url = filedata.url == NULL ? "" : filedata.url;
+      title = filedata.title == NULL ? url : filedata.title;
+      documents[i].size = filedata.size;
+      documents[i].lastmod = (long)filedata.lastmod;
+    } else {
+      documents[i].size = 0;
+      documents[i].lastmod = 0L;
+    }
+    urls[i] = (char *)YAP_malloc(strlen(url) + 1U);
+    titles[i] = (char *)YAP_malloc(strlen(title) + 1U);
+    memcpy(urls[i], url, strlen(url) + 1U);
+    memcpy(titles[i], title, strlen(title) + 1U);
+    documents[i].url = urls[i];
+    documents[i].title = titles[i];
+    documents[i].score = result->docs_list[start + i].score;
+    YAP_Index_Filedata_free(&filedata);
+  }
+  if (YAP_writef(socket,
+                 "HTTP/1.0 200 OK\r\nServer: Yappo Search/2.0\r\n"
+                 "Content-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\n\r\n") != 0) {
+    for (i = 0U; i < count; i++) {
+      free(urls[i]);
+      free(titles[i]);
+    }
+    return -1;
+  }
+  if (YAP_Search_api_write_json(socket, total, start, end, limit, documents) != 0 ||
+      YAP_flush_or_log(socket) != 0) {
+    for (i = 0U; i < count; i++) {
+      free(urls[i]);
+      free(titles[i]);
+    }
+    return -1;
+  }
+  for (i = 0U; i < count; i++) {
+    free(urls[i]);
+    free(titles[i]);
+  }
+  return 0;
+}
+
 /*
  *ファイルポインタから一行分読み込みメモリを割り当てて返す
  */
@@ -472,11 +648,14 @@ void *thread_server(void *ip) {
     int accept_socket = -1;
     int read_rc;
     int header_rc;
+    int is_json_request = 0;
     char *line = NULL;
     FILE *socket = NULL;
     char *dict, *op, *keyword; /* リクエスト */
+    char *cursor;
     int max_size;
     int start, end;
+    size_t api_limit = YAP_SEARCH_API_DEFAULT_LIMIT;
 
     if (g_shutdown_requested) {
       break;
@@ -504,16 +683,23 @@ void *thread_server(void *ip) {
     dict = (char *)YAP_malloc(BUF_SIZE);
     op = (char *)YAP_malloc(BUF_SIZE);
     keyword = (char *)YAP_malloc(BUF_SIZE);
+    cursor = (char *)YAP_malloc(BUF_SIZE);
     dict[0] = '\0';
     op[0] = '\0';
     keyword[0] = '\0';
+    cursor[0] = '\0';
 
-    if (YAP_parse_request_line(line, dict, &max_size, op, &start, &end, keyword) != 0) {
+    if (YAP_parse_v2_request_line(line, dict, &max_size, op, keyword, &api_limit, cursor) == 0) {
+      is_json_request = 1;
+      start = 0;
+      end = 0;
+    } else if (YAP_parse_request_line(line, dict, &max_size, op, &start, &end, keyword) != 0) {
       YAP_send_bad_request(accept_socket, p->id);
       printf("bad:%d:\n", p->id);
       free(dict);
       free(op);
       free(keyword);
+      free(cursor);
       free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
@@ -527,6 +713,7 @@ void *thread_server(void *ip) {
       free(dict);
       free(op);
       free(keyword);
+      free(cursor);
       free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
@@ -542,6 +729,7 @@ void *thread_server(void *ip) {
       free(dict);
       free(op);
       free(keyword);
+      free(cursor);
       free(line);
       YAP_Net_close_stream(&socket, &accept_socket);
       continue;
@@ -602,7 +790,13 @@ void *thread_server(void *ip) {
     /* スコア順ソート */
     YAP_Search_result_sort_score(result);
     /* 結果出力 */
-    search_result_print(&yappo_db_files, socket, result, start, end);
+    if (is_json_request) {
+      if (YAP_search_result_print_json(&yappo_db_files, socket, result, api_limit, cursor) != 0) {
+        YAP_send_bad_request(accept_socket, p->id);
+      }
+    } else {
+      search_result_print(&yappo_db_files, socket, result, start, end);
+    }
 
     if (result != NULL) {
       printf("hit %d\n", result->keyword_docs_num);
@@ -616,6 +810,7 @@ void *thread_server(void *ip) {
     free(dict);
     free(op);
     free(keyword);
+    free(cursor);
     free(line);
 
     fflush(stdout);

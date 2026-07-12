@@ -112,9 +112,40 @@ static void test_front_http_errors(void **state) {
   }
 }
 
+static void test_front_json_search_api(void **state) {
+  ctx_t *ctx = (ctx_t *)(*state);
+  char *response = NULL;
+
+  assert_int_equal(ytest_http_send_text(
+                     ctx->stack.front_port,
+                     "GET /v2/search?dict=yappo&op=AND&q=OpenAI2025&limit=1 HTTP/1.1\r\n"
+                     "Host: localhost\r\n\r\n",
+                     &response),
+                   0);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "Content-Type: application/json"));
+  assert_non_null(strstr(response, "\"api_version\":2"));
+  assert_non_null(strstr(response, "\"total\":1"));
+  assert_non_null(strstr(response, "http://example.com/doc1"));
+  assert_non_null(strstr(response, "\"next_cursor\":null"));
+  free(response);
+
+  assert_int_equal(ytest_http_send_text(
+                     ctx->stack.front_port,
+                     "GET /v2/search?dict=yappo&op=AND&q=OpenAI2025&cursor=v1.2 HTTP/1.1\r\n"
+                     "Host: localhost\r\n\r\n",
+                     &response),
+                   0);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "400 Bad Request"));
+  free(response);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test_setup_teardown(test_front_http_errors, setup, teardown),
+    cmocka_unit_test_setup_teardown(test_front_json_search_api, setup, teardown),
   };
 
   return cmocka_run_group_tests(tests, NULL, NULL);
