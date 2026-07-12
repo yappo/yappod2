@@ -1,6 +1,7 @@
 #include "yappo_index_v2.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -138,7 +139,7 @@ static int buffer_append_bytes_view(YAP_V2_BUFFER *buffer, YAP_V2_BYTES_VIEW val
 }
 
 static int validate_segment_views(const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
-                                 const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count) {
+                                  const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count) {
   size_t i;
   size_t j;
 
@@ -229,8 +230,7 @@ static void sha256_transform(YAP_V2_SHA256 *ctx, const unsigned char block[64]) 
     UINT32_C(0x19a4c116), UINT32_C(0x1e376c08), UINT32_C(0x2748774c), UINT32_C(0x34b0bcb5),
     UINT32_C(0x391c0cb3), UINT32_C(0x4ed8aa4a), UINT32_C(0x5b9cca4f), UINT32_C(0x682e6ff3),
     UINT32_C(0x748f82ee), UINT32_C(0x78a5636f), UINT32_C(0x84c87814), UINT32_C(0x8cc70208),
-    UINT32_C(0x90befffa), UINT32_C(0xa4506ceb), UINT32_C(0xbef9a3f7), UINT32_C(0xc67178f2)
-  };
+    UINT32_C(0x90befffa), UINT32_C(0xa4506ceb), UINT32_C(0xbef9a3f7), UINT32_C(0xc67178f2)};
   uint32_t words[64];
   uint32_t a, b, c, d, e, f, g, h;
   uint32_t t1, t2;
@@ -241,10 +241,10 @@ static void sha256_transform(YAP_V2_SHA256 *ctx, const unsigned char block[64]) 
                ((uint32_t)block[i * 4U + 2U] << 8) | (uint32_t)block[i * 4U + 3U];
   }
   for (i = 16U; i < 64U; i++) {
-    uint32_t s0 = sha256_rotr(words[i - 15U], 7U) ^ sha256_rotr(words[i - 15U], 18U) ^
-                  (words[i - 15U] >> 3);
-    uint32_t s1 = sha256_rotr(words[i - 2U], 17U) ^ sha256_rotr(words[i - 2U], 19U) ^
-                  (words[i - 2U] >> 10);
+    uint32_t s0 =
+      sha256_rotr(words[i - 15U], 7U) ^ sha256_rotr(words[i - 15U], 18U) ^ (words[i - 15U] >> 3);
+    uint32_t s1 =
+      sha256_rotr(words[i - 2U], 17U) ^ sha256_rotr(words[i - 2U], 19U) ^ (words[i - 2U] >> 10);
     words[i] = words[i - 16U] + s0 + words[i - 7U] + s1;
   }
 
@@ -285,8 +285,7 @@ static void sha256_transform(YAP_V2_SHA256 *ctx, const unsigned char block[64]) 
 static void sha256_init(YAP_V2_SHA256 *ctx) {
   static const uint32_t initial_state[8] = {
     UINT32_C(0x6a09e667), UINT32_C(0xbb67ae85), UINT32_C(0x3c6ef372), UINT32_C(0xa54ff53a),
-    UINT32_C(0x510e527f), UINT32_C(0x9b05688c), UINT32_C(0x1f83d9ab), UINT32_C(0x5be0cd19)
-  };
+    UINT32_C(0x510e527f), UINT32_C(0x9b05688c), UINT32_C(0x1f83d9ab), UINT32_C(0x5be0cd19)};
 
   memcpy(ctx->state, initial_state, sizeof(initial_state));
   ctx->bit_length = 0U;
@@ -342,6 +341,103 @@ static void sha256_digest(const unsigned char *data, size_t len, unsigned char d
   sha256_init(&ctx);
   sha256_update(&ctx, data, len);
   sha256_final(&ctx, digest);
+}
+
+static int write_atomic(const char *path, const unsigned char *data, size_t len);
+
+int YAP_V2_file_sha256(const char *path, unsigned char digest[32], uint64_t *file_bytes_out) {
+  FILE *file;
+  unsigned char buffer[65536];
+  size_t count;
+  uint64_t total = 0U;
+  YAP_V2_SHA256 sha;
+  if (path == NULL || digest == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  file = fopen(path, "rb");
+  if (file == NULL)
+    return YAP_V2_IO_ERROR;
+  sha256_init(&sha);
+  while ((count = fread(buffer, 1U, sizeof(buffer), file)) > 0U) {
+    if (total > UINT64_MAX - count) {
+      fclose(file);
+      return YAP_V2_OUT_OF_RANGE;
+    }
+    sha256_update(&sha, buffer, count);
+    total += count;
+  }
+  if (ferror(file) || fclose(file) != 0)
+    return YAP_V2_IO_ERROR;
+  sha256_final(&sha, digest);
+  if (file_bytes_out != NULL)
+    *file_bytes_out = total;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_tombstones_write(const char *path, uint64_t generation,
+                            const YAP_V2_BYTES_VIEW *document_ids, size_t document_count,
+                            YAP_V2_COMPONENT_DESCRIPTOR *component) {
+  YAP_V2_BUFFER payload = {0};
+  YAP_V2_FILE_HEADER header;
+  unsigned char encoded_header[YAP_V2_FILE_HEADER_BYTES];
+  unsigned char *file_data = NULL;
+  size_t file_size, i, j;
+  int status;
+  if (path == NULL || generation == 0U || component == NULL ||
+      (document_count > 0U && document_ids == NULL))
+    return YAP_V2_INVALID_ARGUMENT;
+  status = buffer_append_u32(&payload, UINT32_C(1));
+  if (status == YAP_V2_OK)
+    status = buffer_append_u64(&payload, document_count);
+  for (i = 0U; status == YAP_V2_OK && i < document_count; i++) {
+    if (document_ids[i].data == NULL || document_ids[i].len == 0U ||
+        document_ids[i].len > YAP_V2_MAX_IDENTIFIER_BYTES) {
+      status = YAP_V2_INVALID_FORMAT;
+      break;
+    }
+    for (j = 0U; j < i; j++)
+      if (bytes_equal(document_ids[i], document_ids[j])) {
+        status = YAP_V2_DUPLICATE;
+        break;
+      }
+    if (status == YAP_V2_OK)
+      status = buffer_append_bytes_view(&payload, document_ids[i]);
+  }
+  if (status != YAP_V2_OK) {
+    buffer_free(&payload);
+    return status;
+  }
+  memset(&header, 0, sizeof(header));
+  header.format_version = YAP_V2_FORMAT_VERSION;
+  header.header_bytes = YAP_V2_FILE_HEADER_BYTES;
+  header.file_type = YAP_V2_FILE_TOMBSTONES;
+  header.generation = generation;
+  header.payload_bytes = payload.len;
+  header.payload_crc32c = crc32c(payload.data, payload.len);
+  status = YAP_V2_file_header_encode(&header, encoded_header);
+  if (status != YAP_V2_OK || payload.len > SIZE_MAX - YAP_V2_FILE_HEADER_BYTES) {
+    buffer_free(&payload);
+    return status != YAP_V2_OK ? status : YAP_V2_OUT_OF_RANGE;
+  }
+  file_size = YAP_V2_FILE_HEADER_BYTES + payload.len;
+  file_data = (unsigned char *)malloc(file_size);
+  if (file_data == NULL) {
+    buffer_free(&payload);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  memcpy(file_data, encoded_header, sizeof(encoded_header));
+  memcpy(file_data + sizeof(encoded_header), payload.data, payload.len);
+  status = write_atomic(path, file_data, file_size);
+  if (status == YAP_V2_OK) {
+    memset(component, 0, sizeof(*component));
+    strcpy(component->name, "tombstones.yap2");
+    component->file_type = YAP_V2_FILE_TOMBSTONES;
+    component->record_count = document_count;
+    component->file_bytes = file_size;
+    sha256_digest(file_data, file_size, component->checksum);
+  }
+  free(file_data);
+  buffer_free(&payload);
+  return status;
 }
 
 static int append_document_record(YAP_V2_BUFFER *payload, const YAP_V2_DOCUMENT_VIEW *document) {
@@ -467,6 +563,37 @@ static int write_atomic(const char *path, const unsigned char *data, size_t len)
     free(temporary_path);
     return YAP_V2_IO_ERROR;
   }
+  {
+    char *parent = strdup(path);
+    char *slash;
+    int parent_fd;
+
+    if (parent == NULL) {
+      free(temporary_path);
+      return YAP_V2_ALLOCATION_FAILED;
+    }
+    slash = strrchr(parent, '/');
+    if (slash == NULL) {
+      strcpy(parent, ".");
+    } else if (slash == parent) {
+      slash[1] = '\0';
+    } else {
+      *slash = '\0';
+    }
+    parent_fd = open(parent, O_RDONLY);
+    free(parent);
+    if (parent_fd < 0 || fsync(parent_fd) != 0) {
+      if (parent_fd >= 0) {
+        close(parent_fd);
+      }
+      free(temporary_path);
+      return YAP_V2_IO_ERROR;
+    }
+    if (close(parent_fd) != 0) {
+      free(temporary_path);
+      return YAP_V2_IO_ERROR;
+    }
+  }
   free(temporary_path);
   return YAP_V2_OK;
 }
@@ -564,12 +691,20 @@ int YAP_V2_segment_write(const char *path, const char *segment_id, uint64_t gene
   sha256_digest(file_bytes, file_size, checksum);
   status = write_atomic(path, file_bytes, file_size);
   if (status == YAP_V2_OK) {
+    YAP_V2_COMPONENT_DESCRIPTOR component;
     memset(descriptor, 0, sizeof(*descriptor));
     memcpy(descriptor->id, segment_id, id_len + 1U);
     descriptor->document_count = (uint64_t)document_count;
     descriptor->passage_count = (uint64_t)passage_count;
     descriptor->file_bytes = (uint64_t)file_size;
     memcpy(descriptor->checksum, checksum, sizeof(checksum));
+    memset(&component, 0, sizeof(component));
+    (void)strcpy(component.name, "documents.yap2");
+    component.file_type = YAP_V2_FILE_DOCUMENTS;
+    component.record_count = (uint64_t)document_count + (uint64_t)passage_count;
+    component.file_bytes = (uint64_t)file_size;
+    memcpy(component.checksum, checksum, sizeof(checksum));
+    status = YAP_V2_segment_descriptor_add_component(descriptor, &component);
   }
   free(file_bytes);
   buffer_free(&payload);
@@ -625,8 +760,8 @@ static int read_file(const char *path, unsigned char **data_out, size_t *size_ou
     return YAP_V2_IO_ERROR;
   }
   file_size = ftell(fp);
-  if (file_size < 0 || (uint64_t)file_size >
-                         (uint64_t)YAP_V2_FILE_HEADER_BYTES + YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) {
+  if (file_size < 0 ||
+      (uint64_t)file_size > (uint64_t)YAP_V2_FILE_HEADER_BYTES + YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) {
     fclose(fp);
     return file_size < 0 ? YAP_V2_IO_ERROR : YAP_V2_OUT_OF_RANGE;
   }
@@ -653,8 +788,105 @@ static int read_file(const char *path, unsigned char **data_out, size_t *size_ou
   return YAP_V2_OK;
 }
 
-int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
-                        YAP_V2_SEGMENT *segment, YAP_V2_SEGMENT_DESCRIPTOR *descriptor) {
+void YAP_V2_tombstones_init(YAP_V2_TOMBSTONES *tombstones) {
+  if (tombstones != NULL) {
+    memset(tombstones, 0, sizeof(*tombstones));
+  }
+}
+
+void YAP_V2_tombstones_free(YAP_V2_TOMBSTONES *tombstones) {
+  if (tombstones == NULL) {
+    return;
+  }
+  free(tombstones->document_ids);
+  free(tombstones->storage);
+  YAP_V2_tombstones_init(tombstones);
+}
+
+int YAP_V2_tombstones_read(const char *path, uint64_t expected_generation,
+                           YAP_V2_TOMBSTONES *tombstones) {
+  unsigned char *file_bytes = NULL;
+  size_t file_size = 0U;
+  YAP_V2_FILE_HEADER header;
+  uint32_t payload_version;
+  uint64_t count_u64;
+  size_t offset;
+  size_t i;
+  size_t j;
+  int status;
+
+  if (path == NULL || tombstones == NULL) {
+    return YAP_V2_INVALID_ARGUMENT;
+  }
+  YAP_V2_tombstones_free(tombstones);
+  status = read_file(path, &file_bytes, &file_size);
+  if (status != YAP_V2_OK) {
+    return status;
+  }
+  if (file_size < YAP_V2_FILE_HEADER_BYTES) {
+    free(file_bytes);
+    return YAP_V2_INVALID_FORMAT;
+  }
+  status = YAP_V2_file_header_decode(file_bytes, &header);
+  if (status != YAP_V2_OK || header.file_type != YAP_V2_FILE_TOMBSTONES ||
+      header.payload_bytes != (uint64_t)(file_size - YAP_V2_FILE_HEADER_BYTES) ||
+      (expected_generation != 0U && header.generation != expected_generation)) {
+    free(file_bytes);
+    return YAP_V2_INVALID_FORMAT;
+  }
+  if (crc32c(file_bytes + YAP_V2_FILE_HEADER_BYTES, file_size - YAP_V2_FILE_HEADER_BYTES) !=
+      header.payload_crc32c) {
+    free(file_bytes);
+    return YAP_V2_CHECKSUM_MISMATCH;
+  }
+
+  offset = YAP_V2_FILE_HEADER_BYTES;
+  status = read_u32(file_bytes, file_size, &offset, &payload_version);
+  if (status == YAP_V2_OK) {
+    status = read_u64(file_bytes, file_size, &offset, &count_u64);
+  }
+  if (status != YAP_V2_OK || payload_version != UINT32_C(1) ||
+      count_u64 > YAP_V2_MAX_SEGMENT_DOCUMENTS || count_u64 > SIZE_MAX) {
+    free(file_bytes);
+    return status != YAP_V2_OK ? status : YAP_V2_INVALID_FORMAT;
+  }
+  if (count_u64 > 0U) {
+    tombstones->document_ids =
+      (YAP_V2_BYTES_VIEW *)calloc((size_t)count_u64, sizeof(*tombstones->document_ids));
+    if (tombstones->document_ids == NULL) {
+      free(file_bytes);
+      return YAP_V2_ALLOCATION_FAILED;
+    }
+  }
+  for (i = 0U; i < (size_t)count_u64; i++) {
+    status = read_bytes_view(file_bytes, file_size, &offset, &tombstones->document_ids[i]);
+    if (status != YAP_V2_OK || tombstones->document_ids[i].len == 0U ||
+        tombstones->document_ids[i].len > YAP_V2_MAX_IDENTIFIER_BYTES) {
+      YAP_V2_tombstones_free(tombstones);
+      free(file_bytes);
+      return status != YAP_V2_OK ? status : YAP_V2_INVALID_FORMAT;
+    }
+    for (j = 0U; j < i; j++) {
+      if (bytes_equal(tombstones->document_ids[i], tombstones->document_ids[j])) {
+        YAP_V2_tombstones_free(tombstones);
+        free(file_bytes);
+        return YAP_V2_DUPLICATE;
+      }
+    }
+  }
+  if (offset != file_size) {
+    YAP_V2_tombstones_free(tombstones);
+    free(file_bytes);
+    return YAP_V2_INVALID_FORMAT;
+  }
+  tombstones->count = (size_t)count_u64;
+  tombstones->storage = file_bytes;
+  tombstones->storage_bytes = file_size;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_segment_read(const char *path, uint64_t expected_generation, YAP_V2_SEGMENT *segment,
+                        YAP_V2_SEGMENT_DESCRIPTOR *descriptor) {
   unsigned char *file_bytes = NULL;
   size_t file_size = 0U;
   YAP_V2_FILE_HEADER header;
@@ -745,7 +977,8 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
   document_count = (size_t)document_count_u64;
   passage_count = (size_t)passage_count_u64;
   if (document_count > 0U) {
-    segment->documents = (YAP_V2_DOCUMENT_VIEW *)calloc(document_count, sizeof(*segment->documents));
+    segment->documents =
+      (YAP_V2_DOCUMENT_VIEW *)calloc(document_count, sizeof(*segment->documents));
     if (segment->documents == NULL) {
       YAP_V2_segment_free(segment);
       return YAP_V2_ALLOCATION_FAILED;
@@ -779,10 +1012,12 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
         status = read_bytes_view(segment->storage, record_end, &offset, &segment->documents[i].url);
       }
       if (status == YAP_V2_OK) {
-        status = read_bytes_view(segment->storage, record_end, &offset, &segment->documents[i].title);
+        status =
+          read_bytes_view(segment->storage, record_end, &offset, &segment->documents[i].title);
       }
       if (status == YAP_V2_OK) {
-        status = read_bytes_view(segment->storage, record_end, &offset, &segment->documents[i].body);
+        status =
+          read_bytes_view(segment->storage, record_end, &offset, &segment->documents[i].body);
       }
       if (status == YAP_V2_OK) {
         status = read_bytes_view(segment->storage, record_end, &offset,
@@ -798,7 +1033,8 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
       }
     } else if (i >= document_count && record_type == YAP_V2_SEGMENT_RECORD_PASSAGE) {
       size_t passage_index = i - document_count;
-      status = read_bytes_view(segment->storage, record_end, &offset, &segment->passages[passage_index].id);
+      status = read_bytes_view(segment->storage, record_end, &offset,
+                               &segment->passages[passage_index].id);
       if (status == YAP_V2_OK) {
         status = read_bytes_view(segment->storage, record_end, &offset,
                                  &segment->passages[passage_index].parent_document_id);
@@ -808,13 +1044,16 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
                                  &segment->passages[passage_index].text);
       }
       if (status == YAP_V2_OK) {
-        status = read_u32(segment->storage, record_end, &offset, &segment->passages[passage_index].ordinal);
+        status = read_u32(segment->storage, record_end, &offset,
+                          &segment->passages[passage_index].ordinal);
       }
       if (status == YAP_V2_OK) {
-        status = read_u32(segment->storage, record_end, &offset, &segment->passages[passage_index].start_char);
+        status = read_u32(segment->storage, record_end, &offset,
+                          &segment->passages[passage_index].start_char);
       }
       if (status == YAP_V2_OK) {
-        status = read_u32(segment->storage, record_end, &offset, &segment->passages[passage_index].end_char);
+        status = read_u32(segment->storage, record_end, &offset,
+                          &segment->passages[passage_index].end_char);
       }
     } else {
       status = YAP_V2_INVALID_FORMAT;
@@ -826,8 +1065,8 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
     offset = record_end;
   }
   if (offset != segment->storage_bytes ||
-      validate_segment_views(segment->documents, document_count, segment->passages, passage_count) !=
-        YAP_V2_OK) {
+      validate_segment_views(segment->documents, document_count, segment->passages,
+                             passage_count) != YAP_V2_OK) {
     YAP_V2_segment_free(segment);
     return YAP_V2_INVALID_FORMAT;
   }

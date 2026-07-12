@@ -115,6 +115,8 @@ static void test_config_rejects_unterminated_identifier(void **state) {
 static void test_manifest_owns_segments_and_rejects_duplicates(void **state) {
   YAP_V2_MANIFEST manifest;
   YAP_V2_SEGMENT_DESCRIPTOR segment;
+  YAP_V2_COMPONENT_DESCRIPTOR component;
+  size_t i;
   (void)state;
 
   YAP_V2_manifest_init(&manifest);
@@ -122,6 +124,14 @@ static void test_manifest_owns_segments_and_rejects_duplicates(void **state) {
   strcpy(segment.id, "seg-000001");
   segment.document_count = 10U;
   segment.passage_count = 20U;
+  memset(&component, 0, sizeof(component));
+  strcpy(component.name, "documents.yap2");
+  component.file_type = YAP_V2_FILE_DOCUMENTS;
+  component.file_bytes = YAP_V2_FILE_HEADER_BYTES;
+  assert_int_equal(YAP_V2_segment_descriptor_add_component(&segment, &component), YAP_V2_OK);
+  for (i = 0U; i < sizeof(manifest.config_fingerprint); i++) {
+    manifest.config_fingerprint[i] = (unsigned char)(i + 1U);
+  }
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_DUPLICATE);
   assert_int_equal(YAP_V2_manifest_validate(&manifest), YAP_V2_OK);
