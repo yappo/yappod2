@@ -74,6 +74,8 @@ const char *YAP_V2_status_string(YAP_V2_STATUS status) {
       return "I/O error";
     case YAP_V2_CHECKSUM_MISMATCH:
       return "checksum mismatch";
+    case YAP_V2_CONFLICT:
+      return "conflict";
     default:
       return "unknown status";
   }

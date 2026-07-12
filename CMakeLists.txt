@@ -48,6 +48,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_index_deletefile.c
   ${SRC_DIR}/yappo_index_v2.c
   ${SRC_DIR}/yappo_segment_v2.c
+  ${SRC_DIR}/yappo_manifest_v2.c
 )
 
 set(YAPPO_SEARCH_SOURCES
@@ -287,6 +288,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/bm25_score_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_bm25.c
+  )
+  add_yappod_cmocka_test(
+    manifest_v2_nrt
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/manifest_v2_nrt_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_manifest_v2.c
   )
 
   add_yappod_cmocka_test(
