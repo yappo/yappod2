@@ -20,7 +20,7 @@ static YAP_V2_BYTES_VIEW bytes(const char *value) {
 
 static void test_writer_is_deterministic_and_describes_components(void **state) {
   ytest_env_t env;
-  YAP_V2_DOCUMENT_VIEW documents[2] = {{0}};
+  YAP_V2_DOCUMENT_VIEW documents[2];
   YAP_V2_PASSAGE_VIEW passage = {0};
   YAP_V2_COMPONENT_DESCRIPTOR first[3];
   YAP_V2_COMPONENT_DESCRIPTOR second[3];
@@ -35,6 +35,7 @@ static void test_writer_is_deterministic_and_describes_components(void **state) 
   assert_int_equal(ytest_path_join(second_dir, sizeof(second_dir), env.tmp_root, "second"), 0);
   assert_int_equal(ytest_mkdir_p(first_dir, 0700), 0);
   assert_int_equal(ytest_mkdir_p(second_dir, 0700), 0);
+  memset(documents, 0, sizeof(documents));
   documents[0].id = bytes("doc-1");
   documents[0].title = bytes("Search Search");
   documents[0].body = bytes("Modern retrieval engine");
