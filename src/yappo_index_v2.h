@@ -17,6 +17,9 @@
 #define YAP_V2_MAX_SEGMENTS 100000U
 #define YAP_V2_MAX_VECTOR_DIMENSIONS 65536U
 #define YAP_V2_MAX_CHUNK_CHARS (1024U * 1024U)
+#define YAP_V2_MAX_SEGMENT_DOCUMENTS 1000000U
+#define YAP_V2_MAX_SEGMENT_PASSAGES 4000000U
+#define YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES (256U * 1024U * 1024U)
 
 typedef enum {
   YAP_V2_OK = 0,
@@ -24,7 +27,9 @@ typedef enum {
   YAP_V2_INVALID_FORMAT = -2,
   YAP_V2_OUT_OF_RANGE = -3,
   YAP_V2_DUPLICATE = -4,
-  YAP_V2_ALLOCATION_FAILED = -5
+  YAP_V2_ALLOCATION_FAILED = -5,
+  YAP_V2_IO_ERROR = -6,
+  YAP_V2_CHECKSUM_MISMATCH = -7
 } YAP_V2_STATUS;
 
 typedef enum {
@@ -101,7 +106,20 @@ typedef struct {
   uint32_t payload_crc32c;
 } YAP_V2_FILE_HEADER;
 
+typedef struct {
+  char id[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
+  uint64_t generation;
+  YAP_V2_DOCUMENT_VIEW *documents;
+  size_t document_count;
+  YAP_V2_PASSAGE_VIEW *passages;
+  size_t passage_count;
+  unsigned char *storage;
+  size_t storage_bytes;
+} YAP_V2_SEGMENT;
+
 const char *YAP_V2_status_string(YAP_V2_STATUS status);
+
+int YAP_V2_segment_id_validate(const char *value);
 
 int YAP_V2_document_validate(const YAP_V2_DOCUMENT_VIEW *document);
 int YAP_V2_passage_validate(const YAP_V2_PASSAGE_VIEW *passage);
@@ -117,5 +135,15 @@ int YAP_V2_file_header_encode(const YAP_V2_FILE_HEADER *header,
                               unsigned char output[YAP_V2_FILE_HEADER_BYTES]);
 int YAP_V2_file_header_decode(const unsigned char input[YAP_V2_FILE_HEADER_BYTES],
                               YAP_V2_FILE_HEADER *header);
+
+void YAP_V2_segment_init(YAP_V2_SEGMENT *segment);
+void YAP_V2_segment_free(YAP_V2_SEGMENT *segment);
+
+int YAP_V2_segment_write(const char *path, const char *segment_id, uint64_t generation,
+                         const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
+                         const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count,
+                         YAP_V2_SEGMENT_DESCRIPTOR *descriptor);
+int YAP_V2_segment_read(const char *path, uint64_t expected_generation,
+                        YAP_V2_SEGMENT *segment, YAP_V2_SEGMENT_DESCRIPTOR *descriptor);
 
 #endif
