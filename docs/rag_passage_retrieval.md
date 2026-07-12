@@ -16,4 +16,4 @@ size_t count;
 YAP_RAG_list_passages(&segment, document_id, passages, 8, &count);
 ```
 
-この API は passage の検索順位付けや embedding を行いません。候補 passage の選択・再ランキング・ベクトル検索は後続タスクで追加し、引用単位の取得境界はこの契約に固定します。
+この API は passage の検索順位付けや embedding を行わないため、単体では RAG retrieval を提供しません。[現代検索基盤の完成契約](modern_search_completion_contract.md) に従って passage candidate、hybrid ranking、vector 検索、引用レスポンスへ接続し、引用単位の取得境界はこの契約に固定します。

@@ -1,5 +1,7 @@
 # v2 JSON 検索 API
 
+> **現在の状態:** このGET APIはlegacy検索結果をJSON化する移行用adapterで、vector、hybrid、passage retrievalへ接続されていません。完成時の正式APIは[現代検索基盤の完成契約](modern_search_completion_contract.md)で定義したPOST APIへ置き換えます。
+
 `yappod_front` は既存のテキスト形式 API と並行して、機械利用向けの `GET /v2/search` を提供します。既存 URL の互換性は維持されます。
 
 ## リクエスト

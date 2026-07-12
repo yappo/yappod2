@@ -1,5 +1,7 @@
 # Yappod2 v2索引契約
 
+> **現在の状態:** この文書で実装済みなのは共通header、document/passage segment、manifestの基礎契約です。terms、postings、positions、metadata、vectorsを含む製品index layoutと最終configは未完成であり、[現代検索基盤の完成契約](modern_search_completion_contract.md)に従って置き換えます。
+
 この文書は、v2索引を生成・読み込むコンポーネント間の契約です。ここではデータ形式と検証規則を定義し、segmentの生成・検索・既存v1形式との接続は別の実装仕様で扱います。
 
 ## 互換性
