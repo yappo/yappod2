@@ -163,6 +163,10 @@ positionはfield、token ordinal順に決定的に並びます。
 - 128 postingごとのblock metadataは先頭posting ordinal、件数、最大term frequency、最小field lengthを保持します。
 - positionsはfield IDとfield内のzero-based token ordinalを保持します。
 - readerはterm順序、object順序、offset、件数、block範囲を検証してからiteratorを公開します。
+- lexical readerは3 componentをread-only `mmap`し、同一generation、header、CRC32C、payload
+  全体の連続性、TFとpositionの整合、block-max再計算値をopen時に検証します。
+- `YAP_V2_LEXICAL_SEGMENT`はinit後にopenし、利用中はmapped fileを変更・削除せず、最後に
+  closeします。term/posting/positionのviewとiteratorはsegment closeまでだけ有効です。
 
 ## C APIの所有権
 
