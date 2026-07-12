@@ -204,6 +204,8 @@ if(YAPPOD_TESTS_DAEMON)
 endif()
 
 if(YAPPOD_TESTS_NODAEMON)
+  set(QUALITY_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality)
+
   add_yappod_cmocka_test(
     e2e
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/e2e_test.c
@@ -264,5 +266,40 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pos_index_bounds_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_index_pos.c
+  )
+
+  add_yappod_cmocka_test(
+    search_quality_metrics
+    ${QUALITY_TEST_DIR}/search_quality_metrics_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${QUALITY_TEST_DIR}/search_quality_metrics.c
+  )
+  target_include_directories(search_quality_metrics_test PRIVATE ${QUALITY_TEST_DIR})
+
+  add_executable(search_quality
+    ${QUALITY_TEST_DIR}/search_quality.c
+    ${QUALITY_TEST_DIR}/search_quality_metrics.c
+  )
+  target_include_directories(search_quality
+    PRIVATE ${QUALITY_TEST_DIR} ${TEST_COMMON_DIR}
+  )
+  target_link_libraries(search_quality PRIVATE yappod_test_support)
+  if(M_LIB)
+    target_link_libraries(search_quality PRIVATE ${M_LIB})
+  endif()
+
+  add_test(
+    NAME search_quality_baseline
+    COMMAND $<TARGET_FILE:search_quality>
+      --build-dir ${CMAKE_BINARY_DIR}
+      --input ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/index.txt
+      --queries ${QUALITY_TEST_DIR}/queries.tsv
+      --qrels ${QUALITY_TEST_DIR}/qrels.tsv
+      --baseline ${QUALITY_TEST_DIR}/baseline.tsv
+      --repeat 5
+  )
+  set_tests_properties(search_quality_baseline PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    LABELS standalone
   )
 endif()
