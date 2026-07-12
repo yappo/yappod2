@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(yappod C)
+project(yappod LANGUAGES C CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
 
@@ -13,20 +16,22 @@ option(YAPPOD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(YAPPOD_TESTS_DAEMON "Enable daemon-based test suites" ON)
 option(YAPPOD_TESTS_NODAEMON "Enable non-daemon test suites" ON)
 
-if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  add_compile_options(-Wall -Wextra -Wpedantic)
-  if(YAPPOD_WARNINGS_AS_ERRORS)
-    add_compile_options(-Werror)
+function(yappod_enable_warnings target)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(YAPPOD_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
   endif()
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_compile_definitions(_DEFAULT_SOURCE _POSIX_C_SOURCE=200809L)
-endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(${target} PRIVATE _DEFAULT_SOURCE _POSIX_C_SOURCE=200809L)
+  endif()
+endfunction()
 
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(cmocka REQUIRED)
+include(Dependencies)
 
 find_path(BDB_INCLUDE_DIR db.h)
 find_library(BDB_LIB db)
@@ -105,6 +110,7 @@ set(ALL_TARGETS
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
   target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads)
+  yappod_enable_warnings(${tgt})
 endforeach()
 
 find_library(M_LIB m)
@@ -134,6 +140,7 @@ set(TEST_SUPPORT_SOURCES
 )
 
 add_library(yappod_test_support STATIC ${TEST_SUPPORT_SOURCES})
+yappod_enable_warnings(yappod_test_support)
 target_include_directories(yappod_test_support
   PUBLIC ${SRC_DIR} ${TEST_COMMON_DIR} ${BDB_INCLUDE_DIR}
 )
@@ -165,6 +172,7 @@ function(add_yappod_cmocka_test test_name test_source)
     ${test_source}
     ${ARG_EXTRA_SOURCES}
   )
+  yappod_enable_warnings(${target_name})
   target_include_directories(${target_name}
     PRIVATE ${SRC_DIR} ${TEST_COMMON_DIR} ${BDB_INCLUDE_DIR}
   )
@@ -213,6 +221,15 @@ endif()
 
 if(YAPPOD_TESTS_NODAEMON)
   set(QUALITY_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality)
+
+  add_executable(dependency_smoke_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/dependency_smoke_test.c
+  )
+  yappod_enable_warnings(dependency_smoke_test)
+  target_link_libraries(dependency_smoke_test PRIVATE yappod::modern_dependencies)
+  set_target_properties(dependency_smoke_test PROPERTIES LINKER_LANGUAGE CXX)
+  add_test(NAME dependency_smoke COMMAND $<TARGET_FILE:dependency_smoke_test>)
+  set_tests_properties(dependency_smoke PROPERTIES LABELS standalone)
 
   add_yappod_cmocka_test(
     e2e
@@ -336,6 +353,7 @@ if(YAPPOD_TESTS_NODAEMON)
     ${QUALITY_TEST_DIR}/search_quality.c
     ${QUALITY_TEST_DIR}/search_quality_metrics.c
   )
+  yappod_enable_warnings(search_quality)
   target_include_directories(search_quality
     PRIVATE ${QUALITY_TEST_DIR} ${TEST_COMMON_DIR}
   )
