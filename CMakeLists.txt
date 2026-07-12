@@ -53,6 +53,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_index_deletefile.c
   ${SRC_DIR}/yappo_index_v2.c
   ${SRC_DIR}/yappo_config_v2.c
+  ${SRC_DIR}/yappo_unicode.c
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_search_api.c
@@ -110,7 +111,7 @@ set(ALL_TARGETS
 
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99)
+  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 ICU::uc ICU::i18n)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -185,6 +186,8 @@ function(add_yappod_cmocka_test test_name test_source)
       ZLIB::ZLIB
       Threads::Threads
       yappod::tomlc99
+      ICU::uc
+      ICU::i18n
   )
   if(M_LIB)
     target_link_libraries(${target_name} PRIVATE ${M_LIB})
@@ -293,6 +296,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/pos_index_bounds_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_index_pos.c
+  )
+  add_yappod_cmocka_test(
+    unicode_tokenizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_tokenizer_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_unicode.c
   )
   add_yappod_cmocka_test(
     config_v2

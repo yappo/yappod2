@@ -1,6 +1,6 @@
-# トークナイザ差し替え基盤 設計書（未実装）
+# Unicode tokenizer・chunker 契約
 
-> **位置付け:** この文書は初期の抽象化案を記録したものです。v2完全置換、Unicode tokenizer、TOML parserを含む実装判断は[現代検索基盤の完成契約](modern_search_completion_contract.md)を優先します。
+> **現在の状態:** `yappo_unicode` がICUのNFKC casefold、word/sentence/grapheme境界と決定的passage IDを実装しています。legacy検索経路への接続は行わず、後続のv2 ingest/index/search経路から利用します。
 
 ## 1. 背景と現状整理
 
@@ -260,4 +260,6 @@ flowchart LR
 
 ## 11. 現在の実装状態
 
-この文書は設計のみであり、tokenizer API、`config.toml` loader、索引作成経路、検索経路への接続は未実装です。製品実装では、本書のlegacy互換移行案ではなく、[現代検索基盤の完成契約](modern_search_completion_contract.md)で確定したUnicode tokenizer、v2完全置換、再索引方針を優先します。
+`src/yappo_unicode.h`のv2 APIは正規化済みUTF-8、word tokenのbyte/code-point offset、sentence優先かつgrapheme安全なchunkを返します。chunk上限はUnicode code point数で判定し、sentenceが上限内に無い場合だけgrapheme境界へfallbackします。passage IDはdocument ID、ordinal、正規化済み本文から決定的に生成します。
+
+初期章に残るlegacy tokenizer抽象案は履歴説明であり、v2の正式経路ではありません。canonical ingestへの接続は完成契約の次項目で実施します。
