@@ -50,6 +50,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_search_api.c
+  ${SRC_DIR}/yappo_rag.c
 )
 
 set(YAPPO_SEARCH_SOURCES
@@ -283,6 +284,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_v2_roundtrip_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c
+  )
+  add_yappod_cmocka_test(
+    rag_passage
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/rag_passage_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_rag.c
   )
   add_yappod_cmocka_test(
     bm25_score
