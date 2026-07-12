@@ -13,7 +13,7 @@
 static void write_config(const char *path, const char *content) {
   FILE *file = fopen(path, "w");
   assert_non_null(file);
-  assert_int_equal(fputs(content, file), (int)strlen(content));
+  assert_true(fputs(content, file) >= 0);
   assert_int_equal(fclose(file), 0);
 }
 
