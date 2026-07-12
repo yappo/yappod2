@@ -116,6 +116,16 @@ static void test_front_json_search_api(void **state) {
   ctx_t *ctx = (ctx_t *)(*state);
   char *response = NULL;
 
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+                                        "GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n",
+                                        &response),
+                   0);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "\"status\":\"ok\""));
+  free(response);
+  response = NULL;
+
   assert_int_equal(ytest_http_send_text(
                      ctx->stack.front_port,
                      "GET /v2/search?dict=yappo&op=AND&q=OpenAI2025&limit=1 HTTP/1.1\r\n"
