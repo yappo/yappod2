@@ -52,6 +52,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_index_filedata.c
   ${SRC_DIR}/yappo_index_deletefile.c
   ${SRC_DIR}/yappo_index_v2.c
+  ${SRC_DIR}/yappo_config_v2.c
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_search_api.c
@@ -109,7 +110,7 @@ set(ALL_TARGETS
 
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads)
+  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -183,6 +184,7 @@ function(add_yappod_cmocka_test test_name test_source)
       ${BDB_LIB}
       ZLIB::ZLIB
       Threads::Threads
+      yappod::tomlc99
   )
   if(M_LIB)
     target_link_libraries(${target_name} PRIVATE ${M_LIB})
@@ -292,6 +294,13 @@ if(YAPPOD_TESTS_NODAEMON)
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_index_pos.c
   )
+  add_yappod_cmocka_test(
+    config_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_v2_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c
+  )
+  target_link_libraries(config_v2_test PRIVATE yappod::tomlc99)
   add_yappod_cmocka_test(
     index_v2_contracts
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_v2_contracts_test.c
