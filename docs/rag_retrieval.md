@@ -1,0 +1,17 @@
+# RAG passage retrieval
+
+`YAP_V2_retrieve_context`は、同じ検索snapshotから得たpassage検索結果を順位順に
+引用可能なcontextへ組み立てます。LLMによる回答生成は行いません。
+
+各citationはpassage ID、親document ID、URL、title、passage本文、元本文内の文字offset、
+lexical/vector/fused score、組み立てたcontext内のbyte offsetを保持します。文字offsetは
+Unicode code point単位、context offsetはbyte単位です。返される文字列viewはsnapshotが
+所有するため、snapshotをreleaseする前に利用またはコピーしてください。
+
+全体の最大passage数、1 documentあたりの最大passage数、context全体の最大byte数を
+必須指定します。contextにはpassage全文だけを追加し、上限位置でUTF-8本文を切断しません。
+収まらないpassageは飛ばして次の候補を評価し、採用したpassageは空行で区切ります。
+
+同じpassageの重複、latest-winsで不可視になったdocument、1 documentあたりの上限を
+超える候補は除外します。検索結果が別snapshot由来、またはIDとordinalが一致しない場合は
+`YAP_V2_CONFLICT`としてfail-closedで拒否します。
