@@ -122,7 +122,7 @@ describe("Wikipedia search UI", () => {
 
   it("uses one selected mode for search and RAG", async () => {
     const mockApi = api({
-      status: vi.fn().mockResolvedValue({ ready: true, available_modes: ["lexical", "vector", "hybrid"] }),
+      status: vi.fn().mockResolvedValue({ ready: true, llm_configured: true, available_modes: ["lexical", "vector", "hybrid"] }),
     });
     const user = userEvent.setup();
     render(<App api={mockApi} />);
@@ -134,6 +134,7 @@ describe("Wikipedia search UI", () => {
     await waitFor(() => expect(mockApi.search).toHaveBeenCalledWith("言い換え検索", 10, "vector", undefined));
 
     await user.click(screen.getByRole("button", { name: "質問" }));
+    expect(screen.getByText("LLM server設定済み")).toBeVisible();
     await user.type(screen.getByLabelText("質問"), "関連する概念は？");
     await user.click(screen.getByRole("button", { name: "資料を調べる" }));
     await waitFor(() => expect(mockApi.ask).toHaveBeenCalledWith("関連する概念は？", "vector"));

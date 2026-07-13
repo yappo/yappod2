@@ -57,11 +57,12 @@ function CitationItem({ citation, number, referenced }: {
   );
 }
 
-export function RagView({ api, mode = "lexical", availableModes = ["lexical"], onModeChange = () => {} }: {
+export function RagView({ api, mode = "lexical", availableModes = ["lexical"], onModeChange = () => {}, llmConfigured = false }: {
   api: WebApi;
   mode?: SearchMode;
   availableModes?: SearchMode[];
   onModeChange?: (mode: SearchMode) => void;
+  llmConfigured?: boolean;
 }) {
   const [question, setQuestion] = useState("");
   const [state, setState] = useState<RequestState>("idle");
@@ -98,6 +99,10 @@ export function RagView({ api, mode = "lexical", availableModes = ["lexical"], o
         <p className="eyebrow">根拠を確認する</p>
         <h1>資料に基づいて質問</h1>
         <p>Wikipediaから関連箇所を取得し、回答と参照資料を同じ画面で確認します。</p>
+        <div className="generation-availability" role="status">
+          <strong>回答生成</strong>
+          <span>{llmConfigured ? "LLM server設定済み" : "未設定（参照資料のみ表示）"}</span>
+        </div>
       </header>
 
       <form className="question-form" onSubmit={submit} noValidate>

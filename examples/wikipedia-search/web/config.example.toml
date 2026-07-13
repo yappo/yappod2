@@ -1,0 +1,7 @@
+[llm]
+base_url = "http://127.0.0.1:1234/v1"
+model = "model-identifier"
+effort = "low"
+timeout_ms = 30000
+# LM StudioでAPI token認証を有効にした場合だけ設定します。
+# authorization_token = "replace-with-lm-studio-api-token"

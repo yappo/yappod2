@@ -218,6 +218,21 @@ h1 {
   color: var(--muted);
 }
 
+.generation-availability {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soft-line);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.generation-availability strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
 .search-form {
   display: grid;
   grid-template-columns: 1fr 112px;

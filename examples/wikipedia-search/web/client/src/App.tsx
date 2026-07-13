@@ -333,7 +333,7 @@ export function App({ api = webApi }: { api?: WebApi }) {
         </div>
       </header>
       {view === "search" && <SearchView api={api} initialQuery={searchSeed} mode={mode} availableModes={availableModes} onModeChange={changeMode} />}
-      {view === "ask" && <RagView api={api} mode={mode} availableModes={availableModes} onModeChange={changeMode} />}
+      {view === "ask" && <RagView api={api} mode={mode} availableModes={availableModes} onModeChange={changeMode} llmConfigured={status?.llm_configured === true} />}
       {view === "register" && <RegisterView api={api} onSearch={searchRegisteredDocument} />}
       <footer className="site-footer">
         <span>yappod Wikipedia search example</span>

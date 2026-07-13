@@ -13,6 +13,7 @@ web_port=${YAPPOD_WEB_PORT:-4173}
 mock_host=${YAPPOD_MOCK_LLM_HOST:-127.0.0.1}
 mock_port=${YAPPOD_MOCK_LLM_PORT:-1234}
 mock_enabled=${YAPPOD_DEMO_MOCK_LLM:-0}
+web_config="$web_dir/config.toml"
 cleanup_needed=0
 
 cleanup() {
@@ -108,9 +109,12 @@ if [ "$mock_enabled" -eq 1 ]; then
     echo "mock LLM did not become ready; inspect $run_dir/mock-llm.error" >&2
     exit 1
   fi
-  LLM_BASE_URL="http://$mock_host:$mock_port/v1"
-  LLM_MODEL="yappod-demo-mock"
-  export LLM_BASE_URL LLM_MODEL
+  web_config="$run_dir/web.mock-config.toml"
+  {
+    printf '%s\n' '[llm]'
+    printf 'base_url = "http://%s:%s/v1"\n' "$mock_host" "$mock_port"
+    printf '%s\n' 'model = "yappod-demo-mock"' 'effort = "low"' 'timeout_ms = 30000'
+  } >"$web_config"
 fi
 
 (cd "$web_dir" && npm run build)
@@ -121,7 +125,7 @@ fi
   HOST="$web_host" \
   PORT="$web_port" \
   YAPPOD_URL="http://127.0.0.1:$front_port" \
-    exec node server/dist/index.js
+    exec node server/dist/index.js --config "$web_config"
 ) >"$run_dir/web.log" 2>"$run_dir/web.error" &
 web_pid=$!
 echo "$web_pid" >"$run_dir/web.pid"
