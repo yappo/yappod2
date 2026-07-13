@@ -37,7 +37,7 @@ static yyjson_mut_val *canonical_json_copy(yyjson_mut_doc *doc, yyjson_val *valu
       pairs[i].key = yyjson_get_str(key); pairs[i].key_len = yyjson_get_len(key);
       pairs[i++].value = yyjson_obj_iter_get_val(key);
     }
-    qsort(pairs, count, sizeof(*pairs), compare_pairs);
+    if (count > 1U) qsort(pairs, count, sizeof(*pairs), compare_pairs);
     for (i = 0U; i < count; i++) {
       yyjson_mut_val *child = canonical_json_copy(doc, pairs[i].value);
       if (child == NULL || !yyjson_mut_obj_add_val(doc, object, pairs[i].key, child)) {

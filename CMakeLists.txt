@@ -57,6 +57,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_ingest.c
   ${SRC_DIR}/yappo_update_v2.c
   ${SRC_DIR}/yappo_writer_lock_v2.c
+  ${SRC_DIR}/yappo_runtime_policy_v2.c
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_lexical_v2.c
@@ -473,6 +474,12 @@ if(YAPPOD_TESTS_NODAEMON)
     EXTRA_SOURCES ${SRC_DIR}/yappo_compact_v2.c
   )
   target_link_libraries(update_v2_test PRIVATE yappod_base)
+  add_yappod_cmocka_test(
+    runtime_policy_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_policy_v2_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_runtime_policy_v2.c
+  )
   add_yappod_cmocka_test(
     search_api
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_api_test.c

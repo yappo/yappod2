@@ -45,9 +45,37 @@ static void make_index(context_t *ctx) {
 static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(ytest_daemon_stack_start(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
 static int teardown(void **state){context_t *ctx=*state;if(ctx){ytest_daemon_stack_stop(&ctx->stack);ytest_env_destroy(&ctx->env);free(ctx);}return 0;}
 
+static int setup_write_token(void **state) {
+  if (setenv("YAPPOD_V2_WRITE_TOKEN", "0123456789abcdef-secure", 1) != 0) return -1;
+  if (setup(state) != 0) { (void)unsetenv("YAPPOD_V2_WRITE_TOKEN"); return -1; }
+  return 0;
+}
+
+static int teardown_write_token(void **state) {
+  int status = teardown(state); (void)unsetenv("YAPPOD_V2_WRITE_TOKEN"); return status;
+}
+
+static int setup_tiny_memory_limit(void **state) {
+  if (setenv("YAPPOD_V2_MAX_INFLIGHT_BYTES", "1", 1) != 0) return -1;
+  if (setup(state) != 0) { (void)unsetenv("YAPPOD_V2_MAX_INFLIGHT_BYTES"); return -1; }
+  return 0;
+}
+
+static int teardown_tiny_memory_limit(void **state) {
+  int status = teardown(state); (void)unsetenv("YAPPOD_V2_MAX_INFLIGHT_BYTES"); return status;
+}
+
 static char *post(context_t *ctx, const char *endpoint, const char *body) {
   char request[4096]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",endpoint,strlen(body),body)>0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);
+  return response;
+}
+
+static char *post_authorized(context_t *ctx, const char *endpoint, const char *body,
+                             const char *authorization) {
+  char request[4096]; char *response = NULL;
+  assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAuthorization: %s\r\nContent-Length: %zu\r\n\r\n%s",endpoint,authorization,strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);
   return response;
 }
@@ -89,4 +117,31 @@ static void test_front_core_atomic_nrt_updates(void **state) {
   response=post(ctx,"/v2/search","{\"query\":\"banana\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
   assert_null(strstr(response,"\"id\":\"doc-live\""));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
-int main(void){const struct CMUnitTest tests[]={cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown)};return cmocka_run_group_tests(tests,NULL,NULL);}
+
+static void test_write_token_protects_daemon_ingest(void **state) {
+  context_t *ctx=*state; char *response; const char *body =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-secure\",\"body\":\"secureword\",\"vectors\":[[1,0]]}]}";
+  response=post(ctx,"/v2/documents:batch",body);
+  assert_non_null(strstr(response,"401 Unauthorized"));free(response);
+  response=post_authorized(ctx,"/v2/documents:batch",body,"Bearer wrong-token");
+  assert_non_null(strstr(response,"401 Unauthorized"));free(response);
+  response=post_authorized(ctx,"/v2/documents:batch",body,"Bearer 0123456789abcdef-secure");
+  assert_non_null(strstr(response,"200 OK"));free(response);
+  response=post(ctx,"/v2/search","{\"query\":\"secureword\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-secure\""));
+  free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
+static void test_memory_limit_rejects_before_body_allocation(void **state) {
+  context_t *ctx=*state; char *response=post(ctx,"/v2/search","{\"query\":\"apple\",\"mode\":\"lexical\"}");
+  assert_non_null(strstr(response,"503 Service Unavailable"));
+  assert_non_null(strstr(response,"\"code\":\"overloaded\""));free(response);
+  assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
+int main(void){const struct CMUnitTest tests[]={
+  cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
+  cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit)
+};return cmocka_run_group_tests(tests,NULL,NULL);}
