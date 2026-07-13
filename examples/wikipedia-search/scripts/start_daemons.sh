@@ -12,6 +12,7 @@ if [ ! -f "$index/manifest.json" ]; then
   echo "valid index not found: $index" >&2
   exit 1
 fi
+index=$(CDPATH= cd -- "$index" && pwd)
 
 mkdir -p "$run_dir"
 if [ -f "$run_dir/core.pid" ] || [ -f "$run_dir/front.pid" ]; then
