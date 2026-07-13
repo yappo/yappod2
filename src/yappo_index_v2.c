@@ -140,6 +140,7 @@ int YAP_V2_passage_validate(const YAP_V2_PASSAGE_VIEW *passage) {
 
 int YAP_V2_config_validate(const YAP_V2_CONFIG *config) {
   int status;
+  size_t i;
 
   if (config == NULL) {
     return YAP_V2_INVALID_ARGUMENT;
@@ -169,6 +170,32 @@ int YAP_V2_config_validate(const YAP_V2_CONFIG *config) {
         config->vector_dimensions > YAP_V2_MAX_VECTOR_DIMENSIONS ||
         config->vector_metric < YAP_V2_VECTOR_COSINE || config->vector_metric > YAP_V2_VECTOR_L2) {
       return YAP_V2_OUT_OF_RANGE;
+    }
+  }
+  if (config->filterable_field_count > YAP_V2_MAX_FILTER_FIELDS) {
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  for (i = 0U; i < config->filterable_field_count; i++) {
+    const char *field = config->filterable_fields[i];
+    size_t j;
+    status = c_string_validate(field, YAP_V2_MAX_FILTER_FIELD_BYTES, 1);
+    if (status != YAP_V2_OK) {
+      return status;
+    }
+    if (field[0] == '.' || field[strlen(field) - 1U] == '.') {
+      return YAP_V2_INVALID_FORMAT;
+    }
+    for (j = 0U; field[j] != '\0'; j++) {
+      unsigned char c = (unsigned char)field[j];
+      if (c == '.' && (j == 0U || field[j - 1U] == '.')) {
+        return YAP_V2_INVALID_FORMAT;
+      }
+      if (c < 0x20U || c == '/' || c == '\\') {
+        return YAP_V2_INVALID_FORMAT;
+      }
+    }
+    if (i > 0U && strcmp(config->filterable_fields[i - 1U], field) >= 0) {
+      return YAP_V2_INVALID_FORMAT;
     }
   }
   return YAP_V2_OK;

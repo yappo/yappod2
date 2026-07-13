@@ -347,6 +347,8 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
       }
       if (phrase_ok &&
           (options->query_operator == YAP_V2_QUERY_OR || hit.matched_terms == state_count) &&
+          (options->accept == NULL ||
+           options->accept(options->accept_context, hit.object_type, hit.object_ordinal)) &&
           hit.score > 0.0)
         add_hit(hits, &result_count, options->top_k, &hit);
     }

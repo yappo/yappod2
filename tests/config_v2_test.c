@@ -54,6 +54,29 @@ static void test_defaults(void **state) {
   assert_string_equal(config.tokenizer_id,"unicode_nfkc_casefold_v2");
   assert_int_equal(config.chunk_max_chars,1200); assert_int_equal(config.chunk_overlap_chars,200);
   assert_int_equal(config.vector_metric,YAP_V2_VECTOR_DISABLED);
+  assert_int_equal(config.filterable_field_count,0);
+  assert_int_equal(unlink(path),0);
+}
+
+static void test_filterable_fields_are_canonical(void **state) {
+  char path[]="/tmp/yappod-config-XXXXXX"; char error[256]; YAP_V2_CONFIG config; int fd;
+  (void)state; fd=mkstemp(path); assert_true(fd>=0); assert_int_equal(close(fd),0);
+  write_config(path,"format_version=2\n[tokenizer]\n[chunking]\n[vector]\nenabled=false\n"
+                    "[metadata]\nfilterable_fields=[\"year\",\"author.name\",\"lang\"]\n");
+  assert_int_equal(YAP_V2_config_load(path,&config,error,sizeof(error)),YAP_V2_OK);
+  assert_int_equal(config.filterable_field_count,3);
+  assert_string_equal(config.filterable_fields[0],"author.name");
+  assert_string_equal(config.filterable_fields[1],"lang");
+  assert_string_equal(config.filterable_fields[2],"year");
+  assert_int_equal(unlink(path),0);
+}
+
+static void test_rejects_duplicate_filterable_field(void **state) {
+  char path[]="/tmp/yappod-config-XXXXXX"; char error[256]; YAP_V2_CONFIG config; int fd;
+  (void)state; fd=mkstemp(path); assert_true(fd>=0); assert_int_equal(close(fd),0);
+  write_config(path,"format_version=2\n[tokenizer]\n[chunking]\n[vector]\nenabled=false\n"
+                    "[metadata]\nfilterable_fields=[\"lang\",\"lang\"]\n");
+  assert_int_equal(YAP_V2_config_load(path,&config,error,sizeof(error)),YAP_V2_DUPLICATE);
   assert_int_equal(unlink(path),0);
 }
 
@@ -82,6 +105,6 @@ static void test_rejects_invalid_disabled_vector(void **state) {
 }
 
 int main(void) {
-  const struct CMUnitTest tests[]={cmocka_unit_test(test_load_and_fingerprint),cmocka_unit_test(test_defaults),cmocka_unit_test(test_rejects_unknown_key),cmocka_unit_test(test_rejects_unknown_nested_key),cmocka_unit_test(test_rejects_invalid_disabled_vector)};
+  const struct CMUnitTest tests[]={cmocka_unit_test(test_load_and_fingerprint),cmocka_unit_test(test_defaults),cmocka_unit_test(test_filterable_fields_are_canonical),cmocka_unit_test(test_rejects_duplicate_filterable_field),cmocka_unit_test(test_rejects_unknown_key),cmocka_unit_test(test_rejects_unknown_nested_key),cmocka_unit_test(test_rejects_invalid_disabled_vector)};
   return cmocka_run_group_tests(tests,NULL,NULL);
 }
