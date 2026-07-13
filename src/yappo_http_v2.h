@@ -7,7 +7,8 @@
 
 typedef enum {
   YAP_V2_HTTP_SEARCH = 1,
-  YAP_V2_HTTP_RETRIEVE = 2
+  YAP_V2_HTTP_RETRIEVE = 2,
+  YAP_V2_HTTP_INGEST = 3
 } YAP_V2_HTTP_OPERATION;
 
 /* Executes a request against one validated v2 snapshot. The returned UTF-8 JSON

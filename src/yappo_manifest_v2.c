@@ -384,6 +384,44 @@ int YAP_V2_manifest_publish_next(const char *path, YAP_V2_MANIFEST *manifest) {
   return status;
 }
 
+int YAP_V2_manifest_publish_if_generation(const char *path, uint64_t expected_generation,
+                                          YAP_V2_MANIFEST *manifest) {
+  YAP_V2_MANIFEST current;
+  char *lock_path;
+  size_t length;
+  int lock_fd;
+  int status;
+  if (path == NULL || manifest == NULL || expected_generation == UINT64_MAX)
+    return YAP_V2_INVALID_ARGUMENT;
+  length = strlen(path);
+  if (length > SIZE_MAX - 6U) return YAP_V2_OUT_OF_RANGE;
+  lock_path = malloc(length + 6U);
+  if (lock_path == NULL) return YAP_V2_ALLOCATION_FAILED;
+  (void)snprintf(lock_path, length + 6U, "%s.lock", path);
+  lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+  if (lock_fd < 0 || flock(lock_fd, LOCK_EX) != 0) {
+    if (lock_fd >= 0) close(lock_fd);
+    free(lock_path);
+    return YAP_V2_IO_ERROR;
+  }
+  YAP_V2_manifest_init(&current);
+  status = YAP_V2_manifest_load(path, &current);
+  if (status == YAP_V2_OK && current.generation != expected_generation)
+    status = YAP_V2_CONFLICT;
+  if (status == YAP_V2_OK &&
+      memcmp(current.config_fingerprint, manifest->config_fingerprint, 32U) != 0)
+    status = YAP_V2_CONFLICT;
+  if (status == YAP_V2_OK) {
+    manifest->generation = expected_generation + 1U;
+    status = YAP_V2_manifest_save_atomic(path, manifest);
+  }
+  YAP_V2_manifest_free(&current);
+  (void)flock(lock_fd, LOCK_UN);
+  if (close(lock_fd) != 0 && status == YAP_V2_OK) status = YAP_V2_IO_ERROR;
+  free(lock_path);
+  return status;
+}
+
 int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFEST *manifest) {
   size_t i;
   size_t j;
@@ -433,7 +471,8 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
         status = YAP_V2_file_header_decode(header_data, &header);
       }
       if (status == YAP_V2_OK && component->file_type != YAP_V2_FILE_ANN &&
-          (header.generation != manifest->generation || header.file_type != component->file_type ||
+          (header.generation == 0U || header.generation > manifest->generation ||
+           header.file_type != component->file_type ||
            header.payload_bytes + YAP_V2_FILE_HEADER_BYTES != bytes)) {
         status = YAP_V2_INVALID_FORMAT;
       }

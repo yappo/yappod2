@@ -211,7 +211,8 @@ int YAP_V2_metadata_read(const char *path, uint64_t expected_generation,
   YAP_V2_metadata_index_init(index); file = fopen(path, "rb"); if (file == NULL) return YAP_V2_IO_ERROR;
   if (fseek(file, 0L, SEEK_END) != 0 || (size = ftell(file)) < (long)YAP_V2_FILE_HEADER_BYTES || fseek(file, 0L, SEEK_SET) != 0 ||
       fread(header_data, 1U, sizeof(header_data), file) != sizeof(header_data) || YAP_V2_file_header_decode(header_data, &header) != YAP_V2_OK ||
-      header.file_type != YAP_V2_FILE_METADATA || header.generation != expected_generation ||
+      header.file_type != YAP_V2_FILE_METADATA ||
+      (expected_generation != 0U && header.generation != expected_generation) ||
       header.payload_bytes != (uint64_t)size - YAP_V2_FILE_HEADER_BYTES || header.payload_bytes > SIZE_MAX) goto done;
   payload = malloc((size_t)header.payload_bytes); if (payload == NULL && header.payload_bytes > 0U) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
   if (fread(payload, 1U, (size_t)header.payload_bytes, file) != header.payload_bytes || crc32c(payload, (size_t)header.payload_bytes) != header.payload_crc32c) { status = YAP_V2_CHECKSUM_MISMATCH; goto done; }

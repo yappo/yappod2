@@ -87,16 +87,17 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     YAP_V2_FILTER filter;
     size_t local_count, local_limit, accepted = 0U, i;
     int status, filter_enabled = request->filter_json.len > 0U;
-    if (segments[s].lexical == NULL || documents == NULL) return YAP_V2_INVALID_ARGUMENT;
+    if (documents == NULL) return YAP_V2_INVALID_ARGUMENT;
+    local_limit = request->scope == YAP_V2_SEARCH_DOCUMENTS ? documents->document_count :
+                  documents->passage_count;
+    if (local_limit == 0U) continue;
+    if (segments[s].lexical == NULL) return YAP_V2_INVALID_ARGUMENT;
     YAP_V2_filter_init(&filter);
     if (filter_enabled) {
       if (segments[s].metadata == NULL) return YAP_V2_INVALID_ARGUMENT;
       status = YAP_V2_filter_compile(request->filter_json, segments[s].metadata, &filter);
       if (status != YAP_V2_OK) return status;
     }
-    local_limit = request->scope == YAP_V2_SEARCH_DOCUMENTS ? documents->document_count :
-                  documents->passage_count;
-    if (local_limit == 0U) { YAP_V2_filter_free(&filter); continue; }
     local = (YAP_V2_LEXICAL_HIT *)malloc(sizeof(*local) * local_limit);
     if (local == NULL) { YAP_V2_filter_free(&filter); return YAP_V2_ALLOCATION_FAILED; }
     YAP_V2_lexical_search_options_init(&options);
@@ -147,7 +148,10 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     YAP_V2_FILTER filter;
     size_t local_count, accepted = 0U, i, request_count;
     int status, filter_enabled = request->filter_json.len > 0U;
-    if (segments[s].vector == NULL || segments[s].vector->vectors == NULL || documents == NULL)
+    if (documents == NULL)
+      return YAP_V2_INVALID_ARGUMENT;
+    if (documents->passage_count == 0U) continue;
+    if (segments[s].vector == NULL || segments[s].vector->vectors == NULL)
       return YAP_V2_INVALID_ARGUMENT;
     request_count = segments[s].vector->vectors->entry_count;
     if (request_count == 0U) continue;

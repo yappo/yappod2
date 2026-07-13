@@ -260,6 +260,7 @@ static int YAP_parse_v2_post_line(const char *line, YAP_V2_HTTP_OPERATION *opera
       (line[consumed] != '\r' && line[consumed] != '\n' && line[consumed] != '\0')) return -1;
   if (strcmp(target, "/v2/search") == 0) *operation = YAP_V2_HTTP_SEARCH;
   else if (strcmp(target, "/v2/retrieve") == 0) *operation = YAP_V2_HTTP_RETRIEVE;
+  else if (strcmp(target, "/v2/documents:batch") == 0) *operation = YAP_V2_HTTP_INGEST;
   else return -1;
   return 0;
 }
@@ -271,7 +272,9 @@ static int YAP_is_v2_endpoint_with_non_post_method(const char *line) {
       (line[consumed] != '\r' && line[consumed] != '\n' && line[consumed] != '\0')) return 0;
   return strcmp(method, "POST") != 0 &&
          ((strncmp(target, "/v2/search", 10U) == 0 && (target[10] == '\0' || target[10] == '?')) ||
-          (strncmp(target, "/v2/retrieve", 12U) == 0 && (target[12] == '\0' || target[12] == '?')));
+          (strncmp(target, "/v2/retrieve", 12U) == 0 && (target[12] == '\0' || target[12] == '?')) ||
+          (strncmp(target, "/v2/documents:batch", 19U) == 0 &&
+           (target[19] == '\0' || target[19] == '?')));
 }
 
 static int YAP_read_v2_headers(FILE *socket, size_t *content_length) {
@@ -310,18 +313,23 @@ static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION oper
   YAP_V2_CORE_FRAME request, response; uint16_t expected; int status, http_status;
   const char *reason; size_t json_bytes;
   YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
-  request.type = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_REQUEST : YAP_V2_CORE_RETRIEVE_REQUEST;
+  request.type = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_REQUEST :
+                 operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_REQUEST :
+                 YAP_V2_CORE_INGEST_REQUEST;
   request.request_id = request_id; request.payload = (unsigned char *)body; request.payload_bytes = (uint32_t)body_bytes;
   status = YAP_V2_core_frame_write(core, &request, YAP_V2_HTTP_MAX_BODY_BYTES);
   if (status != YAP_V2_CORE_FRAME_OK || fflush(core) != 0 ||
       YAP_V2_core_frame_read(core, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &response) != YAP_V2_CORE_FRAME_OK ||
       response.request_id != request_id || response.payload_bytes < 2U) { status = -1; goto done; }
-  expected = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE : YAP_V2_CORE_RETRIEVE_RESPONSE;
+  expected = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
+             operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE :
+             YAP_V2_CORE_INGEST_RESPONSE;
   if (response.type != expected && response.type != YAP_V2_CORE_ERROR_RESPONSE) { status = -1; goto done; }
   http_status = ((int)response.payload[0] << 8) | response.payload[1];
   if ((response.type == expected && http_status != 200) ||
       (response.type == YAP_V2_CORE_ERROR_RESPONSE && http_status < 400)) { status = -1; goto done; }
-  reason = http_status == 200 ? "OK" : http_status == 400 ? "Bad Request" : "Service Unavailable";
+  reason = http_status == 200 ? "OK" : http_status == 400 ? "Bad Request" :
+           http_status == 409 ? "Conflict" : "Service Unavailable";
   json_bytes = response.payload_bytes - 2U;
   if (YAP_writef(client, "HTTP/1.1 %d %s\r\nServer: Yappo Search/2.0\r\n"
                  "Content-Type: application/json; charset=utf-8\r\nContent-Length: %zu\r\n"

@@ -8,6 +8,8 @@ int YAP_V2_manifest_load_for_config(const char *path, const YAP_V2_CONFIG *confi
                                     YAP_V2_MANIFEST *manifest);
 int YAP_V2_manifest_save_atomic(const char *path, const YAP_V2_MANIFEST *manifest);
 int YAP_V2_manifest_publish_next(const char *path, YAP_V2_MANIFEST *manifest);
+int YAP_V2_manifest_publish_if_generation(const char *path, uint64_t expected_generation,
+                                          YAP_V2_MANIFEST *manifest);
 int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFEST *manifest);
 
 #endif
