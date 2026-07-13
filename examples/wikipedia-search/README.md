@@ -236,7 +236,8 @@ YAPPOD_DEMO_MOCK_LLM=1 \
 
 PIDとlogは標準で`run/`に保存します。起動失敗時は起動済みprocessを自動停止します。問題が残る場合は
 `run/*.error`と`run/*.log`を確認してから`stop_demo.sh`を再実行してください。processが動作中のまま
-PID fileだけを削除しないでください。
+PID fileだけを削除しないでください。停止は最初にSIGTERMを送り、5秒以内に終了しないprocessだけを
+SIGKILLへ切り替えます。
 
 | 一括起動用環境変数 | 既定値 | 用途 |
 |---|---|---|

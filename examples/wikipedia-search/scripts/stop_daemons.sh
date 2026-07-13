@@ -36,7 +36,18 @@ stop_pid_file() {
     done
   fi
   if pid_running "$pid"; then
-    echo "$name did not stop: PID $pid" >&2
+    echo "$name did not stop after SIGTERM; sending SIGKILL to PID $pid" >&2
+    if ! kill -KILL "$pid" 2>/dev/null; then
+      return 1
+    fi
+    i=0
+    while pid_running "$pid" && [ "$i" -lt 10 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  fi
+  if pid_running "$pid"; then
+    echo "$name did not stop after SIGKILL: PID $pid" >&2
     return 1
   fi
   rm -f "$file"
