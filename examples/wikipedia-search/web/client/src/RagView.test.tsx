@@ -9,6 +9,7 @@ function response(overrides: Partial<RagResponse> = {}): RagResponse {
   return {
     generation: 7,
     question: "情報検索とは？",
+    retrieval_mode: "lexical",
     context: "情報検索は必要な情報を探し出す処理である。",
     citations: [{
       passage_id: "passage-1",
@@ -53,7 +54,7 @@ describe("RAG document UI", () => {
     expect(screen.getByRole("link", { name: "参照資料1へ" })).toHaveAttribute("href", "#citation-1");
     expect(screen.getByRole("link", { name: /情報検索/ })).toHaveAttribute("href", "https://ja.wikipedia.org/wiki/情報検索");
     expect(screen.getByText("回答で参照")).toBeVisible();
-    expect(mockApi.ask).toHaveBeenCalledWith("情報検索とは？");
+    expect(mockApi.ask).toHaveBeenCalledWith("情報検索とは？", "lexical");
   });
 
   it("keeps retrieved sources visible when generation is unconfigured", async () => {

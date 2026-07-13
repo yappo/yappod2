@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
+import type { EmbeddingClientOptions } from "../src/embedding-client.js";
 import type { Citation, RetrieveResponse } from "../src/types.js";
 
 interface CapturedRequest {
@@ -48,11 +49,16 @@ function fakeFetch(handler: (request: CapturedRequest) => Response): typeof fetc
   }) as typeof fetch;
 }
 
-async function ragApp(fetchImpl: typeof fetch, configured = true): Promise<FastifyInstance> {
+async function ragApp(
+  fetchImpl: typeof fetch,
+  configured = true,
+  embedding?: Omit<EmbeddingClientOptions, "fetchImpl">,
+): Promise<FastifyInstance> {
   const app = await buildApp({
     baseUrl: "http://yappod.test",
     timeoutMs: 1000,
     fetchImpl,
+    embedding,
     llm: configured ? {
       baseUrl: "http://llm.test/v1",
       model: "mock-model",
@@ -112,6 +118,44 @@ describe("citation-grounded RAG BFF", () => {
     expect(response.json()).toMatchObject({ answer: null, generation_status: "unconfigured" });
     expect(response.json().citations).toHaveLength(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the same vector mode for retrieval before generation", async () => {
+    const requests: CapturedRequest[] = [];
+    const fetchImpl = fakeFetch((request) => {
+      requests.push(request);
+      if (request.url.endsWith("/health/ready")) {
+        return Response.json({ ready: true, embedding: { state: "precomputed_ready", model_id: "embeddinggemma", dimensions: 2 } });
+      }
+      if (request.url === "http://embedding.test/v1/embeddings") {
+        return Response.json({ data: [{ index: 0, embedding: [0.4, 0.6] }] });
+      }
+      if (request.url.endsWith("/v2/retrieve")) return Response.json(retrieval());
+      if (request.url.endsWith("/chat/completions")) {
+        return Response.json({ choices: [{ message: { content: "意味で取得した回答です。[1]" } }] });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    const app = await ragApp(fetchImpl, true, {
+      provider: "lmstudio",
+      baseUrl: "http://embedding.test/v1",
+      model: "embeddinggemma",
+      dimensions: 2,
+      timeoutMs: 1000,
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/rag",
+      payload: { question: "関連する概念は？", mode: "vector" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ retrieval_mode: "vector", generation_status: "answered" });
+    const retrieve = requests.find((request) => request.url.endsWith("/v2/retrieve"));
+    expect(JSON.parse(String(retrieve?.init?.body))).toMatchObject({
+      query: "関連する概念は？",
+      mode: "vector",
+      vector: [0.4, 0.6],
+    });
   });
 
   it("rejects out-of-range and missing citations without losing sources", async () => {

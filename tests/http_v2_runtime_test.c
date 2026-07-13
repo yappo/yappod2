@@ -177,6 +177,20 @@ static void test_real_search_and_retrieve_runtime(void **state) {
   assert_string_equal(yyjson_get_str(yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(document), "error"), "code")), "invalid_request");
   yyjson_doc_free(document);
   document = execute(&env, YAP_V2_HTTP_SEARCH, "{\"query\":\"apple\",\"mode\":\"lexical\",\"limit\":101}", 400);
+  yyjson_doc_free(document);
+  document = execute(&env, YAP_V2_HTTP_PREPARE,
+    "{\"id\":\"doc-new\",\"body\":\"First sentence. Second sentence.\"}", 200);
+  root = yyjson_doc_get_root(document);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(root, "model_id")), "embed-v1");
+  assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "dimensions")), 2U);
+  results = yyjson_obj_get(root, "passages"); assert_int_equal(yyjson_arr_size(results), 1U);
+  item = yyjson_arr_get_first(results);
+  assert_int_equal(yyjson_get_uint(yyjson_obj_get(item, "ordinal")), 0U);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "text")),
+                      "first sentence. second sentence.");
+  yyjson_doc_free(document);
+  document = execute(&env, YAP_V2_HTTP_PREPARE,
+    "{\"id\":\"doc-new\",\"body\":\"text\",\"extra\":true}", 400);
   yyjson_doc_free(document); ytest_env_destroy(&env);
 }
 

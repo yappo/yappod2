@@ -31,6 +31,11 @@ export YAPPOD_WEB_PORT=$3
 export YAPPOD_MOCK_LLM_PORT=$4
 export YAPPOD_WRITE_TOKEN="stage5-integration-token"
 export YAPPOD_DEMO_MOCK_LLM=1
+export MOCK_EMBEDDING_DIMENSIONS=3
+export EMBEDDING_PROVIDER=lmstudio
+export EMBEDDING_BASE_URL="http://127.0.0.1:$YAPPOD_MOCK_LLM_PORT/v1"
+export EMBEDDING_MODEL=yappod-demo-mock
+export EMBEDDING_DIMENSIONS=3
 export WIKIPEDIA_E2E_WEB_URL="http://127.0.0.1:$YAPPOD_WEB_PORT"
 export WIKIPEDIA_E2E_YAPPOD_URL="http://127.0.0.1:$YAPPOD_FRONT_PORT"
 
@@ -38,6 +43,11 @@ python3 "$example_dir/wikipedia_data.py" convert-dump \
   --input "$example_dir/tests/fixtures/wikiextractor.jsonl" \
   --output "$tmp_dir/documents.ndjson" \
   --limit 10 >/dev/null
+
+"$example_dir/../../build/yappo_makeindex" build \
+  --config "$example_dir/tests/fixtures/config.vector.toml" \
+  --input "$example_dir/tests/fixtures/documents.vector.ndjson" \
+  --index "$tmp_dir/index"
 
 "$example_dir/scripts/start_demo.sh" "$tmp_dir/documents.ndjson" "$tmp_dir/index"
 started=1

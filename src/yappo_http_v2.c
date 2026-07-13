@@ -13,6 +13,7 @@
 #include "yappo_query_v2.h"
 #include "yappo_retrieve_v2.h"
 #include "yappo_snippet_v2.h"
+#include "yappo_unicode.h"
 #include "yappo_update_v2.h"
 
 #define YAP_V2_CURSOR_MAX_OFFSET 10000U
@@ -493,6 +494,62 @@ static char *update_json(const YAP_V2_UPDATE_RESULT *result, size_t *bytes) {
   yyjson_mut_doc_free(doc); return json;
 }
 
+static int prepare_json(const YAP_V2_CONFIG *config, yyjson_val *root,
+                        char **response, size_t *response_bytes) {
+  static const char *const keys[] = {"id", "body", NULL};
+  yyjson_val *id, *body;
+  YAP_V2_CHUNK_SEQUENCE chunks;
+  yyjson_mut_doc *document = NULL;
+  yyjson_mut_val *output, *passages;
+  char *rendered = NULL;
+  size_t i;
+  int status;
+  memset(&chunks, 0, sizeof(chunks));
+  if (!only_keys(root, keys) || yyjson_obj_size(root) != 2U) return YAP_V2_INVALID_FORMAT;
+  id = yyjson_obj_get(root, "id"); body = yyjson_obj_get(root, "body");
+  if (!yyjson_is_str(id) || yyjson_get_len(id) == 0U ||
+      yyjson_get_len(id) > YAP_V2_MAX_IDENTIFIER_BYTES || !yyjson_is_str(body) ||
+      yyjson_get_len(body) == 0U || yyjson_get_len(body) > YAP_V2_HTTP_MAX_BODY_BYTES)
+    return YAP_V2_INVALID_FORMAT;
+  status = YAP_V2_unicode_chunk(yyjson_get_str(id), yyjson_get_str(body), yyjson_get_len(body),
+                                config->chunk_max_chars, config->chunk_overlap_chars, &chunks);
+  if (status != YAP_V2_OK) return status;
+  document = yyjson_mut_doc_new(NULL);
+  output = document == NULL ? NULL : yyjson_mut_obj(document);
+  passages = document == NULL ? NULL : yyjson_mut_arr(document);
+  if (document == NULL || output == NULL || passages == NULL) {
+    status = YAP_V2_ALLOCATION_FAILED; goto done;
+  }
+  yyjson_mut_doc_set_root(document, output);
+  if (!yyjson_mut_obj_add_str(document, output, "model_id", config->vector_model_id) ||
+      !yyjson_mut_obj_add_uint(document, output, "dimensions", config->vector_dimensions) ||
+      !yyjson_mut_obj_add_val(document, output, "passages", passages)) {
+    status = YAP_V2_ALLOCATION_FAILED; goto done;
+  }
+  for (i = 0U; i < chunks.chunk_count; i++) {
+    yyjson_mut_val *item = yyjson_mut_obj(document);
+    yyjson_mut_val *text = yyjson_mut_strncpy(document, chunks.chunks[i].text,
+                                              chunks.chunks[i].text_bytes);
+    if (item == NULL || text == NULL ||
+        !yyjson_mut_obj_add_str(document, item, "id", chunks.chunks[i].id) ||
+        !yyjson_mut_obj_add_uint(document, item, "ordinal", chunks.chunks[i].ordinal) ||
+        !yyjson_mut_obj_add_uint(document, item, "start_char", chunks.chunks[i].start_char) ||
+        !yyjson_mut_obj_add_uint(document, item, "end_char", chunks.chunks[i].end_char) ||
+        !yyjson_mut_obj_add_val(document, item, "text", text) ||
+        !yyjson_mut_arr_append(passages, item)) {
+      status = YAP_V2_ALLOCATION_FAILED; goto done;
+    }
+  }
+  rendered = yyjson_mut_write_opts(document, YYJSON_WRITE_NOFLAG, NULL, response_bytes, NULL);
+  if (rendered == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
+  *response = rendered; rendered = NULL; status = YAP_V2_OK;
+done:
+  free(rendered);
+  if (document != NULL) yyjson_mut_doc_free(document);
+  YAP_V2_chunk_sequence_free(&chunks);
+  return status;
+}
+
 int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
                         const unsigned char *body, size_t body_bytes, int *http_status,
                         char **response, size_t *response_bytes) {
@@ -505,7 +562,7 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   *http_status = 500; *response = NULL; *response_bytes = 0U;
   if (index_dir == NULL || body == NULL || body_bytes == 0U || body_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
       (operation != YAP_V2_HTTP_SEARCH && operation != YAP_V2_HTTP_RETRIEVE &&
-       operation != YAP_V2_HTTP_INGEST)) return -1;
+       operation != YAP_V2_HTTP_INGEST && operation != YAP_V2_HTTP_PREPARE)) return -1;
   if (operation == YAP_V2_HTTP_INGEST) {
     YAP_V2_UPDATE_RESULT update; char update_error[256] = {0};
     status = YAP_V2_update_json_batch(index_dir, body, body_bytes, &update,
@@ -529,6 +586,13 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   if (!yyjson_is_obj(root)) goto bad_request;
   status = runtime_open(&runtime, index_dir);
   if (status != YAP_V2_OK) goto unavailable;
+  if (operation == YAP_V2_HTTP_PREPARE) {
+    status = prepare_json(&runtime.config, root, response, response_bytes);
+    if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT ||
+        status == YAP_V2_OUT_OF_RANGE) goto bad_request;
+    if (status != YAP_V2_OK) goto unavailable;
+    *http_status = 200; goto done;
+  }
   parsed = parse_request(root, &runtime, operation, &request, &vector, &retrieve);
   if (parsed != 0) {
     if (parsed == -2) goto unavailable;

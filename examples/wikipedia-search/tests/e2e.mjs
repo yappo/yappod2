@@ -24,9 +24,15 @@ assert.match(await home.text(), /<div id="root"><\/div>/);
 const status = await jsonRequest(webUrl, "/api/status");
 assert.equal(status.ready, true);
 assert.equal(status.llm_configured, true);
+assert.equal(status.embedding_configured, true);
+assert.deepEqual(status.available_modes, ["lexical", "vector", "hybrid"]);
 
 const initial = await jsonRequest(webUrl, "/api/search", { query: "検索技術", limit: 5 });
 assert.equal(initial.results.some((result) => result.title === "検索技術"), true);
+for (const mode of ["vector", "hybrid"]) {
+  const semantic = await jsonRequest(webUrl, "/api/search", { query: "情報を探す技術", mode, limit: 5 });
+  assert.equal(semantic.results.length > 0, true);
+}
 
 const documentId = "stage5-integration-document";
 const uniqueTerm = "統合動作確認語";
@@ -77,5 +83,12 @@ assert.equal(rag.generation_status, "answered");
 assert.equal(rag.answer, "参照資料から確認できる内容です。[1]");
 assert.deepEqual(rag.referenced_citations, [1]);
 assert.equal(rag.citations.some((citation) => citation.document_id === documentId), true);
+
+const vectorRag = await jsonRequest(webUrl, "/api/rag", {
+  question: "情報を探す方法は何ですか？",
+  mode: "vector",
+});
+assert.equal(vectorRag.retrieval_mode, "vector");
+assert.equal(vectorRag.generation_status, "answered");
 
 console.log("Wikipedia search demo E2E passed");

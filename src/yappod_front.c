@@ -30,6 +30,7 @@ typedef enum {
   ENDPOINT_METRICS,
   ENDPOINT_SEARCH,
   ENDPOINT_RETRIEVE,
+  ENDPOINT_PREPARE,
   ENDPOINT_INGEST
 } endpoint_t;
 
@@ -185,6 +186,7 @@ static endpoint_t endpoint_for(const char *method, const char *target) {
   if (strcmp(method, "POST") == 0) {
     if (strcmp(target, "/v2/search") == 0) return ENDPOINT_SEARCH;
     if (strcmp(target, "/v2/retrieve") == 0) return ENDPOINT_RETRIEVE;
+    if (strcmp(target, "/v2/passages:prepare") == 0) return ENDPOINT_PREPARE;
     if (strcmp(target, "/v2/documents:batch") == 0) return ENDPOINT_INGEST;
   }
   return ENDPOINT_UNKNOWN;
@@ -194,6 +196,7 @@ static int is_known_target(const char *target) {
   return strcmp(target, "/health/live") == 0 || strcmp(target, "/health/ready") == 0 ||
          strcmp(target, "/metrics") == 0 || strcmp(target, "/v2/search") == 0 ||
          strcmp(target, "/v2/retrieve") == 0 ||
+         strcmp(target, "/v2/passages:prepare") == 0 ||
          strcmp(target, "/v2/documents:batch") == 0;
 }
 
@@ -476,7 +479,8 @@ static int handle_operational(FILE *stream, const worker_t *worker, endpoint_t e
 
 static YAP_V2_OBSERVE_OPERATION observe_operation(endpoint_t endpoint) {
   return endpoint == ENDPOINT_SEARCH ? YAP_V2_OBSERVE_SEARCH :
-         endpoint == ENDPOINT_RETRIEVE ? YAP_V2_OBSERVE_RETRIEVE : YAP_V2_OBSERVE_INGEST;
+         (endpoint == ENDPOINT_RETRIEVE || endpoint == ENDPOINT_PREPARE) ?
+         YAP_V2_OBSERVE_RETRIEVE : YAP_V2_OBSERVE_INGEST;
 }
 
 static int handle_client(FILE *stream, const worker_t *worker) {
@@ -546,7 +550,17 @@ static int handle_client(FILE *stream, const worker_t *worker) {
                           reason_phrase(response_status));
     goto observed;
   }
-  if (core_roundtrip(worker, request.endpoint, body, request.content_length, &result) != 0) {
+  if (request.endpoint == ENDPOINT_PREPARE) {
+    char *prepared = NULL; size_t prepared_bytes = 0U;
+    if (YAP_V2_http_execute(worker->index_dir, YAP_V2_HTTP_PREPARE, body,
+                            request.content_length, &result.status, &prepared,
+                            &prepared_bytes) != 0) {
+      response_status = 503;
+      (void)send_json_error(stream, response_status, "prepare_unavailable", "Service Unavailable");
+      goto observed;
+    }
+    result.body = (unsigned char *)prepared; result.body_bytes = prepared_bytes;
+  } else if (core_roundtrip(worker, request.endpoint, body, request.content_length, &result) != 0) {
     response_status = 503;
     (void)send_json_error(stream, response_status, "core_unavailable", "Service Unavailable");
     goto observed;

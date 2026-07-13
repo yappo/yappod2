@@ -38,8 +38,11 @@ flowchart TB
   index --> daemon
 ```
 
-このサンプルのindexはvectorを無効にしています。RAGの確認はlexical retrievalで行います。
-回答生成はyappodの責務ではなく、後続のWeb UIサンプルで接続します。
+このサンプルの既定`config.toml`は、追加のモデルを起動せずに試せるようvectorを無効にしています。
+Web UIはlexical、vector、hybridの3モードに対応し、接続したindexとembedding serverの状態に応じて
+利用可能なモードを表示します。既定の1,000記事をEmbeddingGemmaでvector化し、LM Studioまたは
+Ollamaと組み合わせてvector/hybrid検索を確認する場合は、
+[1,000記事をvector対応にする](docs/vector-search.md)を参照してください。
 
 ## 必要環境
 
@@ -185,6 +188,7 @@ flowchart TB
   subgraph services["Runtime services"]
     direction LR
     front["yappod_front"]
+    embedding["Embedding server"]
     llm["OpenAI-compatible LLM"]
   end
 
@@ -196,11 +200,12 @@ flowchart TB
 
   browser --> ui --> bff
   bff --> front --> core --> index
+  bff --> embedding
   bff --> llm
 ```
 
-図はBrowser、Web application、Runtime services、Search dataの4段に分け、各段を2要素以内にしています。
-検索の主経路とLLMへの分岐だけを示し、横長・縦長のどちらにも偏らない構成です。
+図はBrowser、Web application、Runtime services、Search dataの4段に分けています。検索の主経路と
+embedding・LLMへの分岐を中央にまとめ、横長・縦長のどちらにも偏らない構成です。
 
 ### 一括起動
 
@@ -275,7 +280,7 @@ Browserで`http://127.0.0.1:5173`を開きます。Viteは`/api`だけを`127.0.
 
 ### 引用付きRAG
 
-質問画面は`/v2/retrieve`からlexical passageを取得し、設定済みの場合だけOpenAI-compatibleな
+質問画面は選択したlexical、vector、hybridモードで`/v2/retrieve`からpassageを取得し、設定済みの場合だけOpenAI-compatibleな
 `POST /chat/completions`へ送ります。modelは固定せず、利用するserverで有効なmodel IDを環境変数へ
 指定します。
 
@@ -317,6 +322,15 @@ productionではFastifyがbuild済みUIも配信します。標準URLは`http://
 | `LLM_MODEL` | 未設定 | Chat Completionsへ渡すmodel ID |
 | `LLM_API_KEY` | 未設定 | 必要な場合だけBFFがLLMのBearer headerへ設定 |
 | `LLM_TIMEOUT_MS` | `30000` | BFFからLLMへのtimeout |
+| `EMBEDDING_PROVIDER` | 未設定 | `lmstudio`または`ollama`。未設定時はlexicalのみ |
+| `EMBEDDING_BASE_URL` | 未設定 | LM Studioの`/v1`を含むURL、またはOllamaのbase URL |
+| `EMBEDDING_MODEL` | 未設定 | index作成時と同じembedding model ID |
+| `EMBEDDING_INDEX_MODEL_ID` | 未設定 | `config.vector.toml`のmodel ID。設定時はreadinessで一致を検証 |
+| `EMBEDDING_DIMENSIONS` | `768` | indexのvector次元数 |
+| `EMBEDDING_PROFILE` | `embeddinggemma` | prompt形式。別モデルでは`plain` |
+| `EMBEDDING_API_KEY` | 未設定 | 必要な場合だけembedding serverへ渡すBearer token |
+| `EMBEDDING_TIMEOUT_MS` | `60000` | embedding生成のtimeout |
+| `EMBEDDING_BATCH_SIZE` | `16` | 文書登録時のpassage batch数 |
 | `HOST` | `127.0.0.1` | BFFのlisten address |
 | `PORT` | `4173` | BFFのlisten port |
 
@@ -333,8 +347,8 @@ npm run build
 npm run test:e2e
 ```
 
-`test:e2e`はfixtureから一時indexを作り、core、front、mock LLM、production BFF/UIを起動します。
-初期検索、BFF経由の単一文書登録、登録後の再検索、`/v2/retrieve`、`[1]`付きmock回答、全process停止を
+`test:e2e`はfixtureからvector対応の一時indexを作り、core、front、mock embedding/LLM、production BFF/UIを起動します。
+3モード検索、BFF経由のvector付き単一文書登録、登録後の再検索、vector RAG、`[1]`付きmock回答、全process停止を
 検証します。外部networkや実LLM API keyは使用しません。
 
 ## テスト

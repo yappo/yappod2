@@ -1,0 +1,17 @@
+format_version = 2
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = true
+model_id = "yappod-demo-mock"
+dimensions = 3
+metric = "cosine"
+
+[metadata]
+filterable_fields = ["language", "source"]

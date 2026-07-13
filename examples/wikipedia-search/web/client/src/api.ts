@@ -1,4 +1,4 @@
-import type { RagResponse, RegisterInput, RegisterResponse, SearchResponse, StatusResponse } from "./types";
+import type { RagResponse, RegisterInput, RegisterResponse, SearchMode, SearchResponse, StatusResponse } from "./types";
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status: number) {
@@ -33,26 +33,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface WebApi {
   status(): Promise<StatusResponse>;
-  search(query: string, limit: number, cursor?: string): Promise<SearchResponse>;
+  search(query: string, limit: number, mode: SearchMode, cursor?: string): Promise<SearchResponse>;
   registerDocument(input: RegisterInput): Promise<RegisterResponse>;
-  ask(question: string): Promise<RagResponse>;
+  ask(question: string, mode: SearchMode): Promise<RagResponse>;
 }
 
 export const webApi: WebApi = {
   status: () => request<StatusResponse>("/api/status"),
-  search: (query, limit, cursor) => request<SearchResponse>("/api/search", {
+  search: (query, limit, mode, cursor) => request<SearchResponse>("/api/search", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query, limit, ...(cursor ? { cursor } : {}) }),
+    body: JSON.stringify({ query, limit, mode, ...(cursor ? { cursor } : {}) }),
   }),
   registerDocument: (input) => request<RegisterResponse>("/api/documents", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   }),
-  ask: (question) => request<RagResponse>("/api/rag", {
+  ask: (question, mode) => request<RagResponse>("/api/rag", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, mode }),
   }),
 };
