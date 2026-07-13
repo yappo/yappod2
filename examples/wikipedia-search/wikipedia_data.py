@@ -25,6 +25,8 @@ DEFAULT_DUMP_BASE_URL = "https://dumps.wikimedia.org/jawiki/latest"
 DUMP_FILENAME = "jawiki-latest-pages-articles-multistream.xml.bz2"
 CHECKSUM_FILENAME = "jawiki-latest-sha1sums.txt"
 DUMP_CHECKSUM_PATTERN = re.compile(r"^jawiki-\d{8}-pages-articles-multistream\.xml\.bz2$")
+API_EXTRACT_LIMIT = 20
+API_TOPIC_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
 DEFAULT_TOPICS = (
     "日本の歴史",
@@ -303,50 +305,65 @@ def fetch_api_documents(
         for topic in topics:
             if written >= limit:
                 break
-            parameters = {
-                "action": "query",
-                "format": "json",
-                "formatversion": "2",
-                "generator": "search",
-                "gsrsearch": topic,
-                "gsrnamespace": "0",
-                "gsrlimit": str(min(50, limit - written)),
-                "prop": "extracts|info",
-                "exintro": "1",
-                "explaintext": "1",
-                "exsectionformat": "plain",
-                "inprop": "url",
-                "redirects": "1",
-            }
-            separator = "&" if "?" in api_url else "?"
-            response = _request_json(api_url + separator + urlencode(parameters), user_agent)
-            query = response.get("query", {})
-            pages = query.get("pages", []) if isinstance(query, dict) else []
-            if not isinstance(pages, list):
-                raise WikipediaDataError("Wikimedia API pages must be an array")
-            for page in pages:
-                if written >= limit:
-                    break
-                if not isinstance(page, dict):
-                    raise WikipediaDataError("Wikimedia API page must be an object")
-                page_id = page.get("pageid")
-                key = str(page_id)
-                if key in seen:
-                    skipped += 1
-                    continue
-                document = _canonical_document(
-                    page_id,
-                    page.get("title"),
-                    page.get("extract"),
-                    page.get("fullurl"),
-                    page.get("lastrevid"),
+            topic_results = 0
+            continuation: Dict[str, object] = {}
+            while written < limit and topic_results < API_TOPIC_LIMIT:
+                batch_limit = min(
+                    API_EXTRACT_LIMIT,
+                    API_TOPIC_LIMIT - topic_results,
+                    limit - written,
                 )
-                seen.add(key)
-                if document is None:
-                    skipped += 1
-                    continue
-                _write_document(output, document)
-                written += 1
+                parameters: Dict[str, object] = {
+                    "action": "query",
+                    "format": "json",
+                    "formatversion": "2",
+                    "generator": "search",
+                    "gsrsearch": topic,
+                    "gsrnamespace": "0",
+                    "gsrlimit": str(batch_limit),
+                    "prop": "extracts|info",
+                    "exlimit": str(batch_limit),
+                    "exintro": "1",
+                    "explaintext": "1",
+                    "exsectionformat": "plain",
+                    "inprop": "url",
+                    "redirects": "1",
+                }
+                parameters.update(continuation)
+                separator = "&" if "?" in api_url else "?"
+                response = _request_json(api_url + separator + urlencode(parameters), user_agent)
+                query = response.get("query", {})
+                pages = query.get("pages", []) if isinstance(query, dict) else []
+                if not isinstance(pages, list):
+                    raise WikipediaDataError("Wikimedia API pages must be an array")
+                topic_results += len(pages)
+                for page in pages:
+                    if written >= limit:
+                        break
+                    if not isinstance(page, dict):
+                        raise WikipediaDataError("Wikimedia API page must be an object")
+                    page_id = page.get("pageid")
+                    key = str(page_id)
+                    if key in seen:
+                        skipped += 1
+                        continue
+                    document = _canonical_document(
+                        page_id,
+                        page.get("title"),
+                        page.get("extract"),
+                        page.get("fullurl"),
+                        page.get("lastrevid"),
+                    )
+                    seen.add(key)
+                    if document is None:
+                        skipped += 1
+                        continue
+                    _write_document(output, document)
+                    written += 1
+                next_page = response.get("continue")
+                if not isinstance(next_page, dict) or "gsroffset" not in next_page:
+                    break
+                continuation = next_page
         if written == 0:
             raise WikipediaDataError("no non-empty Wikipedia articles were returned")
     return written, skipped

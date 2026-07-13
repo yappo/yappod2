@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "wikipedia_data.py"
@@ -47,6 +48,49 @@ class WikipediaDataTest(unittest.TestCase):
             self.assertEqual(documents[0]["id"], "jawiki:123")
             self.assertEqual(documents[0]["metadata"]["language"], "ja")
             self.assertEqual(documents[0]["metadata"]["wikipedia_revision_id"], 456)
+
+    def test_fetch_api_paginates_at_extract_limit(self):
+        def page(page_id):
+            return {
+                "pageid": page_id,
+                "title": "記事{}".format(page_id),
+                "extract": "本文{}".format(page_id),
+                "fullurl": "https://example.test/wiki/{}".format(page_id),
+            }
+
+        responses = [
+            {
+                "continue": {"gsroffset": 20, "continue": "gsroffset||"},
+                "query": {"pages": [page(page_id) for page_id in range(1, 21)]},
+            },
+            {"batchcomplete": True, "query": {"pages": [page(page_id) for page_id in range(21, 26)]}},
+        ]
+        requests = []
+
+        def fake_request(url, user_agent):
+            requests.append((url, user_agent))
+            return responses[len(requests) - 1]
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            wikipedia_data, "_request_json", side_effect=fake_request
+        ):
+            output = Path(directory) / "documents.ndjson"
+            written, skipped = wikipedia_data.fetch_api_documents(
+                "https://example.test/w/api.php", ["日本史"], 25, output, "fixture-agent/1.0"
+            )
+            documents = read_ndjson(output)
+
+        self.assertEqual((written, skipped), (25, 0))
+        self.assertEqual(len(requests), 2)
+        first_query = parse_qs(urlparse(requests[0][0]).query)
+        second_query = parse_qs(urlparse(requests[1][0]).query)
+        self.assertEqual(first_query["gsrlimit"], ["20"])
+        self.assertEqual(first_query["exlimit"], ["20"])
+        self.assertEqual(second_query["gsroffset"], ["20"])
+        self.assertEqual(second_query["continue"], ["gsroffset||"])
+        self.assertEqual(second_query["gsrlimit"], ["5"])
+        self.assertEqual(second_query["exlimit"], ["5"])
+        self.assertEqual(len(documents), 25)
 
     def test_convert_dump_deduplicates_and_honors_schema(self):
         with tempfile.TemporaryDirectory() as directory:
