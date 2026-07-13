@@ -45,7 +45,8 @@ static void create_index(ytest_env_t *env) {
   documents[0].title = bytes("Fruit guide"); documents[0].body = bytes("fresh apple");
   documents[0].metadata_json = bytes("{\"category\":\"fruit\"}");
   documents[1].id = bytes("doc-tech"); documents[1].url = bytes("https://e.test/tech");
-  documents[1].title = bytes("Tech guide"); documents[1].body = bytes("apple computer");
+  documents[1].title = bytes("Tech guide");
+  documents[1].body = bytes("prefix <script>alert(1)</script> apple computer");
   documents[1].metadata_json = bytes("{\"category\":\"tech\"}");
   memset(passages, 0, sizeof(passages));
   passages[0].id = bytes("passage-fruit"); passages[0].parent_document_id = documents[0].id;
@@ -109,6 +110,9 @@ static void test_real_search_and_retrieve_runtime(void **state) {
   assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "generation")), 1U);
   assert_int_equal(yyjson_arr_size(results), 1U); item = yyjson_arr_get_first(results);
   assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "id")), "doc-fruit");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "title")), "Fruit guide");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "url")), "https://e.test/fruit");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "snippet")), "fresh apple");
   assert_true(yyjson_get_real(yyjson_obj_get(item, "lexical_score")) > 0.0);
   assert_true(yyjson_get_real(yyjson_obj_get(item, "vector_score")) > 0.0);
   yyjson_doc_free(document);
@@ -116,11 +120,19 @@ static void test_real_search_and_retrieve_runtime(void **state) {
     "{\"query\":\"computer\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":1}", 200);
   item = yyjson_arr_get_first(yyjson_obj_get(yyjson_doc_get_root(document), "results"));
   assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "id")), "doc-tech");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "title")), "Tech guide");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "url")), "https://e.test/tech");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "snippet")),
+                      "prefix <script>alert(1)</script> apple computer");
+  assert_null(strstr(yyjson_get_str(yyjson_obj_get(item, "snippet")), "<mark>"));
   yyjson_doc_free(document);
   document = execute(&env, YAP_V2_HTTP_SEARCH,
     "{\"vector\":[0,1],\"mode\":\"vector\",\"scope\":\"passages\",\"limit\":1}", 200);
   item = yyjson_arr_get_first(yyjson_obj_get(yyjson_doc_get_root(document), "results"));
   assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "id")), "passage-tech");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "title")), "Tech guide");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "url")), "https://e.test/tech");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(item, "snippet")), "apple computer");
   yyjson_doc_free(document);
   document = execute(&env, YAP_V2_HTTP_SEARCH,
     "{\"query\":\"apple\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":1}", 200);

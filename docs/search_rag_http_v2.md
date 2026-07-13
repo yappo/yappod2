@@ -25,7 +25,31 @@ daemonのdeadline、in-flight request/byte上限、`/v2/documents:batch`のBeare
 `mode`は`lexical`、`vector`、`hybrid`、`scope`は`documents`、`passages`です。
 lexicalは`query`、vectorは`vector`、hybridは両方を必須とします。`filter`はindexの
 filterable metadata fieldだけを参照できます。レスポンスはsnapshot `generation` と、
-各hitのID、親document ID、lexical/vector/fused scoreを返します。
+各hitのID、親document ID、title、URL、plain-text snippet、lexical/vector/fused scoreを返します。
+
+```json
+{
+  "api_version": 2,
+  "generation": 7,
+  "total": 1,
+  "results": [{
+    "id": "doc-1",
+    "document_id": "doc-1",
+    "title": "Apple guide",
+    "url": "https://example.test/apple",
+    "snippet": "An apple is an edible fruit...",
+    "lexical_score": 1.25,
+    "vector_score": 0.91,
+    "fused_score": 0.032
+  }],
+  "next_cursor": null
+}
+```
+
+document scopeのsnippetはdocument body、passage scopeでは該当passageから最大180 graphemeの
+windowを返します。query文字列が本文中のgrapheme境界で一致する場合はその周辺を優先し、
+vector-only検索は先頭から取得します。snippetはHTML highlight markerを追加しないJSON stringです。
+クライアントはHTMLとして解釈せずtextとして描画してください。
 
 検索responseの`next_cursor`は、次候補がある場合だけ文字列になります。cursorは
 `v1.<generation>.<offset>.<sha256>`形式で、SHA-256 digestがsnapshot generation、defaults適用・

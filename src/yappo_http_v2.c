@@ -12,9 +12,11 @@
 #include "yappo_manifest_v2.h"
 #include "yappo_query_v2.h"
 #include "yappo_retrieve_v2.h"
+#include "yappo_snippet_v2.h"
 #include "yappo_update_v2.h"
 
 #define YAP_V2_CURSOR_MAX_OFFSET 10000U
+#define YAP_V2_HTTP_SNIPPET_GRAPHEMES 180U
 
 typedef struct { const char *key; size_t key_len; yyjson_val *value; } JSON_PAIR;
 
@@ -342,11 +344,59 @@ invalid:
 }
 
 static yyjson_mut_val *view_string(yyjson_mut_doc *doc, YAP_V2_BYTES_VIEW value) {
+  if (value.len == 0U) return yyjson_mut_strn(doc, "", 0U);
   return yyjson_mut_strncpy(doc, (const char *)value.data, value.len);
+}
+
+static int bytes_equal(YAP_V2_BYTES_VIEW left, YAP_V2_BYTES_VIEW right) {
+  return left.len == right.len &&
+         (left.len == 0U || (left.data != NULL && right.data != NULL &&
+                            memcmp(left.data, right.data, left.len) == 0));
+}
+
+static int search_result_views(const HTTP_RUNTIME *runtime,
+                               const YAP_V2_QUERY_REQUEST *request,
+                               const YAP_V2_QUERY_HIT *hit,
+                               const YAP_V2_DOCUMENT_VIEW **document,
+                               YAP_V2_BYTES_VIEW *snippet) {
+  const YAP_V2_SEGMENT *segment;
+  YAP_V2_BYTES_VIEW source;
+  YAP_V2_DOCUMENT_HIT document_hit;
+  const YAP_V2_BYTES_VIEW *terms = NULL;
+  size_t term_count = 0U;
+  if (hit->segment_ordinal >= YAP_V2_snapshot_segment_count(runtime->snapshot))
+    return YAP_V2_CONFLICT;
+  segment = YAP_V2_snapshot_segment_documents(runtime->snapshot, hit->segment_ordinal);
+  if (segment == NULL) return YAP_V2_CONFLICT;
+  if (request->scope == YAP_V2_SEARCH_DOCUMENTS) {
+    if (hit->object_ordinal >= segment->document_count) return YAP_V2_CONFLICT;
+    *document = &segment->documents[hit->object_ordinal];
+    if (!bytes_equal((*document)->id, hit->id) ||
+        !bytes_equal((*document)->id, hit->parent_document_id)) return YAP_V2_CONFLICT;
+    source = (*document)->body;
+  } else {
+    const YAP_V2_PASSAGE_VIEW *passage;
+    if (hit->object_ordinal >= segment->passage_count) return YAP_V2_CONFLICT;
+    passage = &segment->passages[hit->object_ordinal];
+    if (!bytes_equal(passage->id, hit->id) ||
+        !bytes_equal(passage->parent_document_id, hit->parent_document_id) ||
+        YAP_V2_snapshot_lookup_document(runtime->snapshot, hit->parent_document_id,
+                                        &document_hit) != YAP_V2_OK ||
+        document_hit.document == NULL) return YAP_V2_CONFLICT;
+    *document = document_hit.document;
+    source = passage->text;
+  }
+  if (request->query.len > 0U) {
+    terms = &request->query;
+    term_count = 1U;
+  }
+  return YAP_V2_snippet_window(source, terms, term_count,
+                               YAP_V2_HTTP_SNIPPET_GRAPHEMES, snippet);
 }
 
 static int make_response(const HTTP_RUNTIME *runtime, YAP_V2_HTTP_OPERATION operation,
                          const YAP_V2_QUERY_HIT *hits, size_t hit_count,
+                         const YAP_V2_QUERY_REQUEST *request,
                          const YAP_V2_RETRIEVE_OPTIONS *options, int has_more,
                          size_t next_offset, const unsigned char query_digest[32], char **response,
                          size_t *response_bytes) {
@@ -367,9 +417,16 @@ static int make_response(const HTTP_RUNTIME *runtime, YAP_V2_HTTP_OPERATION oper
           !yyjson_mut_obj_add_strcpy(doc, root, "next_cursor", cursor)) goto memory;
     } else if (!yyjson_mut_obj_add_null(doc, root, "next_cursor")) goto memory;
     for (i = 0U; i < hit_count; i++) {
+      const YAP_V2_DOCUMENT_VIEW *document;
+      YAP_V2_BYTES_VIEW snippet;
       yyjson_mut_val *item = yyjson_mut_obj(doc);
+      status = search_result_views(runtime, request, &hits[i], &document, &snippet);
+      if (status != YAP_V2_OK) goto done;
       if (item == NULL || !yyjson_mut_obj_add_val(doc, item, "id", view_string(doc, hits[i].id)) ||
           !yyjson_mut_obj_add_val(doc, item, "document_id", view_string(doc, hits[i].parent_document_id)) ||
+          !yyjson_mut_obj_add_val(doc, item, "title", view_string(doc, document->title)) ||
+          !yyjson_mut_obj_add_val(doc, item, "url", view_string(doc, document->url)) ||
+          !yyjson_mut_obj_add_val(doc, item, "snippet", view_string(doc, snippet)) ||
           !yyjson_mut_obj_add_real(doc, item, "lexical_score", hits[i].lexical_score) ||
           !yyjson_mut_obj_add_real(doc, item, "vector_score", hits[i].vector_score) ||
           !yyjson_mut_obj_add_real(doc, item, "fused_score", hits[i].fused_score) ||
@@ -498,7 +555,7 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   if (status != YAP_V2_OK) goto unavailable;
   if (offset > hit_count) goto bad_request;
   page_count = hit_count - offset < page_limit ? hit_count - offset : page_limit;
-  status = make_response(&runtime, operation, hits + offset, page_count, &retrieve,
+  status = make_response(&runtime, operation, hits + offset, page_count, &request, &retrieve,
                          operation == YAP_V2_HTTP_SEARCH && hit_count > offset + page_count,
                          offset + page_count, query_digest, response, response_bytes);
   if (status != YAP_V2_OK) goto unavailable;
