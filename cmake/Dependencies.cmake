@@ -1,5 +1,30 @@
 include(FetchContent)
 
+if(APPLE)
+  find_program(YAPPOD_HOMEBREW_EXECUTABLE brew
+    HINTS /opt/homebrew/bin /usr/local/bin
+  )
+  if(YAPPOD_HOMEBREW_EXECUTABLE)
+    set(YAPPOD_HOMEBREW_PREFIXES "")
+    foreach(formula IN ITEMS icu4c libevent curl)
+      execute_process(
+        COMMAND "${YAPPOD_HOMEBREW_EXECUTABLE}" --prefix "${formula}"
+        RESULT_VARIABLE formula_result
+        OUTPUT_VARIABLE formula_prefix
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+      if(formula_result EQUAL 0 AND IS_DIRECTORY "${formula_prefix}")
+        list(APPEND YAPPOD_HOMEBREW_PREFIXES "${formula_prefix}")
+      endif()
+    endforeach()
+    list(APPEND CMAKE_PREFIX_PATH ${YAPPOD_HOMEBREW_PREFIXES})
+    if(YAPPOD_HOMEBREW_PREFIXES)
+      message(STATUS "Homebrew dependency prefixes: ${YAPPOD_HOMEBREW_PREFIXES}")
+    endif()
+  endif()
+endif()
+
 find_package(ICU 67 REQUIRED COMPONENTS uc i18n)
 find_package(CURL 7.68 REQUIRED)
 find_package(Libevent REQUIRED)
