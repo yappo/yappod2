@@ -62,7 +62,8 @@ async function ragApp(
     llm: configured ? {
       baseUrl: "http://llm.test/v1",
       model: "mock-model",
-      apiKey: "llm-server-secret",
+      effort: "low",
+      authorizationToken: "llm-server-secret",
       timeoutMs: 1000,
       fetchImpl,
     } : undefined,
@@ -103,6 +104,7 @@ describe("citation-grounded RAG BFF", () => {
     });
     const llmBody = JSON.parse(String(requests[1]?.init?.body));
     expect(llmBody.model).toBe("mock-model");
+    expect(llmBody.reasoning_effort).toBe("low");
     expect(llmBody.messages[1].content).toContain("[1] 情報検索");
     expect(llmBody.messages[1].content).toContain("情報検索とは？");
     expect(new Headers(requests[1]?.init?.headers).get("authorization")).toBe("Bearer llm-server-secret");

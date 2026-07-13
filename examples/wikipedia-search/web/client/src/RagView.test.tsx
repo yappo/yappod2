@@ -45,7 +45,9 @@ describe("RAG document UI", () => {
   it("shows a grounded answer and links [1] to its source", async () => {
     const mockApi = api(response());
     const user = userEvent.setup();
-    render(<RagView api={mockApi} />);
+    render(<RagView api={mockApi} llmConfigured />);
+
+    expect(screen.getByText("LLM server設定済み")).toBeVisible();
 
     await user.type(screen.getByLabelText("質問"), "情報検索とは？");
     await user.click(screen.getByRole("button", { name: "資料を調べる" }));
@@ -66,6 +68,8 @@ describe("RAG document UI", () => {
     }));
     const user = userEvent.setup();
     render(<RagView api={mockApi} />);
+
+    expect(screen.getByText("未設定（参照資料のみ表示）")).toBeVisible();
 
     await user.type(screen.getByLabelText("質問"), "情報検索とは？");
     await user.click(screen.getByRole("button", { name: "資料を調べる" }));

@@ -242,8 +242,8 @@ YAPPOD_DEMO_MOCK_LLM=1 \
   ./scripts/start_demo.sh data/documents.ndjson ./index
 ```
 
-実LLMを利用する場合は`YAPPOD_DEMO_MOCK_LLM`を指定せず、後述の`LLM_BASE_URL`と`LLM_MODEL`を
-設定して起動します。確認後はWeb、mock LLM、front、coreをまとめて停止します。
+実LLMを利用する場合は`YAPPOD_DEMO_MOCK_LLM`を指定せず、後述の`web/config.toml`を作成して
+起動します。確認後はWeb、mock LLM、front、coreをまとめて停止します。
 
 ```sh
 ./scripts/stop_demo.sh
@@ -290,28 +290,58 @@ Browserで`http://127.0.0.1:5173`を開きます。Viteは`/api`だけを`127.0.
 
 ### 引用付きRAG
 
-質問画面は選択したlexical、vector、hybridモードで`/v2/retrieve`からpassageを取得し、設定済みの場合だけOpenAI-compatibleな
-`POST /chat/completions`へ送ります。modelは固定せず、利用するserverで有効なmodel IDを環境変数へ
-指定します。
+質問画面は選択したlexical、vector、hybridモードで`/v2/retrieve`からpassageを取得し、
+`web/config.toml`の`[llm]`が設定されている場合だけOpenAI-compatibleな`POST /chat/completions`へ
+質問と参照資料を送ります。
+
+`config.toml`はtokenを含む可能性があるためgitignore対象です。設定例をコピーして編集します。
 
 ```sh
-export LLM_BASE_URL='http://127.0.0.1:1234/v1'
-export LLM_MODEL='local-model-name'
-# 認証が必要なserverの場合だけ設定
-export LLM_API_KEY='replace-with-server-api-key'
-
 cd examples/wikipedia-search/web
-npm run dev
+cp config.example.toml config.toml
+```
+
+LM Studioを標準の1234番portで利用する例です。
+
+```toml
+[llm]
+base_url = "http://127.0.0.1:1234/v1"
+model = "LM Studioが受け付けるmodel identifier"
+effort = "low"
+timeout_ms = 30000
+# LM StudioでAPI token認証を有効にした場合だけ設定します。
+authorization_token = "replace-with-lm-studio-api-token"
+```
+
+| `[llm]`設定 | 必須 | 用途 |
+|---|---|---|
+| `base_url` | はい | OpenAI-compatible APIの`/v1`を含むbase URL |
+| `model` | はい | Chat Completionsの`model`へそのまま渡すidentifier |
+| `effort` | いいえ | Chat Completionsの`reasoning_effort`へ渡す値 |
+| `authorization_token` | いいえ | BFFが`Authorization: Bearer ...`として送るtoken |
+| `timeout_ms` | いいえ | LLM応答timeout。既定は`30000`、範囲は`1000`–`600000` |
+
+`authorization_token`には`Bearer `を付けずtoken本体だけを書きます。BFFだけがこのファイルを読み、
+token、base URL、modelはBrowserへ返しません。設定変更後はWeb processを再起動してください。
+LM Studioで認証を有効にしていない場合は`authorization_token`行を削除できます。
+
+production一括起動の場合はサンプルdirectoryから通常どおり起動します。
+
+```sh
+cd examples/wikipedia-search
+YAPPOD_WRITE_TOKEN='replace-with-16-or-more-characters' \
+  ./scripts/start_demo.sh data/documents.ndjson ./index
 ```
 
 LLMを設定しない場合も質問画面は利用でき、取得contextと参照資料を表示します。LLM失敗時も同様に
 参照資料を残します。生成回答はplain textとして扱い、`[1]`形式の参照番号が取得済みcitationの範囲内に
 あり、少なくとも1件使われている場合だけ表示します。範囲外参照や参照なしの回答は採用しません。
+質問画面には「LLM server設定済み」または「未設定（参照資料のみ表示）」を表示します。
 
 BFFはChat Completionsの`messages` requestと`choices[0].message.content` responseを使用します。
-OpenAI APIへ接続する場合の正式仕様は
-[Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)を確認してください。
-互換serverについては各serverの対応parameterと認証方法を確認してください。
+LM Studioのmodel identifierと互換endpointは
+[LM Studio Chat Completions](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)を確認してください。
+別の互換serverでは、そのserverが`reasoning_effort`を受け付けるかを確認してください。
 
 ### production build
 
@@ -328,10 +358,6 @@ productionではFastifyがbuild済みUIも配信します。標準URLは`http://
 | `YAPPOD_URL` | `http://127.0.0.1:18400` | BFFから接続するfront URL |
 | `YAPPOD_WRITE_TOKEN` | 未設定 | 文書登録時だけBFFがBearer headerへ設定 |
 | `YAPPOD_TIMEOUT_MS` | `5000` | BFFからdaemonへのtimeout |
-| `LLM_BASE_URL` | 未設定 | OpenAI-compatible APIの`/v1`等を含むbase URL |
-| `LLM_MODEL` | 未設定 | Chat Completionsへ渡すmodel ID |
-| `LLM_API_KEY` | 未設定 | 必要な場合だけBFFがLLMのBearer headerへ設定 |
-| `LLM_TIMEOUT_MS` | `30000` | BFFからLLMへのtimeout |
 | `EMBEDDING_PROVIDER` | 未設定 | `lmstudio`または`ollama`。未設定時はlexicalのみ |
 | `EMBEDDING_BASE_URL` | 未設定 | LM Studioの`/v1`を含むURL、またはOllamaのbase URL |
 | `EMBEDDING_MODEL` | 未設定 | index作成時と同じembedding model ID |

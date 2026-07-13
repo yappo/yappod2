@@ -4,7 +4,8 @@ import type { Citation } from "./types.js";
 export interface LlmClientOptions {
   baseUrl: string;
   model: string;
-  apiKey?: string;
+  effort?: string;
+  authorizationToken?: string;
   timeoutMs: number;
   fetchImpl?: typeof fetch;
 }
@@ -30,7 +31,7 @@ export class OpenAICompatibleClient {
 
   async answer(question: string, citations: Citation[]): Promise<string> {
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (this.options.apiKey) headers.authorization = `Bearer ${this.options.apiKey}`;
+    if (this.options.authorizationToken) headers.authorization = `Bearer ${this.options.authorizationToken}`;
     let response: Response;
     try {
       response = await this.fetchImpl(completionUrl(this.options.baseUrl), {
@@ -39,6 +40,7 @@ export class OpenAICompatibleClient {
         signal: AbortSignal.timeout(this.options.timeoutMs),
         body: JSON.stringify({
           model: this.options.model,
+          ...(this.options.effort ? { reasoning_effort: this.options.effort } : {}),
           messages: [{
             role: "system",
             content: [
