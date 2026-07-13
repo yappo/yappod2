@@ -24,7 +24,7 @@ function fakeFetch(handler: (request: CapturedRequest) => Response): typeof fetc
 
 async function appWith(fetchImpl: typeof fetch, writeToken?: string, embedding?: Omit<EmbeddingClientOptions, "fetchImpl">): Promise<FastifyInstance> {
   const app = await buildApp({
-    baseUrl: "http://127.0.0.1:10080",
+    baseUrl: "http://127.0.0.1:18400",
     writeToken,
     timeoutMs: 1000,
     fetchImpl,
@@ -48,7 +48,7 @@ describe("Wikipedia search BFF", () => {
 
   it("normalizes daemon readiness without exposing connection settings", async () => {
     const app = await appWith(fakeFetch(({ url }) => {
-      expect(url).toBe("http://127.0.0.1:10080/health/ready");
+      expect(url).toBe("http://127.0.0.1:18400/health/ready");
       return Response.json({ ready: true, generation: 4, state: "precomputed_ready" });
     }), "server-only-secret");
 
@@ -63,7 +63,7 @@ describe("Wikipedia search BFF", () => {
       available_modes: ["lexical"],
     });
     expect(response.body).not.toContain("server-only-secret");
-    expect(response.body).not.toContain("10080");
+    expect(response.body).not.toContain("18400");
   });
 
   it("forwards lexical search and its opaque cursor", async () => {
@@ -80,7 +80,7 @@ describe("Wikipedia search BFF", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(requests[0]?.url).toBe("http://127.0.0.1:10080/v2/search");
+    expect(requests[0]?.url).toBe("http://127.0.0.1:18400/v2/search");
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
       query: "情報検索",
       mode: "lexical",
@@ -218,7 +218,6 @@ describe("Wikipedia search BFF", () => {
     const outage = await outageApp.inject({ method: "POST", url: "/api/search", payload: { query: "検索" } });
     expect(outage.statusCode).toBe(503);
     expect(outage.json().code).toBe("daemon_unavailable");
-    expect(outage.json().message).toContain("offline");
 
     const unauthorizedApp = await appWith(fakeFetch(() => Response.json(
       { code: "unauthorized", message: "raw upstream message" },

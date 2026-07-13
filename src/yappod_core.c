@@ -16,7 +16,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define DEFAULT_CORE_PORT 10086
+#define DEFAULT_CORE_PORT 18401
 #define CORE_WORKERS 16U
 
 typedef struct {

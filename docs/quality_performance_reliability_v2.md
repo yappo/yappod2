@@ -76,7 +76,7 @@ daemonは`YAPPOD_V2_MAX_INFLIGHT=16`で起動し、warm-up queryを実行してr
 
 ```sh
 ./build/v2_load_probe \
-  --port 10080 \
+  --port 18400 \
   --lexical-request benchmark/lexical.json \
   --hybrid-request benchmark/hybrid.json \
   --requests 10000 \

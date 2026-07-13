@@ -6,8 +6,8 @@ web_dir="$example_dir/web"
 input=${1:-"$example_dir/data/documents.ndjson"}
 index=${2:-"$example_dir/index"}
 run_dir=${YAPPOD_RUN_DIR:-"$example_dir/run"}
-core_port=${YAPPOD_CORE_PORT:-10086}
-front_port=${YAPPOD_FRONT_PORT:-10080}
+core_port=${YAPPOD_CORE_PORT:-18401}
+front_port=${YAPPOD_FRONT_PORT:-18400}
 web_host=${YAPPOD_WEB_HOST:-127.0.0.1}
 web_port=${YAPPOD_WEB_PORT:-4173}
 mock_host=${YAPPOD_MOCK_LLM_HOST:-127.0.0.1}
@@ -115,10 +115,6 @@ fi
 
 (cd "$web_dir" && npm run build)
 
-NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
-no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"
-export NO_PROXY no_proxy
-
 (
   cd "$web_dir"
   NODE_ENV=production \
@@ -164,12 +160,9 @@ if [ "$i" -eq 50 ]; then
   exit 1
 fi
 
-cleanup_needed=0
-trap - 0 1 2 15
-echo "Wikipedia search demo is ready: http://$web_host:$web_port"
 daemon_status=$(curl -fsS "http://$web_host:$web_port/api/status" 2>/dev/null || true)
 if ! printf '%s' "$daemon_status" | grep -q '"ready":true'; then
-  echo "Warning: Web UI is running, but yappod is not connected: $daemon_status" >&2
+  echo "Web application is running, but yappod is not connected: $daemon_status" >&2
   for service in core front; do
     service_failed=0
     if [ ! -f "$run_dir/$service.pid" ]; then
@@ -187,7 +180,11 @@ if ! printf '%s' "$daemon_status" | grep -q '"ready":true'; then
       sed -n '1,20p' "$run_dir/$service.error" >&2
     fi
   done
+  exit 1
 fi
+cleanup_needed=0
+trap - 0 1 2 15
+echo "Wikipedia search demo is ready: http://$web_host:$web_port"
 if [ "$mock_enabled" -eq 1 ]; then
   echo "mock LLM is enabled for local testing"
 fi

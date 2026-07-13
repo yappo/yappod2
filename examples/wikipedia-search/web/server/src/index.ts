@@ -22,7 +22,7 @@ if ([embeddingProvider, embeddingBaseUrl, embeddingModel].some(Boolean) &&
   throw new Error("EMBEDDING_PROVIDER, EMBEDDING_BASE_URL and EMBEDDING_MODEL must be configured together");
 }
 const app = await buildApp({
-  baseUrl: process.env.YAPPOD_URL ?? "http://127.0.0.1:10080",
+  baseUrl: process.env.YAPPOD_URL ?? "http://127.0.0.1:18400",
   writeToken: process.env.YAPPOD_WRITE_TOKEN,
   timeoutMs: Number.parseInt(process.env.YAPPOD_TIMEOUT_MS ?? "5000", 10),
   staticDir: process.env.NODE_ENV === "development" ? undefined : defaultStaticDir(),

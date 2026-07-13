@@ -17,8 +17,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define DEFAULT_FRONT_PORT 10080
-#define DEFAULT_CORE_PORT 10086
+#define DEFAULT_FRONT_PORT 18400
+#define DEFAULT_CORE_PORT 18401
 #define FRONT_WORKERS 16U
 #define MAX_HTTP_LINE_BYTES 8192U
 #define MAX_HTTP_HEADER_BYTES 65536U
