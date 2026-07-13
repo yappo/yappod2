@@ -53,7 +53,34 @@ static void test_snippet_grapheme_boundaries(void **state) {
   assert_non_null(strstr(output, "<mark>検索</mark>")); assert_int_equal(strlen(output), bytes);
 }
 
+static void test_plain_snippet_window_handles_long_japanese_text(void **state) {
+  const char *unit = "あ", *suffix = "検索🙂終端";
+  const size_t repeats = 5000U, unit_bytes = strlen(unit), suffix_bytes = strlen(suffix);
+  char *text = malloc(repeats * unit_bytes + suffix_bytes + 1U), output[128];
+  YAP_V2_BYTES_VIEW term = view("検索"), window;
+  size_t i;
+  (void)state;
+  assert_non_null(text);
+  for (i = 0U; i < repeats; i++) memcpy(text + i * unit_bytes, unit, unit_bytes);
+  memcpy(text + repeats * unit_bytes, suffix, suffix_bytes + 1U);
+  assert_int_equal(YAP_V2_snippet_window(view(text), &term, 1U, 8U, &window), YAP_V2_OK);
+  assert_true(window.len < sizeof(output));
+  memcpy(output, window.data, window.len); output[window.len] = '\0';
+  assert_non_null(strstr(output, "検索"));
+  assert_non_null(strstr(output, "🙂"));
+  assert_null(strstr(output, "<mark>"));
+  free(text);
+}
+
+static void test_plain_snippet_window_accepts_empty_text(void **state) {
+  YAP_V2_BYTES_VIEW empty = {NULL, 0U}, window = {(const unsigned char *)"x", 1U};
+  (void)state;
+  assert_int_equal(YAP_V2_snippet_window(empty, NULL, 0U, 180U, &window), YAP_V2_OK);
+  assert_null(window.data);
+  assert_int_equal(window.len, 0U);
+}
+
 int main(void) {
-  const struct CMUnitTest tests[] = {cmocka_unit_test(test_metadata_filter_roundtrip), cmocka_unit_test(test_snippet_grapheme_boundaries)};
+  const struct CMUnitTest tests[] = {cmocka_unit_test(test_metadata_filter_roundtrip), cmocka_unit_test(test_snippet_grapheme_boundaries), cmocka_unit_test(test_plain_snippet_window_handles_long_japanese_text), cmocka_unit_test(test_plain_snippet_window_accepts_empty_text)};
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

@@ -16,6 +16,72 @@ static int boundary(const int32_t *points, size_t count, size_t offset) {
   size_t i; for (i = 0U; i < count; i++) if ((size_t)points[i] == offset) return 1; return 0;
 }
 
+int YAP_V2_snippet_window(YAP_V2_BYTES_VIEW text, const YAP_V2_BYTES_VIEW *terms,
+                          size_t term_count, size_t max_graphemes,
+                          YAP_V2_BYTES_VIEW *window) {
+  UErrorCode error = U_ZERO_ERROR;
+  UText *utext = NULL;
+  UBreakIterator *iterator = NULL;
+  int32_t focus = 0, start, end, next;
+  size_t i, taken = 0U;
+  if (window == NULL || (text.len > 0U && text.data == NULL) || text.len > INT32_MAX ||
+      (term_count > 0U && terms == NULL) || max_graphemes == 0U || max_graphemes > 4096U ||
+      !valid_utf8(text.data, text.len)) return YAP_V2_INVALID_ARGUMENT;
+  if (text.len == 0U) {
+    window->data = text.data;
+    window->len = 0U;
+    return YAP_V2_OK;
+  }
+  for (i = 0U; i < term_count; i++)
+    if (terms[i].len == 0U || terms[i].data == NULL || terms[i].len > INT32_MAX ||
+        !valid_utf8(terms[i].data, terms[i].len)) return YAP_V2_INVALID_ARGUMENT;
+  utext = utext_openUTF8(NULL, (const char *)text.data, (int64_t)text.len, &error);
+  iterator = ubrk_open(UBRK_CHARACTER, "und", NULL, 0, &error);
+  if (U_FAILURE(error) || utext == NULL || iterator == NULL) goto allocation_error;
+  ubrk_setUText(iterator, utext, &error);
+  if (U_FAILURE(error)) goto allocation_error;
+  for (i = 0U; i < term_count; i++) {
+    size_t at;
+    for (at = 0U; at + terms[i].len <= text.len; at++) {
+      if (memcmp(text.data + at, terms[i].data, terms[i].len) == 0 &&
+          ubrk_isBoundary(iterator, (int32_t)at) &&
+          ubrk_isBoundary(iterator, (int32_t)(at + terms[i].len))) {
+        focus = (int32_t)at;
+        i = term_count;
+        break;
+      }
+    }
+  }
+  start = focus;
+  for (i = 0U; i < max_graphemes / 2U && start > 0; i++) {
+    next = ubrk_preceding(iterator, start);
+    if (next == UBRK_DONE) break;
+    start = next;
+  }
+  end = start;
+  while (taken < max_graphemes) {
+    next = ubrk_following(iterator, end);
+    if (next == UBRK_DONE) break;
+    end = next;
+    taken++;
+  }
+  while (taken < max_graphemes && start > 0) {
+    next = ubrk_preceding(iterator, start);
+    if (next == UBRK_DONE) break;
+    start = next;
+    taken++;
+  }
+  window->data = text.data == NULL ? NULL : text.data + (size_t)start;
+  window->len = (size_t)(end - start);
+  ubrk_close(iterator);
+  utext_close(utext);
+  return YAP_V2_OK;
+allocation_error:
+  if (iterator != NULL) ubrk_close(iterator);
+  if (utext != NULL) utext_close(utext);
+  return YAP_V2_ALLOCATION_FAILED;
+}
+
 int YAP_V2_snippet(YAP_V2_BYTES_VIEW text, const YAP_V2_BYTES_VIEW *terms, size_t term_count,
                    size_t max_graphemes, const char *open_mark, const char *close_mark,
                    char *output, size_t output_capacity, size_t *output_bytes) {
