@@ -14,5 +14,7 @@ int YAP_V2_config_fingerprint(const YAP_V2_CONFIG *config,
 void YAP_V2_config_fingerprint_hex(
     const unsigned char fingerprint[YAP_V2_CONFIG_FINGERPRINT_BYTES],
     char output[YAP_V2_CONFIG_FINGERPRINT_BYTES * 2U + 1U]);
+void YAP_V2_sha256_bytes(const unsigned char *data, size_t length,
+                         unsigned char output[YAP_V2_CONFIG_FINGERPRINT_BYTES]);
 
 #endif

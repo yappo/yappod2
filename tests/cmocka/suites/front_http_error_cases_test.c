@@ -133,12 +133,8 @@ static void test_front_json_search_api(void **state) {
                      &response),
                    0);
   assert_non_null(response);
-  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "405 Method Not Allowed"));
   assert_non_null(strstr(response, "Content-Type: application/json"));
-  assert_non_null(strstr(response, "\"api_version\":2"));
-  assert_non_null(strstr(response, "\"total\":1"));
-  assert_non_null(strstr(response, "http://example.com/doc1"));
-  assert_non_null(strstr(response, "\"next_cursor\":null"));
   free(response);
 
   assert_int_equal(ytest_http_send_text(
@@ -148,14 +144,39 @@ static void test_front_json_search_api(void **state) {
                      &response),
                    0);
   assert_non_null(response);
-  assert_non_null(strstr(response, "400 Bad Request"));
+  assert_non_null(strstr(response, "405 Method Not Allowed"));
   free(response);
+}
+
+static void test_front_v2_post_boundary(void **state) {
+  ctx_t *ctx = (ctx_t *)(*state); char *response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "GET /v2/search HTTP/1.1\r\nHost: localhost\r\n\r\n", &response), 0);
+  assert_non_null(strstr(response, "405 Method Not Allowed"));
+  assert_non_null(strstr(response, "\"code\":\"method_not_allowed\"")); free(response); response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "DELETE /v2/retrieve HTTP/1.1\r\nHost: localhost\r\n\r\n", &response), 0);
+  assert_non_null(strstr(response, "405 Method Not Allowed")); free(response); response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}", &response), 0);
+  assert_non_null(strstr(response, "415 Unsupported Media Type")); free(response); response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "POST /v2/retrieve HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 1048577\r\n\r\n{}", &response), 0);
+  assert_non_null(strstr(response, "413 Payload Too Large")); free(response); response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", &response), 0);
+  assert_non_null(strstr(response, "400 Bad Request")); free(response); response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,
+    "POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}", &response), 0);
+  assert_non_null(strstr(response, "400 Bad Request")); free(response);
+  assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test_setup_teardown(test_front_http_errors, setup, teardown),
     cmocka_unit_test_setup_teardown(test_front_json_search_api, setup, teardown),
+    cmocka_unit_test_setup_teardown(test_front_v2_post_boundary, setup, teardown),
   };
 
   return cmocka_run_group_tests(tests, NULL, NULL);

@@ -18,6 +18,10 @@ message typeはsearch、retrieve、ingest、healthそれぞれのrequest/respons
 区別します。requestとresponseは同じrequest IDを保持します。payloadは上位runtimeが解釈する
 UTF-8 JSONで、frame層はopaque bytesとして転送します。
 
+検索・retrieve request payloadはJSON本体です。対応するresponseとerror responseは先頭2 byteを
+network byte orderのHTTP status、その後をUTF-8 JSON本体とします。frontはmessage type、
+request ID、statusの組み合わせを検証してからHTTP responseへ変換します。
+
 readerは固定長headerを完全に読んでから上限を検証し、許可された長さだけを確保します。
 絶対上限は16 MiBで、各接続はそれ以下の上限を指定します。未知version/type、非zero flags/reserved、request ID 0、上限超過、
 途中で切れたframeはfail-closedで拒否します。memory decoderはheaderまたはpayloadが分割された
