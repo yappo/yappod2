@@ -315,7 +315,7 @@ static int send_json_error(FILE *stream, int status, const char *code, const cha
 
 static int discard_request_body(FILE *stream, size_t body_bytes) {
   /* Linux may reset a connection closed with unread request bytes and discard
-   * an already-flushed error response. Drain into a bounded stack buffer. */
+   * the error response. Drain first into a bounded stack buffer. */
   unsigned char buffer[4096];
   size_t remaining = body_bytes;
   while (remaining > 0U) {
@@ -527,14 +527,14 @@ static int handle_client(FILE *stream, const worker_t *worker) {
       YAP_V2_authorize_write(&runtime_policy,
         request.authorization[0] == '\0' ? NULL : request.authorization) != YAP_V2_OK) {
     response_status = 401;
-    (void)send_json_error(stream, response_status, "unauthorized", "Unauthorized");
     (void)discard_request_body(stream, request.content_length);
+    (void)send_json_error(stream, response_status, "unauthorized", "Unauthorized");
     goto observed;
   }
   if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.content_length) != YAP_V2_OK) {
     response_status = 503;
-    (void)send_json_error(stream, response_status, "overloaded", "Service Unavailable");
     (void)discard_request_body(stream, request.content_length);
+    (void)send_json_error(stream, response_status, "overloaded", "Service Unavailable");
     goto observed;
   }
   admitted = 1;
