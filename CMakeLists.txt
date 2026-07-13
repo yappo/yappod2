@@ -64,6 +64,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_filter_v2.c
   ${SRC_DIR}/yappo_snippet_v2.c
   ${SRC_DIR}/yappo_embedding.c
+  ${SRC_DIR}/yappo_vector_v2.c
   ${SRC_DIR}/yappo_search_api.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
@@ -400,6 +401,12 @@ if(YAPPOD_TESTS_NODAEMON)
     EXTRA_SOURCES ${SRC_DIR}/yappo_embedding.c
   )
   target_link_libraries(embedding_provider_test PRIVATE CURL::libcurl yappod::yyjson)
+  add_yappod_cmocka_test(
+    vector_v2_persistence
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_v2_persistence_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+  )
   add_yappod_cmocka_test(
     search_api
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_api_test.c

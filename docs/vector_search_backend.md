@@ -1,6 +1,6 @@
 # Vector search backend
 
-現在の v2 vector 契約には、参照実装として exact flat backend があります。各 entry の float 配列を全件走査し、指定 metric で score を計算して top-k を返します。embedding入力は[HTTP batch providerとprecomputed reader](embedding_provider.md)で生成できます。このモジュール単体では、永続 vector の読み込み、検索 runtime との接続、ANN/HNSW は提供しません。
+現在の v2 vector 契約には、参照実装として exact flat backend があります。各 entry の float 配列を全件走査し、指定 metric で score を計算して top-k を返します。embedding入力は[HTTP batch providerとprecomputed reader](embedding_provider.md)で生成でき、`vectors.yap2` readerがmapped passage vectorをこのbackendへ接続します。このモジュール単体では、snapshot横断の検索 runtime接続とANN/HNSWは提供しません。
 
 ## Metric
 
