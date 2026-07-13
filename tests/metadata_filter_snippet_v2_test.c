@@ -7,6 +7,7 @@
 #include "yappo_config_v2.h"
 #include "yappo_snippet_v2.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
