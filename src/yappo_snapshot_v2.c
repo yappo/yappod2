@@ -232,6 +232,12 @@ size_t YAP_V2_snapshot_segment_count(const YAP_V2_SEARCH_SNAPSHOT *snapshot) {
   return snapshot == NULL ? 0U : snapshot->segment_count;
 }
 
+const YAP_V2_SEGMENT *YAP_V2_snapshot_segment_documents(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                                        size_t segment_ordinal) {
+  if (snapshot == NULL || segment_ordinal >= snapshot->segment_count) return NULL;
+  return &snapshot->segments[segment_ordinal].documents;
+}
+
 static int segment_has_document(const SNAPSHOT_SEGMENT *segment, YAP_V2_BYTES_VIEW id,
                                 size_t *ordinal) {
   size_t i;
