@@ -11,7 +11,9 @@ pid_running() {
     return 1
   fi
   if [ -r "/proc/$pid/stat" ]; then
-    state=$(sed -n 's/^.*) \([A-Z]\) .*$/\1/p' "/proc/$pid/stat")
+    if ! state=$(sed -n 's/^.*) \([A-Z]\) .*$/\1/p' "/proc/$pid/stat" 2>/dev/null); then
+      return 1
+    fi
     if [ "$state" = "Z" ]; then
       return 1
     fi
