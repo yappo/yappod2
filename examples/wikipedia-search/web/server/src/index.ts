@@ -49,6 +49,6 @@ try {
   await app.listen({ host, port });
   console.log(`Wikipedia search web is ready: http://${host}:${port}`);
 } catch (error) {
-  app.log.error(error);
-  process.exitCode = 1;
+  console.error(error instanceof Error ? (error.stack ?? error.message) : error);
+  process.exit(1);
 }

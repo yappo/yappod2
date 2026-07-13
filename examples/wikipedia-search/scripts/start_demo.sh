@@ -123,19 +123,40 @@ fi
   YAPPOD_URL="http://127.0.0.1:$front_port" \
     exec node server/dist/index.js
 ) >"$run_dir/web.log" 2>"$run_dir/web.error" &
-echo "$!" >"$run_dir/web.pid"
+web_pid=$!
+echo "$web_pid" >"$run_dir/web.pid"
 
 i=0
+status=
 while [ "$i" -lt 50 ]; do
+  if ! kill -0 "$web_pid" 2>/dev/null; then
+    wait "$web_pid" 2>/dev/null || true
+    echo "Web application exited during startup." >&2
+    if [ -s "$run_dir/web.error" ]; then
+      sed -n '1,20p' "$run_dir/web.error" >&2
+    else
+      echo "No error output was produced; inspect $run_dir/web.log" >&2
+    fi
+    exit 1
+  fi
   status=$(curl -fsS "http://$web_host:$web_port/api/status" 2>/dev/null || true)
-  if printf '%s' "$status" | grep -q '"ready":true'; then
+  if grep -q '^Wikipedia search web is ready:' "$run_dir/web.log" 2>/dev/null &&
+     printf '%s' "$status" | grep -q '"ready":true'; then
     break
   fi
   sleep 0.1
   i=$((i + 1))
 done
 if [ "$i" -eq 50 ]; then
-  echo "Web application did not become ready; inspect $run_dir/web.error" >&2
+  echo "Web application did not become ready at http://$web_host:$web_port/api/status" >&2
+  if [ -n "$status" ]; then
+    echo "Last status response: $status" >&2
+  fi
+  if [ -s "$run_dir/web.error" ]; then
+    sed -n '1,20p' "$run_dir/web.error" >&2
+  else
+    echo "No error output was produced; inspect $run_dir/web.log" >&2
+  fi
   exit 1
 fi
 
