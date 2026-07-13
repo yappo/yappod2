@@ -3,8 +3,8 @@
 Yappod2 は、旧 Yappod を現行環境（主に Clang/CMake）で動作させるための移植・整備プロジェクトです。
 
 > **現代検索対応の現在地:** v2 immutable segment、lexical/vector/hybrid検索、RAG retrieval、
-> CLI/HTTP atomic update、live-only compaction/crash recovery、runtime資源制限とwrite tokenは製品経路へ接続済みです。運用監視、
-> 最終性能・legacy除去は未完了であり、残作業と最終受入条件は
+> CLI/HTTP atomic update、live-only compaction/crash recovery、runtime資源制限、write token、
+> health/metrics運用監視は製品経路へ接続済みです。最終性能・legacy除去は未完了であり、残作業と最終受入条件は
 > [現代検索基盤の完成契約](docs/modern_search_completion_contract.md)を正本とします。
 
 ## プロダクト概要
@@ -308,9 +308,11 @@ yappod_front -l /tmp/yappoindex \
   -s search-server3
 ```
 
-稼働確認には検索を実行しない `GET /healthz` を使えます。HTTP 200 と
-`{"status":"ok","service":"yappod_front"}` を返すため、ロードバランサの liveness probe
-に利用できます。検索 API の JSON 応答が必要なクライアントは
+processのlivenessは`GET /health/live`、core接続とv2 indexのconfig/manifest/checksumを含む
+readinessは`GET /health/ready`で確認します。`GET /healthz`は従来互換のliveness aliasです。
+Prometheus形式のrequest件数、latency、generation、in-flight量、embedding/compaction状態は
+`GET /metrics`で取得できます。詳細は[運用runbook](docs/operations_runbook_v2.md)を参照してください。
+検索 API の JSON 応答が必要なクライアントは
 [v2 JSON 検索 API](docs/search_json_api.md) を参照してください。
 
 ポート指定例（front/core を既定以外で起動）:

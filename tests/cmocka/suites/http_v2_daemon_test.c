@@ -72,6 +72,13 @@ static char *post(context_t *ctx, const char *endpoint, const char *body) {
   return response;
 }
 
+static char *get(context_t *ctx, const char *endpoint) {
+  char request[1024]; char *response = NULL;
+  assert_true(snprintf(request,sizeof(request),"GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",endpoint)>0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);
+  return response;
+}
+
 static char *post_authorized(context_t *ctx, const char *endpoint, const char *body,
                              const char *authorization) {
   char request[4096]; char *response = NULL;
@@ -86,13 +93,32 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
 
 static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;char *response=NULL;
   const char *body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"scope\":\"documents\",\"limit\":1}";char request[1024];
+  response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"status\":\"live\""));free(response);response=NULL;
+  response=get(ctx,"/health/ready");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"ready\":true"));assert_non_null(strstr(response,"\"generation\":1"));assert_non_null(strstr(response,"\"state\":\"precomputed_ready\""));free(response);response=NULL;
   assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-fruit\""));free(response);response=NULL;
   body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"limit\":1,\"max_context_bytes\":100}";
   assert_true(snprintf(request,sizeof(request),"POST /v2/retrieve HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"passage_id\":\"passage-fruit\""));assert_non_null(strstr(response,"\"url\":\"https://e.test/fruit\""));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
-  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
+  response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"text/plain; version=0.0.4"));
+  assert_non_null(strstr(response,"yappod_v2_manifest_generation 1"));
+  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 1"));
+  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"retrieve\",status_class=\"2xx\"} 1"));
+  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
+  assert_non_null(strstr(response,"yappod_v2_compaction_state{state=\"idle\"} 1"));
+  free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
+
+static void test_liveness_survives_readiness_failure(void **state) {
+  context_t *ctx=*state; char path[PATH_MAX]; char *response;
+  assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.json"),0);
+  { FILE *file=fopen(path,"wb");assert_non_null(file);assert_true(fputs("{}\n",file)>=0);assert_int_equal(fclose(file),0); }
+  response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));free(response);
+  response=get(ctx,"/health/ready");assert_non_null(strstr(response,"503 Service Unavailable"));assert_non_null(strstr(response,"\"ready\":false"));free(response);
+  response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"yappod_v2_ready 0"));free(response);
+  assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
 
 static void test_front_core_atomic_nrt_updates(void **state) {
   context_t *ctx=*state; char *response; struct timespec start,end;
@@ -141,6 +167,7 @@ static void test_memory_limit_rejects_before_body_allocation(void **state) {
 
 int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_liveness_survives_readiness_failure,setup,teardown),
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit)
