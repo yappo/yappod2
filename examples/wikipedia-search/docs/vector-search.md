@@ -1,6 +1,6 @@
 # 1,000記事をvector対応にする
 
-この文書は、`wikipedia_data.py fetch-api`で取得した最大1,000件の記事冒頭をGoogleのEmbeddingGemmaで
+この文書は、`wikipedia_data.py fetch-api`で取得した最大1,000件の記事をGoogleのEmbeddingGemmaで
 vector化し、yappod2のvector検索とhybrid検索を確認するための手順です。embeddingの実行には、
 ローカルで動くLM StudioまたはOllamaを使用します。外部の有料APIは必要ありません。
 
@@ -62,7 +62,7 @@ Google公式は検索queryに`task: search result | query:`、文書に`title: .
 
 ## 1,000件時の計画値
 
-以下は記事全文ではなく、Action APIが返す記事冒頭を対象にした計画値です。実測値ではなく、本文の
+以下は記事全文ではなく、Action APIが返す記事を対象にした計画値です。実測値ではなく、本文の
 長さ、生成passage数、モデルvariant、batch size、Macのメモリ容量によって変わります。
 
 | 項目 | 目安 |
@@ -89,7 +89,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-最大1,000記事の冒頭を取得します。
+最大1,000記事を取得します。
 
 ```sh
 cd examples/wikipedia-search
