@@ -74,8 +74,10 @@ const char *YAP_V2_status_string(YAP_V2_STATUS status) {
     return "I/O error";
   case YAP_V2_CHECKSUM_MISMATCH:
     return "checksum mismatch";
-  case YAP_V2_CONFLICT:
-    return "conflict";
+    case YAP_V2_CONFLICT:
+      return "conflict";
+    case YAP_V2_NOT_FOUND:
+      return "not found";
   default:
     return "unknown status";
   }
@@ -258,7 +260,9 @@ int YAP_V2_segment_descriptor_add_component(YAP_V2_SEGMENT_DESCRIPTOR *segment,
     return YAP_V2_INVALID_ARGUMENT;
   length = strnlen(component->name, sizeof(component->name));
   if (length == 0U || length >= sizeof(component->name) || component->file_type == 0U ||
-      component->file_bytes < YAP_V2_FILE_HEADER_BYTES || strchr(component->name, '/') != NULL ||
+      component->file_type > YAP_V2_FILE_ANN || component->file_bytes == 0U ||
+      (component->file_type != YAP_V2_FILE_ANN &&
+       component->file_bytes < YAP_V2_FILE_HEADER_BYTES) || strchr(component->name, '/') != NULL ||
       strchr(component->name, '\\') != NULL) {
     return YAP_V2_INVALID_FORMAT;
   }

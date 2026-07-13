@@ -66,6 +66,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_embedding.c
   ${SRC_DIR}/yappo_vector_v2.c
   ${SRC_DIR}/yappo_ann_v2.c
+  ${SRC_DIR}/yappo_snapshot_v2.c
   ${SRC_DIR}/yappo_search_api.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
@@ -414,6 +415,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ann_v2_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c
+  )
+  add_yappod_cmocka_test(
+    snapshot_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/snapshot_v2_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c
   )
   add_yappod_cmocka_test(
     search_api
