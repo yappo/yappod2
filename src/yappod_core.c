@@ -26,6 +26,7 @@
 #include "yappo_proto.h"
 #include "yappo_core_protocol_v2.h"
 #include "yappo_http_v2.h"
+#include "yappo_runtime_policy_v2.h"
 
 #define BUF_SIZE 1024
 #define DEFAULT_CORE_PORT 10086
@@ -48,6 +49,8 @@ YAPPO_CACHE yappod_core_cache;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_core_pidfile = "./core.pid";
+static YAP_V2_RUNTIME_POLICY g_runtime_policy;
+static YAP_V2_RUNTIME_LIMITER g_runtime_limiter;
 static void YAP_request_shutdown(int sig);
 
 int count;
@@ -125,18 +128,36 @@ static int YAP_is_v2_connection(int fd) {
 static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
   YAP_V2_CORE_FRAME request, response; YAP_V2_HTTP_OPERATION operation;
   char *json = NULL; size_t json_bytes = 0U; unsigned char *payload = NULL;
+  const unsigned char *request_json; size_t request_json_bytes; int admitted = 0;
   int http_status = 500, status;
   YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
-  status = YAP_V2_core_frame_read(socket, YAP_V2_HTTP_MAX_BODY_BYTES, &request);
+  status = YAP_V2_core_frame_read(socket, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
   if (status != YAP_V2_CORE_FRAME_OK) goto done;
   if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
   else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
   else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
   else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
-  if (YAP_V2_http_execute(index_dir, operation, request.payload, request.payload_bytes,
+  if (YAP_V2_runtime_limiter_acquire(&g_runtime_limiter, request.payload_bytes) != YAP_V2_OK) {
+    static const char overloaded[] = "{\"error\":{\"code\":\"overloaded\",\"message\":\"Service Unavailable\"}}";
+    http_status = 503; json = strdup(overloaded); json_bytes = sizeof(overloaded) - 1U;
+    if (json == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
+    goto respond;
+  }
+  admitted = 1; request_json = request.payload; request_json_bytes = request.payload_bytes;
+  if (operation == YAP_V2_HTTP_INGEST &&
+      YAP_V2_ingest_envelope_unwrap(&g_runtime_policy, request.payload, request.payload_bytes,
+                                    &request_json, &request_json_bytes) != YAP_V2_OK) {
+    static const char unauthorized[] = "{\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\"}}";
+    http_status = 401; json = strdup(unauthorized); json_bytes = sizeof(unauthorized) - 1U;
+    if (json == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
+    goto respond;
+  }
+  if (request_json_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
+      YAP_V2_http_execute(index_dir, operation, request_json, request_json_bytes,
                           &http_status, &json, &json_bytes) != 0 || json_bytes > UINT32_MAX - 2U) {
     status = YAP_V2_CORE_FRAME_IO_ERROR; goto done;
   }
+respond:
   payload = malloc(json_bytes + 2U);
   if (payload == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
   payload[0] = (unsigned char)((unsigned int)http_status >> 8);
@@ -150,6 +171,7 @@ static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
   status = YAP_V2_core_frame_write(socket, &response, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
   if (status == YAP_V2_CORE_FRAME_OK && fflush(socket) != 0) status = YAP_V2_CORE_FRAME_IO_ERROR;
 done:
+  if (admitted) YAP_V2_runtime_limiter_release(&g_runtime_limiter, request.payload_bytes);
   free(payload); free(json); YAP_V2_core_frame_free(&request); return status;
 }
 
@@ -341,6 +363,9 @@ void *thread_server(void *ip) {
       }
       continue;
     }
+    if (YAP_V2_socket_set_deadline(accept_socket, g_runtime_policy.request_timeout_ms) != YAP_V2_OK) {
+      YAP_Net_close_stream(&socket, &accept_socket); continue;
+    }
 
     printf("accept: %d\n", p->id);
 
@@ -414,6 +439,14 @@ void start_deamon_thread(char *indextexts_dirpath, int listen_port) {
   int i;
   pthread_t *pthread;
   YAP_THREAD_DATA *thread_data;
+  {
+    char policy_error[256] = {0};
+    memset(&g_runtime_limiter, 0, sizeof(g_runtime_limiter));
+    if (YAP_V2_runtime_policy_load_env(&g_runtime_policy, policy_error, sizeof(policy_error)) != YAP_V2_OK ||
+        YAP_V2_runtime_limiter_init(&g_runtime_limiter, &g_runtime_policy) != YAP_V2_OK) {
+      fprintf(stderr, "ERROR: runtime policy: %s\n", policy_error); exit(EXIT_FAILURE);
+    }
+  }
 
   /*ソケットの作成*/
   yap_socket = socket(AF_INET, SOCK_STREAM, 0);

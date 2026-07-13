@@ -31,6 +31,7 @@
 #include "yappo_search_api.h"
 #include "yappo_core_protocol_v2.h"
 #include "yappo_http_v2.h"
+#include "yappo_runtime_policy_v2.h"
 
 #define BUF_SIZE 1024
 #define MAX_HTTP_LINE_SIZE (16 * 1024)
@@ -59,6 +60,8 @@ int count;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_front_pidfile = "./front.pid";
+static YAP_V2_RUNTIME_POLICY g_runtime_policy;
+static YAP_V2_RUNTIME_LIMITER g_runtime_limiter;
 static void YAP_request_shutdown(int sig);
 static int YAP_readline_alloc(FILE *socket, char **line_out);
 
@@ -230,6 +233,9 @@ static int YAP_connect_core_stream(const char *host, int core_port, FILE **strea
     fflush(stderr);
     return -1;
   }
+  if (YAP_V2_socket_set_deadline(fd, g_runtime_policy.request_timeout_ms) != YAP_V2_OK) {
+    close(fd); return -1;
+  }
 
   stream = (FILE *)fdopen(fd, "r+");
   if (stream == NULL) {
@@ -277,9 +283,10 @@ static int YAP_is_v2_endpoint_with_non_post_method(const char *line) {
            (target[19] == '\0' || target[19] == '?')));
 }
 
-static int YAP_read_v2_headers(FILE *socket, size_t *content_length) {
-  int have_type = 0, have_length = 0;
-  *content_length = 0U;
+static int YAP_read_v2_headers(FILE *socket, size_t *content_length,
+                               char authorization[YAP_V2_AUTHORIZATION_MAX_BYTES + 1U]) {
+  int have_type = 0, have_length = 0, have_authorization = 0;
+  *content_length = 0U; authorization[0] = '\0';
   while (1) {
     char *line = NULL, *end; unsigned long long parsed; int read_rc = YAP_readline_alloc(socket, &line);
     if (read_rc <= 0) return -1;
@@ -302,6 +309,14 @@ static int YAP_read_v2_headers(FILE *socket, size_t *content_length) {
       *content_length = (size_t)parsed; have_length = 1;
     } else if (strncasecmp(line, "Transfer-Encoding:", 18U) == 0) {
       free(line); return -1;
+    } else if (strncasecmp(line, "Authorization:", 14U) == 0) {
+      const char *value = line + 14U; size_t length;
+      while (*value == ' ' || *value == '\t') value++;
+      length = strcspn(value, "\r\n");
+      if (have_authorization || length == 0U || length > YAP_V2_AUTHORIZATION_MAX_BYTES) {
+        free(line); return -1;
+      }
+      memcpy(authorization, value, length); authorization[length] = '\0'; have_authorization = 1;
     }
     free(line);
   }
@@ -311,13 +326,17 @@ static int YAP_read_v2_headers(FILE *socket, size_t *content_length) {
 static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION operation,
                             const unsigned char *body, size_t body_bytes, uint64_t request_id) {
   YAP_V2_CORE_FRAME request, response; uint16_t expected; int status, http_status;
-  const char *reason; size_t json_bytes;
+  const char *reason; size_t json_bytes, request_bytes = body_bytes; unsigned char *envelope = NULL;
   YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
   request.type = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_REQUEST :
                  operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_REQUEST :
                  YAP_V2_CORE_INGEST_REQUEST;
-  request.request_id = request_id; request.payload = (unsigned char *)body; request.payload_bytes = (uint32_t)body_bytes;
-  status = YAP_V2_core_frame_write(core, &request, YAP_V2_HTTP_MAX_BODY_BYTES);
+  if (operation == YAP_V2_HTTP_INGEST &&
+      YAP_V2_ingest_envelope_wrap(&g_runtime_policy, body, body_bytes, &envelope,
+                                  &request_bytes) != YAP_V2_OK) { status = -1; goto done; }
+  request.request_id = request_id; request.payload = envelope == NULL ? (unsigned char *)body : envelope;
+  request.payload_bytes = (uint32_t)request_bytes;
+  status = YAP_V2_core_frame_write(core, &request, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
   if (status != YAP_V2_CORE_FRAME_OK || fflush(core) != 0 ||
       YAP_V2_core_frame_read(core, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &response) != YAP_V2_CORE_FRAME_OK ||
       response.request_id != request_id || response.payload_bytes < 2U) { status = -1; goto done; }
@@ -329,6 +348,7 @@ static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION oper
   if ((response.type == expected && http_status != 200) ||
       (response.type == YAP_V2_CORE_ERROR_RESPONSE && http_status < 400)) { status = -1; goto done; }
   reason = http_status == 200 ? "OK" : http_status == 400 ? "Bad Request" :
+           http_status == 401 ? "Unauthorized" :
            http_status == 409 ? "Conflict" : "Service Unavailable";
   json_bytes = response.payload_bytes - 2U;
   if (YAP_writef(client, "HTTP/1.1 %d %s\r\nServer: Yappo Search/2.0\r\n"
@@ -338,7 +358,7 @@ static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION oper
     status = -1;
   else status = 0;
 done:
-  YAP_V2_core_frame_free(&response); return status;
+  free(envelope); YAP_V2_core_frame_free(&response); return status;
 }
 
 /*
@@ -802,6 +822,9 @@ void *thread_server(void *ip) {
       }
       continue;
     }
+    if (YAP_V2_socket_set_deadline(accept_socket, g_runtime_policy.request_timeout_ms) != YAP_V2_OK) {
+      YAP_Net_close_stream(&socket, &accept_socket); continue;
+    }
 
     read_rc = YAP_readline_alloc(socket, &line);
     if (read_rc <= 0) {
@@ -834,19 +857,28 @@ void *thread_server(void *ip) {
     }
 
     if (YAP_parse_v2_post_line(line, &v2_operation) == 0) {
-      unsigned char *body = NULL; size_t body_bytes = 0U; int headers;
-      headers = YAP_read_v2_headers(socket, &body_bytes);
+      unsigned char *body = NULL; size_t body_bytes = 0U; int headers, admitted = 0;
+      char authorization[YAP_V2_AUTHORIZATION_MAX_BYTES + 1U];
+      headers = YAP_read_v2_headers(socket, &body_bytes, authorization);
       if (headers != 0) {
         if (headers == -2) YAP_send_json_error(accept_socket, p->id, 415, "Unsupported Media Type", "unsupported_media_type");
         else if (headers == -3) YAP_send_json_error(accept_socket, p->id, 413, "Payload Too Large", "payload_too_large");
         else YAP_send_json_error(accept_socket, p->id, 400, "Bad Request", "invalid_http_request");
+      } else if (v2_operation == YAP_V2_HTTP_INGEST &&
+                 YAP_V2_authorize_write(&g_runtime_policy,
+                   authorization[0] == '\0' ? NULL : authorization) != YAP_V2_OK) {
+        YAP_send_json_error(accept_socket, p->id, 401, "Unauthorized", "unauthorized");
+      } else if (YAP_V2_runtime_limiter_acquire(&g_runtime_limiter, body_bytes) != YAP_V2_OK) {
+        YAP_send_json_error(accept_socket, p->id, 503, "Service Unavailable", "overloaded");
       } else {
+        admitted = 1;
         body = malloc(body_bytes);
         if (body == NULL || fread(body, 1U, body_bytes, socket) != body_bytes ||
             YAP_send_v2_http(socket, p->server_socket[0], v2_operation, body, body_bytes,
                              p->next_request_id++) != 0)
           YAP_send_json_error(accept_socket, p->id, 503, "Service Unavailable", "core_unavailable");
       }
+      if (admitted) YAP_V2_runtime_limiter_release(&g_runtime_limiter, body_bytes);
       free(body); free(line); YAP_Net_close_stream(&socket, &accept_socket); continue;
     }
 
@@ -1011,6 +1043,14 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
   pthread_t *pthread;
   YAP_THREAD_DATA *thread_data;
   (void)server_socket;
+  {
+    char policy_error[256] = {0};
+    memset(&g_runtime_limiter, 0, sizeof(g_runtime_limiter));
+    if (YAP_V2_runtime_policy_load_env(&g_runtime_policy, policy_error, sizeof(policy_error)) != YAP_V2_OK ||
+        YAP_V2_runtime_limiter_init(&g_runtime_limiter, &g_runtime_policy) != YAP_V2_OK) {
+      fprintf(stderr, "ERROR: runtime policy: %s\n", policy_error); exit(EXIT_FAILURE);
+    }
+  }
 
   /* ソケットの作成 */
   yap_socket = socket(AF_INET, SOCK_STREAM, 0);

@@ -13,6 +13,8 @@ chunked request、重複したlength/type、1 MiBを超えるbody、不完全bod
 検索`limit`は1から100です。JSONの未知field、型不一致、非有限vector、設定dimensionと
 異なるvector、modeに必要なquery/vectorの欠落もfail-closedで `400` を返します。
 media type不一致は`415`、body上限超過は`413`、検証済みsnapshotを開けない場合は`503`です。
+daemonのdeadline、in-flight request/byte上限、`/v2/documents:batch`のBearer tokenは
+[runtime resource limits and write authentication](runtime_limits_security.md)を参照してください。
 
 ## Search request
 

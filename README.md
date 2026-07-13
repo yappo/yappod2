@@ -3,7 +3,7 @@
 Yappod2 は、旧 Yappod を現行環境（主に Clang/CMake）で動作させるための移植・整備プロジェクトです。
 
 > **現代検索対応の現在地:** v2 immutable segment、lexical/vector/hybrid検索、RAG retrieval、
-> CLI/HTTP atomic updateとlive-only compaction/crash recoveryは製品経路へ接続済みです。資源制限、運用監視、
+> CLI/HTTP atomic update、live-only compaction/crash recovery、runtime資源制限とwrite tokenは製品経路へ接続済みです。運用監視、
 > 最終性能・legacy除去は未完了であり、残作業と最終受入条件は
 > [現代検索基盤の完成契約](docs/modern_search_completion_contract.md)を正本とします。
 
