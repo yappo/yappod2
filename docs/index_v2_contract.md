@@ -229,6 +229,10 @@ readerはread-only `mmap`し、header、generation、CRC32C、model、metric、d
 corruptionではなく`YAP_V2_CONFLICT`として拒否します。open後の`YAP_VECTOR_ENTRY`はmapped IDと
 aligned vectorを借用し、既存flat exact backendがcosine/dot/L2 top-kを実行します。
 
+### `vectors.usearch`
+
+`vectors.usearch`は`vectors.yap2`から再生成可能なUSearch 2.24.0 HNSW indexです。keyは同じsegment内の0始まりpassage ordinalであり、件数とdimensionは`vectors.yap2`に一致しなければなりません。writerは一時pathへsaveしてrenameし、readerはread-only viewします。manifest descriptorでは`name = vectors.usearch`、`file_type = vectors`を使い、checksumとfile sizeを検証対象にします。ANNの返すdistanceは外部scoreにせず、対応する`vectors.yap2` vectorを設定metricで再採点します。
+
 ## C APIの所有権
 
 - `YAP_V2_*_VIEW`の入力バイト列は呼び出し側が所有し、validate関数はコピーしません。
