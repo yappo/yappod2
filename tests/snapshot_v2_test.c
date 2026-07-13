@@ -29,9 +29,9 @@ static YAP_V2_DOCUMENT_VIEW document(const char *id, const char *title) {
 static void write_segment(const char *root, const char *id, uint64_t generation,
                           const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
                           const char *deleted_id, YAP_V2_SEGMENT_DESCRIPTOR *descriptor) {
-  char dir[PATH_MAX], path[PATH_MAX];
-  assert_int_equal(ytest_path_join(dir, sizeof(dir), root, "segments"), 0);
-  assert_int_equal(ytest_path_join(dir, sizeof(dir), dir, id), 0);
+  char segments_dir[PATH_MAX], dir[PATH_MAX], path[PATH_MAX];
+  assert_int_equal(ytest_path_join(segments_dir, sizeof(segments_dir), root, "segments"), 0);
+  assert_int_equal(ytest_path_join(dir, sizeof(dir), segments_dir, id), 0);
   assert_int_equal(ytest_mkdir_p(dir, 0700), 0);
   assert_int_equal(ytest_path_join(path, sizeof(path), dir, "documents.yap2"), 0);
   assert_int_equal(YAP_V2_segment_write(path, id, generation, documents, document_count,
