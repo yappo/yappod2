@@ -63,6 +63,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_metadata_v2.c
   ${SRC_DIR}/yappo_filter_v2.c
   ${SRC_DIR}/yappo_snippet_v2.c
+  ${SRC_DIR}/yappo_embedding.c
   ${SRC_DIR}/yappo_search_api.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
@@ -118,7 +119,7 @@ set(ALL_TARGETS
 
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
+  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n CURL::libcurl)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -196,6 +197,7 @@ function(add_yappod_cmocka_test test_name test_source)
       ICU::uc
       ICU::i18n
       yappod::yyjson
+      CURL::libcurl
   )
   if(M_LIB)
     target_link_libraries(${target_name} PRIVATE ${M_LIB})
@@ -391,6 +393,13 @@ if(YAPPOD_TESTS_NODAEMON)
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c
   )
   target_link_libraries(metadata_filter_snippet_v2_test PRIVATE yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
+  add_yappod_cmocka_test(
+    embedding_provider
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_provider_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_embedding.c
+  )
+  target_link_libraries(embedding_provider_test PRIVATE CURL::libcurl yappod::yyjson)
   add_yappod_cmocka_test(
     search_api
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_api_test.c
