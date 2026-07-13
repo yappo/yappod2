@@ -17,7 +17,18 @@ macOS:
 
 ```sh
 brew install cmake cmocka icu4c libevent curl
+
+MODERN_PREFIXES="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)"
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$MODERN_PREFIXES"
+cmake --build build -j
 ```
+
+HomebrewのICU4Cとcurlは`keg-only`で、通常のCMake探索先にはlinkされません。
+`CMAKE_PREFIX_PATH`を省略すると、CMakeがXcode SDK内のICU headerだけを検出し、`uc`と`i18n`の
+libraryを検出できない場合があります。一度configureに失敗した場合は、cacheが残っていない新しい
+build directoryを指定してください（例: `-B build-macos`）。
 
 Ubuntu:
 
@@ -28,6 +39,9 @@ sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev \
 ```
 
 ## Clean checkout から検索まで
+
+macOSでは前節の`CMAKE_PREFIX_PATH`を指定したconfigureを使用してください。Ubuntuなど依存libraryが
+標準の探索先にある環境では、次のconfigureでbuildできます。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release

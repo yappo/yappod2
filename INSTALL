@@ -16,6 +16,20 @@ Berkeley DB and zlib are not used by the v2 product.
 Build and test
 --------------
 
+On macOS, Homebrew's ICU4C and curl are keg-only. Pass their Homebrew
+prefixes, together with libevent, to CMake explicitly:
+
+    brew install cmake cmocka icu4c libevent curl
+    MODERN_PREFIXES="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)"
+    cmake -S . -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="$MODERN_PREFIXES"
+    cmake --build build -j
+    ctest --test-dir build --output-on-failure
+
+Use a new build directory if a previous configure cached ICU headers from the
+Xcode SDK. On systems where all dependencies are in standard search paths:
+
     cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
     cmake --build build -j
     ctest --test-dir build --output-on-failure

@@ -54,6 +54,25 @@ Ollamaと組み合わせてvector/hybrid検索を確認する場合は、
 
 リポジトリルートで本体をビルドしてください。
 
+macOS（Homebrew）では、リポジトリルートで次を実行します。ICU4Cとcurlは`keg-only`のため、
+HomebrewのprefixをCMakeへ明示します。
+
+```sh
+brew install cmake cmocka icu4c libevent curl
+
+MODERN_PREFIXES="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)"
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$MODERN_PREFIXES"
+cmake --build build -j
+```
+
+一度`Failed to find all ICU components`でconfigureに失敗した場合は、誤って検出したXcode SDKの
+ICU headerがCMake cacheに残る可能性があります。その場合は、`-B build-macos`のように未使用の
+build directoryを指定してください。
+
+Ubuntuなど依存libraryが標準の探索先にある環境では、通常のconfigureを使用できます。
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
