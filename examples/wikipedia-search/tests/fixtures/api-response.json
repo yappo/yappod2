@@ -1,0 +1,22 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "pages": [
+      {
+        "pageid": 123,
+        "ns": 0,
+        "title": "日本語",
+        "extract": "日本語は、主に日本国内で使用されている言語である。",
+        "lastrevid": 456,
+        "fullurl": "https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC%E8%AA%9E"
+      },
+      {
+        "pageid": 124,
+        "ns": 0,
+        "title": "空の記事",
+        "extract": "",
+        "fullurl": "https://ja.wikipedia.org/wiki/%E7%A9%BA%E3%81%AE%E8%A8%98%E4%BA%8B"
+      }
+    ]
+  }
+}

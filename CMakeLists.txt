@@ -12,6 +12,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
 
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME wikipedia_example_converter
+    COMMAND ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/examples/wikipedia-search/tests
+            -p test_*.py
+  )
+endif()
+
 option(YAPPOD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(YAPPOD_TESTS_DAEMON "Enable daemon-based test suites" ON)
 option(YAPPOD_TESTS_NODAEMON "Enable non-daemon test suites" ON)

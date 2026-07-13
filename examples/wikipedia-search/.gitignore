@@ -1,0 +1,6 @@
+data/
+index/
+run/
+.venv/
+__pycache__/
+tests/__pycache__/
