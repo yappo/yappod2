@@ -218,6 +218,7 @@ describe("Wikipedia search BFF", () => {
     const outage = await outageApp.inject({ method: "POST", url: "/api/search", payload: { query: "検索" } });
     expect(outage.statusCode).toBe(503);
     expect(outage.json().code).toBe("daemon_unavailable");
+    expect(outage.json().message).toContain("offline");
 
     const unauthorizedApp = await appWith(fakeFetch(() => Response.json(
       { code: "unauthorized", message: "raw upstream message" },

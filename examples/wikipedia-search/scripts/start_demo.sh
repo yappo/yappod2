@@ -115,6 +115,10 @@ fi
 
 (cd "$web_dir" && npm run build)
 
+NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
+no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"
+export NO_PROXY no_proxy
+
 (
   cd "$web_dir"
   NODE_ENV=production \
@@ -167,15 +171,18 @@ daemon_status=$(curl -fsS "http://$web_host:$web_port/api/status" 2>/dev/null ||
 if ! printf '%s' "$daemon_status" | grep -q '"ready":true'; then
   echo "Warning: Web UI is running, but yappod is not connected: $daemon_status" >&2
   for service in core front; do
+    service_failed=0
     if [ ! -f "$run_dir/$service.pid" ]; then
       echo "$service daemon is not running (PID file is missing)." >&2
+      service_failed=1
     else
       service_pid=$(sed -n '1p' "$run_dir/$service.pid")
       if ! kill -0 "$service_pid" 2>/dev/null; then
         echo "$service daemon exited (PID $service_pid)." >&2
+        service_failed=1
       fi
     fi
-    if [ -s "$run_dir/$service.error" ]; then
+    if [ "$service_failed" -eq 1 ] && [ -s "$run_dir/$service.error" ]; then
       echo "$service daemon error:" >&2
       sed -n '1,20p' "$run_dir/$service.error" >&2
     fi

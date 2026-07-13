@@ -19,6 +19,9 @@ if [ -f "$run_dir/core.pid" ] || [ -f "$run_dir/front.pid" ]; then
   echo "daemon PID file already exists in $run_dir" >&2
   exit 1
 fi
+for log in core.log core.error front.log front.error; do
+  : > "$run_dir/$log"
+done
 
 cd "$run_dir"
 "$repo_root/build/yappod_core" --index "$index" --port "$core_port"

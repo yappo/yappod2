@@ -40,6 +40,16 @@ function errorMessage(body: unknown, fallback: string): string {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : fallback;
 }
 
+function connectionErrorDetail(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown network error";
+  const cause = (error as Error & { cause?: unknown }).cause;
+  if (typeof cause === "object" && cause !== null &&
+      "code" in cause && typeof cause.code === "string") {
+    return `${error.message}: ${cause.code}`;
+  }
+  return error.message;
+}
+
 export class YappodClient {
   private readonly fetchImpl: typeof fetch;
 
@@ -54,8 +64,12 @@ export class YappodClient {
         ...init,
         signal: AbortSignal.timeout(this.options.timeoutMs),
       });
-    } catch {
-      throw new YappodRequestError(503, "daemon_unavailable", "yappodに接続できません");
+    } catch (error) {
+      throw new YappodRequestError(
+        503,
+        "daemon_unavailable",
+        `yappodに接続できません (${connectionErrorDetail(error)})`,
+      );
     }
 
     let body: unknown;
