@@ -9,7 +9,7 @@ export interface EmbeddingClientOptions {
   dimensions: number;
   timeoutMs: number;
   batchSize?: number;
-  apiKey?: string;
+  authorizationToken?: string;
   profile?: EmbeddingProfile;
   fetchImpl?: typeof fetch;
 }
@@ -119,7 +119,7 @@ export class EmbeddingClient {
   private async embedBatch(inputs: string[]): Promise<number[][]> {
     let response: Response;
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (this.options.apiKey) headers.authorization = `Bearer ${this.options.apiKey}`;
+    if (this.options.authorizationToken) headers.authorization = `Bearer ${this.options.authorizationToken}`;
     try {
       response = await this.fetchImpl(endpoint(this.options), {
         method: "POST",
