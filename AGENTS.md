@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `src/` にコアの C ソースとヘッダーがあります（`yappod_core`, `yappod_front`, `search`, `yappo_makeindex` など）。
 - `build/` はビルド成果物置き場です（再生成可能）。
-- `sample.gz` はインデックス入力のサンプルです。
+- `examples/` に v2 config と canonical NDJSON の実行可能なサンプルがあります。
 - ルートの `README`/`INSTALL`/`NEWS` に使い方や変更履歴があります。
 
 ## Build, Test, and Development Commands
@@ -13,9 +13,9 @@
 - `cmake -S . -B build -DCMAKE_INSTALL_PREFIX=$HOME/yappod` でインストール先を指定できます。
 
 README の例:
-- インデックス作成: `yappo_makeindex -f sample.gz -d /tmp/yappoindex`
-- 検索: `search -l /tmp/yappoindex キーワード`
-- デーモン起動: `yappod_core -l /tmp/yappoindex` と `yappod_front -l /tmp/yappoindex -s localhost`
+- インデックス作成: `yappo_makeindex build --config examples/config.toml --input examples/documents.ndjson --index /tmp/yappoindex`
+- 検索: `search --index /tmp/yappoindex --mode lexical --query キーワード`
+- デーモン起動: `yappod_core --index /tmp/yappoindex` と `yappod_front --index /tmp/yappoindex --core-host 127.0.0.1`
 
 ## Coding Style & Naming Conventions
 - 言語: C（`src/*.c` では K&R 風の中括弧と 2 スペースインデントが見られます）。
@@ -25,10 +25,10 @@ README の例:
 
 ## Testing Guidelines
 - テスト実行は `ctest --test-dir build --output-on-failure` を基準手順とします。
-- 必要に応じて `sample.gz` などの小規模データでインデックス作成 → 検索の動作確認も行ってください。
+- 必要に応じて `examples/` の小規模データでインデックス作成 → 全検索 mode の動作確認も行ってください。
 
 ## Commit & Pull Request Guidelines
-- 既存のコミットは短く動詞ベースの英語（例: “support modern berkeley db”）。同じスタイルを推奨します。
+- コミットは短く動詞ベースの英語にします。
 - PR には概要、検証手順（コマンドと入力例）、互換性や挙動変更のメモを含めてください。
 
 ## タスク開発フロー（必須）
@@ -44,7 +44,7 @@ README の例:
    - 必要に応じて不具合再現/修正確認コマンド（CLI/HTTPなど）を実行して正常に動作することを確認する
 5. コミットメッセージは `type: summary` 形式（英語・命令形）を必須とします。`type` は `fix|refactor|test|docs|chore`。例: `fix: validate required -d option in mergepos`
 6. PRは `gh` コマンドで作成し、本文は次のテンプレートを必須とします。
-   - `gh pr create --base master --head <branch> --title \"<title>\" --body-file <file>`
+   - `gh pr create --base main --head <branch> --title \"<title>\" --body-file <file>`
    - `## 背景`
    - `## 変更内容`
    - `## 検証手順`
@@ -74,5 +74,5 @@ README の例:
 ```
 
 ## Configuration & Data Notes
-- 入力フォーマットは 1 行 1 ドキュメントのタブ区切り: `URL\tCOMMAND\tTITLE\tBODY_SIZE\tBODY`。
-- インデックス用ディレクトリには `pos/` サブディレクトリが必要です。
+- 正式入力は 1 行 1 operation の canonical NDJSON です。TSV は `prepare --input-format tsv` adapter で変換します。
+- index の正式 layout は `config.toml`、`manifest.json`、`segments/<segment-id>/` です。

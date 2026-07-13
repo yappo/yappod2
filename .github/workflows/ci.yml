@@ -10,6 +10,9 @@ on:
       - "cmake/**"
       - "src/**"
       - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "INSTALL"
   pull_request:
     branches:
       - main
@@ -19,6 +22,9 @@ on:
       - "cmake/**"
       - "src/**"
       - "tests/**"
+      - "examples/**"
+      - "README.md"
+      - "INSTALL"
   workflow_dispatch:
 
 concurrency:
@@ -45,14 +51,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libdb-dev zlib1g-dev libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev
+          sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev
 
       - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install berkeley-db cmocka icu4c libevent curl
+          brew install cmocka icu4c libevent curl
 
       - name: Configure (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -62,13 +68,10 @@ jobs:
       - name: Configure (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          BDB_PREFIX="$(brew --prefix berkeley-db)"
           MODERN_PREFIXES="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)"
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${MODERN_PREFIXES}" \
-            -DBDB_INCLUDE_DIR="${BDB_PREFIX}/include" \
-            -DBDB_LIB="${BDB_PREFIX}/lib/libdb.dylib"
+            -DCMAKE_PREFIX_PATH="${MODERN_PREFIXES}"
 
       - name: Build
         run: |
@@ -169,9 +172,15 @@ jobs:
           INDEX_DIR="$(mktemp -d)"
           trap 'rm -rf "${INDEX_DIR}"' EXIT
 
-          mkdir -p "${INDEX_DIR}/pos"
-          "${PREFIX}/bin/yappo_makeindex" -f tests/fixtures/index.txt -d "${INDEX_DIR}" >/dev/null
-          "${PREFIX}/bin/search" -l "${INDEX_DIR}" "OpenAI2025" | grep -q "http://example.com/doc1"
+          rmdir "${INDEX_DIR}"
+          "${PREFIX}/bin/yappo_makeindex" build \
+            --config examples/config.toml \
+            --input examples/documents.ndjson \
+            --index "${INDEX_DIR}" >/dev/null
+          "${PREFIX}/bin/search" \
+            --index "${INDEX_DIR}" \
+            --mode lexical \
+            --query "modern search" | grep -q '"id":"doc-1"'
 
   build-and-test-sanitizer:
     name: ubuntu-latest (sanitizer)
@@ -185,7 +194,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libdb-dev zlib1g-dev libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev clang
+          sudo apt-get install -y cmake libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev clang
 
       - name: Configure (sanitizer)
         run: |

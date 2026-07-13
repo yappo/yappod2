@@ -30,32 +30,19 @@ function(yappod_enable_warnings target)
 endfunction()
 
 find_package(Threads REQUIRED)
-find_package(ZLIB REQUIRED)
 find_package(cmocka REQUIRED)
 include(Dependencies)
-
-find_path(BDB_INCLUDE_DIR db.h)
-find_library(BDB_LIB db)
-if(NOT BDB_INCLUDE_DIR OR NOT BDB_LIB)
-  message(FATAL_ERROR "Berkeley DB not found. Install berkeley-db and set BDB_INCLUDE_DIR/BDB_LIB if needed.")
-endif()
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 set(YAPPO_BASE_SOURCES
-  ${SRC_DIR}/yappo_alloc.c
   ${SRC_DIR}/yappo_io.c
   ${SRC_DIR}/yappo_net.c
-  ${SRC_DIR}/yappo_stat.c
-  ${SRC_DIR}/yappo_db.c
-  ${SRC_DIR}/yappo_index.c
-  ${SRC_DIR}/yappo_index_pos.c
-  ${SRC_DIR}/yappo_index_filedata.c
-  ${SRC_DIR}/yappo_index_deletefile.c
   ${SRC_DIR}/yappo_index_v2.c
   ${SRC_DIR}/yappo_config_v2.c
   ${SRC_DIR}/yappo_unicode.c
   ${SRC_DIR}/yappo_ingest.c
+  ${SRC_DIR}/yappo_build_v2.c
   ${SRC_DIR}/yappo_update_v2.c
   ${SRC_DIR}/yappo_writer_lock_v2.c
   ${SRC_DIR}/yappo_runtime_policy_v2.c
@@ -76,69 +63,42 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_retrieve_v2.c
   ${SRC_DIR}/yappo_core_protocol_v2.c
   ${SRC_DIR}/yappo_http_v2.c
-  ${SRC_DIR}/yappo_search_api.c
+  ${SRC_DIR}/yappo_bm25.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
   ${SRC_DIR}/yappo_hybrid.c
 )
 
-set(YAPPO_SEARCH_SOURCES
-  ${SRC_DIR}/yappo_bm25.c
-  ${SRC_DIR}/yappo_search.c
-  ${SRC_DIR}/yappo_ngram.c
-  ${SRC_DIR}/yappo_linklist.c
-  ${SRC_DIR}/yappo_proto.c
-)
-
 add_library(yappod_base STATIC ${YAPPO_BASE_SOURCES})
-target_include_directories(yappod_base PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-target_link_libraries(yappod_base PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads
+target_include_directories(yappod_base PRIVATE ${SRC_DIR})
+target_link_libraries(yappod_base PRIVATE Threads::Threads
   yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
 yappod_enable_warnings(yappod_base)
 
-add_executable(search
-  ${YAPPO_SEARCH_SOURCES}
-  ${SRC_DIR}/search.c
-)
+add_executable(search ${SRC_DIR}/search.c)
 
-add_executable(yappo_makeindex
-  ${SRC_DIR}/yappo_ngram.c
-  ${SRC_DIR}/yappo_minibtree.c
-  ${SRC_DIR}/yappo_makeindex.c
-)
-
-add_executable(yappo_mergepos
-  ${YAPPO_SEARCH_SOURCES}
-  ${SRC_DIR}/yappo_mergepos.c
-)
+add_executable(yappo_makeindex ${SRC_DIR}/yappo_makeindex.c)
 
 add_executable(yappo_compact
   ${SRC_DIR}/yappo_compact_v2.c
   ${SRC_DIR}/yappo_compact.c
 )
 
-add_executable(yappod_core
-  ${YAPPO_SEARCH_SOURCES}
-  ${SRC_DIR}/yappod_core.c
-)
+add_executable(yappod_core ${SRC_DIR}/yappod_core.c)
 
-add_executable(yappod_front
-  ${YAPPO_SEARCH_SOURCES}
-  ${SRC_DIR}/yappod_front.c
-)
+add_executable(yappod_front ${SRC_DIR}/yappod_front.c)
 
 set(ALL_TARGETS
   search
   yappo_makeindex
-  yappo_mergepos
   yappo_compact
   yappod_core
   yappod_front
 )
 
 foreach(tgt IN LISTS ALL_TARGETS)
-  target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-  target_link_libraries(${tgt} PRIVATE yappod_base ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
+  target_include_directories(${tgt} PRIVATE ${SRC_DIR})
+  target_link_libraries(${tgt} PRIVATE yappod_base Threads::Threads yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -160,25 +120,20 @@ set(TEST_SUPPORT_SOURCES
   ${TEST_COMMON_DIR}/test_fs.c
   ${TEST_COMMON_DIR}/test_cli.c
   ${TEST_COMMON_DIR}/test_http.c
-  ${TEST_COMMON_DIR}/test_index.c
-  ${TEST_COMMON_DIR}/test_input_builder.c
   ${TEST_COMMON_DIR}/test_proc.c
-  ${TEST_COMMON_DIR}/test_db_tmpfiles.c
-  ${TEST_COMMON_DIR}/test_yappod.c
-  ${TEST_COMMON_DIR}/test_mutation.c
 )
 
 add_library(yappod_test_support STATIC ${TEST_SUPPORT_SOURCES})
 yappod_enable_warnings(yappod_test_support)
 target_include_directories(yappod_test_support
-  PUBLIC ${SRC_DIR} ${TEST_COMMON_DIR} ${BDB_INCLUDE_DIR}
+  PUBLIC ${SRC_DIR} ${TEST_COMMON_DIR}
 )
 target_compile_definitions(yappod_test_support
   PRIVATE
     YTEST_ROOT_DIR="${CMAKE_SOURCE_DIR}"
     YTEST_BUILD_DIR="${CMAKE_BINARY_DIR}"
 )
-target_link_libraries(yappod_test_support PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads)
+target_link_libraries(yappod_test_support PRIVATE Threads::Threads)
 if(M_LIB)
   target_link_libraries(yappod_test_support PRIVATE ${M_LIB})
 endif()
@@ -203,14 +158,12 @@ function(add_yappod_cmocka_test test_name test_source)
   )
   yappod_enable_warnings(${target_name})
   target_include_directories(${target_name}
-    PRIVATE ${SRC_DIR} ${TEST_COMMON_DIR} ${BDB_INCLUDE_DIR}
+    PRIVATE ${SRC_DIR} ${TEST_COMMON_DIR}
   )
   target_link_libraries(${target_name}
     PRIVATE
       yappod_test_support
       ${CMOCKA_TARGET}
-      ${BDB_LIB}
-      ZLIB::ZLIB
       Threads::Threads
       yappod::tomlc99
       ICU::uc
@@ -242,24 +195,6 @@ if(YAPPOD_TESTS_DAEMON)
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
   )
   add_yappod_cmocka_test(
-    error_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/error_cases_test.c
-    RUN_SERIAL
-    LABEL daemon
-  )
-  add_yappod_cmocka_test(
-    front_http_error_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/front_http_error_cases_test.c
-    RUN_SERIAL
-    LABEL daemon
-  )
-  add_yappod_cmocka_test(
-    daemon_port_option_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/daemon_port_option_cases_test.c
-    RUN_SERIAL
-    LABEL daemon
-  )
-  add_yappod_cmocka_test(
     v2_daemon_reliability
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality/v2_daemon_reliability_test.c
     RUN_SERIAL
@@ -285,65 +220,15 @@ if(YAPPOD_TESTS_NODAEMON)
   set_tests_properties(dependency_smoke PROPERTIES LABELS standalone)
 
   add_yappod_cmocka_test(
-    e2e
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/e2e_test.c
-    LABEL standalone
-  )
-  add_yappod_cmocka_test(
-    makeindex_input_error_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/makeindex_input_error_cases_test.c
-    LABEL standalone
-  )
-  add_yappod_cmocka_test(
-    mergepos_error_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/mergepos_error_cases_test.c
-    LABEL standalone
-  )
-  add_yappod_cmocka_test(
-    opendir_error_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/opendir_error_cases_test.c
-    LABEL standalone
-  )
-  add_yappod_cmocka_test(
-    relative_index_dir_cases
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/relative_index_dir_cases_test.c
-    LABEL standalone
-  )
-  add_yappod_cmocka_test(
-    search_deletefile_bounds
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_deletefile_bounds_test.c
-    LABEL standalone
-    EXTRA_SOURCES ${YAPPO_BASE_SOURCES} ${YAPPO_SEARCH_SOURCES}
-  )
-  add_yappod_cmocka_test(
-    filedata_decode_bounds
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/filedata_decode_bounds_test.c
-    LABEL standalone
-    EXTRA_SOURCES ${YAPPO_BASE_SOURCES} ${YAPPO_SEARCH_SOURCES}
-  )
-  add_yappod_cmocka_test(
-    search_deletefile_concurrency
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_deletefile_concurrency_test.c
-    LABEL standalone
-    EXTRA_SOURCES ${YAPPO_BASE_SOURCES} ${YAPPO_SEARCH_SOURCES}
-  )
-  add_yappod_cmocka_test(
-    index_varint_decode
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_varint_decode_test.c
-    LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_index.c
-  )
-  add_yappod_cmocka_test(
     seek_offset_overflow
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/seek_offset_overflow_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_io.c
   )
   add_yappod_cmocka_test(
-    pos_index_bounds
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/pos_index_bounds_test.c
+    v2_cli_acceptance
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/v2_cli_acceptance_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_index_pos.c
   )
   add_yappod_cmocka_test(
     canonical_ingest
@@ -472,7 +357,7 @@ if(YAPPOD_TESTS_NODAEMON)
     core_protocol_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_protocol_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_core_protocol_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_core_protocol_v2.c
   )
   add_yappod_cmocka_test(
     http_v2_runtime
@@ -500,13 +385,6 @@ if(YAPPOD_TESTS_NODAEMON)
   )
   target_link_libraries(observability_v2_test PRIVATE yappod_base)
   add_yappod_cmocka_test(
-    search_api
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_api_test.c
-    LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_search_api.c
-  )
-
-  add_yappod_cmocka_test(
     search_quality_metrics
     ${QUALITY_TEST_DIR}/search_quality_metrics_test.c
     LABEL standalone
@@ -514,38 +392,10 @@ if(YAPPOD_TESTS_NODAEMON)
   )
   target_include_directories(search_quality_metrics_test PRIVATE ${QUALITY_TEST_DIR})
 
-  add_executable(search_quality
-    ${QUALITY_TEST_DIR}/search_quality.c
-    ${QUALITY_TEST_DIR}/search_quality_metrics.c
-  )
-  yappod_enable_warnings(search_quality)
-  target_include_directories(search_quality
-    PRIVATE ${QUALITY_TEST_DIR} ${TEST_COMMON_DIR}
-  )
-  target_link_libraries(search_quality PRIVATE yappod_test_support)
-  if(M_LIB)
-    target_link_libraries(search_quality PRIVATE ${M_LIB})
-  endif()
-
   add_executable(v2_load_probe ${QUALITY_TEST_DIR}/v2_load_probe.c)
   yappod_enable_warnings(v2_load_probe)
   target_include_directories(v2_load_probe PRIVATE ${TEST_COMMON_DIR})
   target_link_libraries(v2_load_probe PRIVATE yappod_test_support yappod::yyjson Threads::Threads)
-
-  add_test(
-    NAME search_quality_baseline
-    COMMAND $<TARGET_FILE:search_quality>
-      --build-dir ${CMAKE_BINARY_DIR}
-      --input ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/index.txt
-      --queries ${QUALITY_TEST_DIR}/queries.tsv
-      --qrels ${QUALITY_TEST_DIR}/qrels.tsv
-      --baseline ${QUALITY_TEST_DIR}/baseline.tsv
-      --repeat 5
-  )
-  set_tests_properties(search_quality_baseline PROPERTIES
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    LABELS standalone
-  )
 
   add_yappod_cmocka_test(
     v2_search_quality

@@ -1,6 +1,7 @@
 # BM25語彙ランキング
 
-> **現在の状態:** BM25 scorerはv1の辞書・postingを使う検索へ接続されていますが、v2 terms/postings、複数segment、metadata filter、block-max top-kには未接続です。製品のlexical検索完成条件は[現代検索基盤の完成契約](modern_search_completion_contract.md)を参照してください。
+> **実装状態:** BM25F scorer は v2 terms/postings、複数 immutable segment、metadata filter、
+> block-max WAND top-k に接続されています。CLI と HTTP の lexical/hybrid mode が同じ scorer を使います。
 
 v1の辞書・postingを使う語彙検索では、各検索語のpostingを読み込んだ時点でBM25スコアを計算します。検索結果のAND/OR/phraseマージと削除文書の除外は既存の処理を引き続き使います。
 

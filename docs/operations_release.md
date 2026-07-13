@@ -7,7 +7,7 @@
 
 ## 起動前チェック
 
-1. index directory と `pos/` の所有者・権限を確認する。
+1. index directory、`manifest.json`、`segments/` の所有者・権限を確認する。
 2. v2 index を利用する場合は `manifest.json` を読み、format version、generation、segment checksum が期待値と一致することを確認する。
 3. tokenizer/chunking/vector の設定を同じ generation の writer と reader で共有する。設定変更時は再索引して generation を分ける。
 4. core を起動してから front を起動する。front は全 core への接続が確立してからリクエストを受け付ける。

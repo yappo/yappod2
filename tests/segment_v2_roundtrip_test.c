@@ -69,8 +69,9 @@ static void test_segment_roundtrip_and_checksum(void **state) {
                    YAP_V2_OK);
   assert_int_equal(written.document_count, 1U);
   assert_int_equal(written.passage_count, 1U);
-  assert_true(written.file_bytes > YAP_V2_FILE_HEADER_BYTES);
-  assert_true(written.checksum[0] != 0U || written.checksum[1] != 0U);
+  assert_true(written.components[0].file_bytes > YAP_V2_FILE_HEADER_BYTES);
+  assert_true(written.components[0].checksum[0] != 0U ||
+              written.components[0].checksum[1] != 0U);
 
   YAP_V2_segment_init(&segment);
   assert_int_equal(YAP_V2_segment_read(path, 7U, &segment, &read_descriptor), YAP_V2_OK);
@@ -81,8 +82,14 @@ static void test_segment_roundtrip_and_checksum(void **state) {
   assert_memory_equal(segment.documents[0].id.data, "doc-1", 5U);
   assert_memory_equal(segment.documents[0].body.data, "A body for retrieval", 20U);
   assert_memory_equal(segment.passages[0].text.data, "A body for retrieval", 20U);
-  assert_memory_equal(read_descriptor.checksum, written.checksum, sizeof(written.checksum));
-  assert_int_equal(read_descriptor.file_bytes, written.file_bytes);
+  assert_int_equal(read_descriptor.document_count, written.document_count);
+  assert_int_equal(read_descriptor.passage_count, written.passage_count);
+  assert_int_equal(read_descriptor.component_count, 1U);
+  assert_int_equal(read_descriptor.components[0].file_bytes,
+                   written.components[0].file_bytes);
+  assert_memory_equal(read_descriptor.components[0].checksum,
+                      written.components[0].checksum,
+                      sizeof(written.components[0].checksum));
   YAP_V2_segment_free(&segment);
 
   YAP_V2_segment_init(&segment);

@@ -113,14 +113,6 @@ static int parse_segment(yyjson_val *value, YAP_V2_SEGMENT_DESCRIPTOR *segment) 
     if (status == YAP_V2_OK)
       status = YAP_V2_segment_descriptor_add_component(segment, &component);
   }
-  if (status == YAP_V2_OK) {
-    size_t i;
-    for (i = 0U; i < segment->component_count; i++)
-      if (segment->components[i].file_type == YAP_V2_FILE_DOCUMENTS) {
-        segment->file_bytes = segment->components[i].file_bytes;
-        memcpy(segment->checksum, segment->components[i].checksum, 32U);
-      }
-  }
   return status;
 }
 

@@ -170,7 +170,7 @@ int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OP
     yyjson_arr_iter_init(vectors,&outer);
     while((row=yyjson_arr_iter_next(&outer))!=NULL){
       yyjson_arr_iter inner;yyjson_val *number;yyjson_arr_iter_init(row,&inner);
-      while((number=yyjson_arr_iter_next(&inner))!=NULL){double value;if(!yyjson_is_num(number)||(value=yyjson_get_real(number),!isfinite(value))||value>FLT_MAX||value<-FLT_MAX)goto invalid;operation->vectors[index++]=(float)value;}
+      while((number=yyjson_arr_iter_next(&inner))!=NULL){double value;if(!yyjson_is_num(number)||(value=yyjson_get_num(number),!isfinite(value))||value>FLT_MAX||value<-FLT_MAX)goto invalid;operation->vectors[index++]=(float)value;}
     }
     operation->vector_count=rows;operation->vector_dimensions=dimensions;
   }

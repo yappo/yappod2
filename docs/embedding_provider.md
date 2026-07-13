@@ -1,6 +1,6 @@
 # v2 embedding provider
 
-Task 11 では、passage/query の embedding 入力を同じ `YAP_EMBEDDING_RESULT` に変換する二つの
+embedding 層は、passage/query の embedding 入力を同じ `YAP_EMBEDDING_RESULT` に変換する二つの
 providerを実装しています。出力は入力順のrow-major `float` 配列で、呼び出し側は
 `YAP_Embedding_result_init` 後にproviderを呼び、最後に `YAP_Embedding_result_free` します。
 

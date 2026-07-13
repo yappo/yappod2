@@ -1,6 +1,7 @@
 # Yappod2 v2索引契約
 
-> **現在の状態:** 共通header、document/passage segment、manifest、lexical component、metadata filter、snippet、embedding provider、永続vector/exact検索を実装済みです。ANN以降の未完成部分は[現代検索基盤の完成契約](modern_search_completion_contract.md)に従って実装します。
+> **実装状態:** 共通 header、document/passage、lexical、metadata、vector、ANN component と
+> checksum 付き manifest を正式な index 経路として実装しています。v1/Berkeley DB index は読みません。
 
 この文書は、v2索引を生成・読み込むコンポーネント間の契約です。ここではデータ形式と検証規則を定義し、segmentの生成・検索・既存v1形式との接続は別の実装仕様で扱います。
 

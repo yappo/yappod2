@@ -622,10 +622,10 @@ int YAP_V2_segment_write(const char *path, const char *segment_id, uint64_t gene
   YAP_V2_BUFFER payload = {0};
   YAP_V2_FILE_HEADER header;
   unsigned char header_bytes[YAP_V2_FILE_HEADER_BYTES];
+  unsigned char checksum[32];
   unsigned char *file_bytes = NULL;
   size_t file_size;
   size_t id_len;
-  unsigned char checksum[32];
   int status;
   size_t i;
 
@@ -696,8 +696,6 @@ int YAP_V2_segment_write(const char *path, const char *segment_id, uint64_t gene
     memcpy(descriptor->id, segment_id, id_len + 1U);
     descriptor->document_count = (uint64_t)document_count;
     descriptor->passage_count = (uint64_t)passage_count;
-    descriptor->file_bytes = (uint64_t)file_size;
-    memcpy(descriptor->checksum, checksum, sizeof(checksum));
     memset(&component, 0, sizeof(component));
     (void)strcpy(component.name, "documents.yap2");
     component.file_type = YAP_V2_FILE_DOCUMENTS;
@@ -1073,12 +1071,22 @@ int YAP_V2_segment_read(const char *path, uint64_t expected_generation, YAP_V2_S
   segment->document_count = document_count;
   segment->passage_count = passage_count;
   if (descriptor != NULL) {
+    YAP_V2_COMPONENT_DESCRIPTOR component;
     memset(descriptor, 0, sizeof(*descriptor));
     memcpy(descriptor->id, segment->id, sizeof(segment->id));
     descriptor->document_count = document_count_u64;
     descriptor->passage_count = passage_count_u64;
-    descriptor->file_bytes = (uint64_t)(segment->storage_bytes + YAP_V2_FILE_HEADER_BYTES);
-    memcpy(descriptor->checksum, checksum, sizeof(checksum));
+    memset(&component, 0, sizeof(component));
+    (void)strcpy(component.name, "documents.yap2");
+    component.file_type = YAP_V2_FILE_DOCUMENTS;
+    component.record_count = document_count_u64 + passage_count_u64;
+    component.file_bytes = (uint64_t)file_size;
+    memcpy(component.checksum, checksum, sizeof(checksum));
+    status = YAP_V2_segment_descriptor_add_component(descriptor, &component);
+    if (status != YAP_V2_OK) {
+      YAP_V2_segment_free(segment);
+      return status;
+    }
   }
   return YAP_V2_OK;
 }

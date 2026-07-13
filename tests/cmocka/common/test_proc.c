@@ -204,7 +204,7 @@ void ytest_stop_pid_if_alive(pid_t pid, int retries, int sleep_ms) {
 
 static int wait_front_ready(int front_port, int retries, int sleep_ms) {
   static const char *k_ready_request =
-    "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
   int i;
 
   if (front_port <= 0 || retries <= 0 || sleep_ms < 0) {
@@ -247,9 +247,9 @@ static int launch_core_daemon(const char *bin_path, const char *index_dir, int c
 
   ytest_cmd_result_init(&result);
   argv_core[0] = (char *)bin_path;
-  argv_core[1] = "-l";
+  argv_core[1] = "--index";
   argv_core[2] = (char *)index_dir;
-  argv_core[3] = "-p";
+  argv_core[3] = "--port";
   argv_core[4] = core_port_str;
   argv_core[5] = NULL;
 
@@ -289,13 +289,13 @@ static int launch_front_daemon(const char *bin_path, const char *index_dir, cons
 
   ytest_cmd_result_init(&result);
   argv_front[0] = (char *)bin_path;
-  argv_front[1] = "-l";
+  argv_front[1] = "--index";
   argv_front[2] = (char *)index_dir;
-  argv_front[3] = "-s";
+  argv_front[3] = "--core-host";
   argv_front[4] = (char *)server;
-  argv_front[5] = "-p";
+  argv_front[5] = "--port";
   argv_front[6] = front_port_str;
-  argv_front[7] = "-P";
+  argv_front[7] = "--core-port";
   argv_front[8] = core_port_str;
   argv_front[9] = NULL;
 

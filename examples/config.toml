@@ -1,0 +1,17 @@
+format_version = 2
+
+[tokenizer]
+id = "unicode_nfkc_cf_v1"
+
+[chunking]
+max_chars = 512
+overlap_chars = 64
+
+[vector]
+enabled = true
+model_id = "example-3d-v1"
+dimensions = 3
+metric = "cosine"
+
+[metadata]
+filterable_fields = ["category", "language"]

@@ -47,18 +47,6 @@ int ytest_env_init(ytest_env_t *env) {
     errno = ENAMETOOLONG;
     return -1;
   }
-  if (snprintf(env->fixture_path, sizeof(env->fixture_path), "%s/tests/fixtures/index.txt",
-               env->root_dir) >= (int)sizeof(env->fixture_path)) {
-    errno = ENAMETOOLONG;
-    return -1;
-  }
-  if (snprintf(env->fixture_malformed_path, sizeof(env->fixture_malformed_path),
-               "%s/tests/fixtures/index_malformed.txt", env->root_dir) >=
-      (int)sizeof(env->fixture_malformed_path)) {
-    errno = ENAMETOOLONG;
-    return -1;
-  }
-
 #if defined(__APPLE__) && defined(_CS_DARWIN_USER_TEMP_DIR)
   {
     size_t len = confstr(_CS_DARWIN_USER_TEMP_DIR, tmp_base, sizeof(tmp_base));

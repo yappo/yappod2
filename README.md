@@ -1,409 +1,175 @@
 # Yappod2
 
-Yappod2 は、旧 Yappod を現行環境（主に Clang/CMake）で動作させるための移植・整備プロジェクトです。
-
-> **現代検索対応の現在地:** v2 immutable segment、lexical/vector/hybrid検索、RAG retrieval、
-> CLI/HTTP atomic update、live-only compaction/crash recovery、runtime資源制限、write token、
-> health/metrics運用監視は製品経路へ接続済みです。最終性能・legacy除去は未完了であり、残作業と最終受入条件は
-> [現代検索基盤の完成契約](docs/modern_search_completion_contract.md)を正本とします。
-
-## プロダクト概要
-
-Yappod2 は、**オフラインの索引作成** と **オンラインの検索提供** を分離した検索システムです。  
-入力データを `yappo_makeindex` で索引化し、検索時は `yappod_front` / `yappod_core` の2層構成で応答します。  
-具体的には、`yappod_front` がHTTPの受付とリクエスト中継・結果集約を担当し、`yappod_core` が索引に対する実検索を担当します。  
-この分離により、重い索引更新バッチと検索API提供を独立して運用できるため、更新作業の影響を検索応答に出しにくい構成になります。  
-単一構成（front 1台 + core 1台）でも動かせますし、core を複数指定して複数 core 構成へ拡張することもできます。
-
-### コンポーネントの役割
-
-- `yappo_makeindex`
-  - 1行1ドキュメントの入力を読み取り、検索用インデックスを生成
-  - `ADD` / `DELETE` を解釈して索引を更新
-  - 不正行は警告してスキップし、処理全体は継続
-- `yappo_compact`
-  - v2 indexの最新文書・passageだけを一つのimmutable segmentへ再構築
-  - 原子的manifest公開後に旧segmentと孤立segmentを回収
-- `yappod_core`（TCP `10086`）
-  - 索引を読み込んで実検索を実行するワーカー
-  - `AND` / `OR` やサイズ上限条件を使って結果を計算
-- `yappod_front`（HTTP/TCP `10080`）
-  - HTTPの検索リクエストを受ける入口
-  - 受けたクエリを1台以上の `yappod_core` に中継し、結果を集約して返却
-  - `-p` で listen ポート、`-P` で接続先 core ポートを変更可能
-
-### サーバ構成時の動作（検索リクエストの流れ）
-
-1. クライアントが `yappod_front` にHTTPリクエストを送信  
-   例: `/yappo/100000/AND/0-10?キーワード`
-2. `yappod_front` がリクエストをパースし、`-s` で指定された各 `yappod_core` へ同一クエリを送信
-3. 各 `yappod_core` がローカル索引に対して検索を実行し、結果を返却
-4. `yappod_front` が複数 core の結果をマージし、スコア順に整えてHTTPレスポンスとして返す
-
-### 複数 core 利用の意図
-
-- `yappod_front -s host1 -s host2 ...` のように複数指定すると、複数 core を束ねて扱えます
-- 想定ユースケースは、索引の分散配置（シャーディング）や台数分散による処理能力の確保です
-- 単一構成（front 1台 + core 1台）でも動作します
-
-## 現在の前提
-
-- 文字コードは **UTF-8 専用**。
-- ビルドシステムは **CMake**。
-- 検索デーモンのHTTPリクエストは標準形式（`/dict/max/op/start-end?query`）を使用。
+Yappod2 は、単一ノード向けの UTF-8 検索基盤です。immutable segment と atomic manifest を
+使い、BM25F lexical 検索、HNSW vector 検索、RRF hybrid 検索、RAG 向け passage 取得、
+NRT upsert/delete、compaction を提供します。正式な index 形式は v2 のみです。
+Berkeley DB 形式、旧検索 protocol、旧 CLI/API との互換性はありません。旧 index は元文書から
+再索引してください。
 
 ## 必要環境
 
-### macOS
+- CMake 3.20 以上
+- C/C++ compiler
+- cmocka、ICU4C、libcurl、libevent
+- CMake が取得・固定する tomlc99、yyjson、USearch の source dependency
 
-- Command Line Tools
-- Homebrew
-- `cmake`, `berkeley-db`, `zlib`, `cmocka`, `icu4c`, `libevent`, `curl`, `ninja`（Ninja利用時）
+macOS:
 
-```bash
-brew install cmake berkeley-db zlib cmocka icu4c libevent curl ninja
+```sh
+brew install cmake cmocka icu4c libevent curl
 ```
 
-### Linux (Ubuntu 例)
+Ubuntu:
 
-```bash
+```sh
 sudo apt-get update
-sudo apt-get install -y cmake g++ libdb-dev zlib1g-dev libcmocka-dev \
-  libicu-dev libcurl4-openssl-dev libevent-dev
+sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev \
+  libcurl4-openssl-dev libevent-dev
 ```
 
-## ビルド
+## Clean checkout から検索まで
 
-### 通常ビルド
-
-```bash
+```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+
+rm -rf /tmp/yappod2-index
+./build/yappo_makeindex build \
+  --config examples/config.toml \
+  --input examples/documents.ndjson \
+  --index /tmp/yappod2-index
+
+./build/search \
+  --index /tmp/yappod2-index \
+  --mode lexical \
+  --query "modern search"
+./build/search \
+  --index /tmp/yappod2-index \
+  --mode vector \
+  --vector "0,1,0"
+./build/search \
+  --index /tmp/yappod2-index \
+  --mode hybrid \
+  --query "modern search" \
+  --vector "1,0,0"
 ```
 
-### macOS(Homebrew)でBerkeley DBを明示する場合
+`build` の出力先は存在していない path である必要があります。入力または index 作成に失敗した
+場合、完成していない出力先は公開されません。
 
-```bash
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(brew --prefix icu4c);$(brew --prefix libevent);$(brew --prefix curl)" \
-  -DBDB_INCLUDE_DIR="$(brew --prefix berkeley-db)/include" \
-  -DBDB_LIB="$(brew --prefix berkeley-db)/lib/libdb.dylib"
-cmake --build build -j
+## Index 設定と canonical 入力
+
+設定は `config.toml` で tokenizer、chunking、vector model/dimensions/metric、検索可能な
+metadata field を固定します。設定 fingerprint は manifest に保存され、reader と一致しない
+index は fail-closed で拒否されます。
+
+標準入力は 1 行 1 operation の NDJSON です。
+
+```json
+{"operation":"upsert","id":"doc-1","url":"https://example.test/1","title":"Title","body":"Body","metadata":{"language":"ja"},"vectors":[[0.1,0.2,0.3]]}
 ```
 
-### Ninjaジェネレータ
+precomputed vector は chunk 後の passage 順に指定します。TSV を使う場合は明示的な adapter で
+canonical NDJSON に変換します。
 
-```bash
-cmake -S . -B build -G Ninja ...
-cmake --build build
+```sh
+./build/yappo_makeindex prepare \
+  --config config.toml \
+  --input documents.tsv \
+  --input-format tsv \
+  --output documents.ndjson
 ```
 
-## テスト
+入力 schema の詳細は [canonical ingest](docs/canonical_ingest.md)、index の on-disk 契約は
+[v2 index contract](docs/index_v2_contract.md)を参照してください。
 
-```bash
+## 更新と compaction
+
+最大 100 operation の batch を一つの generation として atomic に反映します。
+
+```sh
+./build/yappo_makeindex update \
+  --input operations.ndjson \
+  --index /tmp/yappod2-index
+
+./build/yappo_compact --index /tmp/yappod2-index
+```
+
+同一 document ID は新しい segment が優先され、delete tombstone は古い record を隠します。
+compaction は live record だけを新しい segment に書き、manifest 公開後に orphan を回収します。
+詳細は [manifest/NRT](docs/manifest_nrt.md) と
+[compaction/recovery](docs/compaction_recovery.md)を参照してください。
+
+## HTTP daemon
+
+core を先に、front を後に起動します。両 process は background 化し、起動 directory に
+PID と log を作成します。
+
+```sh
+cd /tmp/yappod2-run
+/path/to/yappod2/build/yappod_core \
+  --index /tmp/yappod2-index \
+  --port 10086
+/path/to/yappod2/build/yappod_front \
+  --index /tmp/yappod2-index \
+  --core-host 127.0.0.1 \
+  --core-port 10086 \
+  --port 10080
+```
+
+公開 endpoint:
+
+```text
+POST /v2/search
+POST /v2/retrieve
+POST /v2/documents:batch
+GET  /health/live
+GET  /health/ready
+GET  /metrics
+```
+
+検索例:
+
+```sh
+curl -sS -H 'Content-Type: application/json' \
+  --data '{"query":"modern search","vector":[1,0,0],"mode":"hybrid","scope":"documents","limit":20}' \
+  http://127.0.0.1:10080/v2/search
+```
+
+RAG 用 passage 取得例:
+
+```sh
+curl -sS -H 'Content-Type: application/json' \
+  --data '{"query":"grounded context","vector":[0,1,0],"mode":"hybrid","limit":10,"max_passages_per_document":2,"max_context_bytes":32768}' \
+  http://127.0.0.1:10080/v2/retrieve
+```
+
+`/v2/retrieve` は passage 本文、source document metadata、元文書内 offset、context 内 offset、
+各 score を返します。LLM による回答生成は行いません。HTTP schema は
+[search/RAG HTTP v2](docs/search_rag_http_v2.md)を参照してください。
+
+write endpoint を公開する環境では、16 byte 以上の token を両 daemon に設定してください。
+
+```sh
+export YAPPOD_V2_WRITE_TOKEN='replace-with-a-secret-token'
+```
+
+更新 request は `Authorization: Bearer ...` が必要になります。deadline、in-flight 上限を含む
+全設定は [runtime limits and security](docs/runtime_limits_security.md)、起動・監視・障害対応は
+[operations runbook](docs/operations_runbook_v2.md)を参照してください。
+
+## Test、install、release gate
+
+```sh
 ctest --test-dir build --output-on-failure
+cmake --install build --prefix /tmp/yappod2-install
 ```
 
-補足:
-
-- daemon 系テストは毎回空きポートを自動採番して起動するため、`10080` / `10086` 固定前提ではありません。
-- 失敗時は ctest 出力中の `[TEST] daemon attempt=... core_port=... front_port=...` を確認してください。
-
-テスト分類（CMake オプション）:
-
-- daemon 系のみ: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=ON -DYAPPOD_TESTS_NODAEMON=OFF`
-- 非 daemon 系のみ: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=OFF -DYAPPOD_TESTS_NODAEMON=ON`
-- 両方（既定）: `cmake -S . -B build -DYAPPOD_TESTS_DAEMON=ON -DYAPPOD_TESTS_NODAEMON=ON`
-
-ラベル実行:
-
-- daemon 系のみ: `ctest --test-dir build -L daemon --output-on-failure`
-- 非 daemon 系のみ: `ctest --test-dir build -L standalone --output-on-failure`
-
-### 検索品質ベースライン
-
-legacy検索とv2 lexical/vector/hybridのランキング品質、ANN recall、daemon負荷・更新並行性は
-CTestで再現・比較できます。
-
-```bash
-ctest --test-dir build -R search_quality --output-on-failure
-ctest --test-dir build -R '^(ann_v2|v2_daemon_reliability)$' --output-on-failure
-```
-
-評価ではmode別nDCG@10、Recall@10、ANN Recall@10、P95検索時間、daemon RSSを算出します。
-CI smoke、sanitizer/fuzz、100万document基準のrelease benchmarkは
-[`docs/quality_performance_reliability_v2.md`](docs/quality_performance_reliability_v2.md)を参照して
-ください。小規模CTestの成功を大規模性能受入れの代替にはできません。
-
-## インストール
-
-```bash
-cmake --install build
-```
-
-v2 canonical入力を検索passageへ正規化するには次を実行します。入力契約は
-[`docs/canonical_ingest.md`](docs/canonical_ingest.md)を参照してください。
-
-```sh
-yappo_makeindex prepare --config config.toml --input documents.ndjson --output passages.ndjson
-```
-
-既存v2 indexへ最大100件のupsert/deleteを1 generationとしてatomicに反映するには次を実行します。
-
-```sh
-yappo_makeindex update --input operations.ndjson --index /path/to/v2-index
-```
-
-同じ更新は`POST /v2/documents:batch`からも利用できます。schemaとNRT publishの詳細は
-[v2 search and retrieval HTTP API](docs/search_rag_http_v2.md)を参照してください。
-
-更新でsegment数が増えたindexは、次のコマンドでlive recordだけへcompactionできます。
-
-```sh
-yappo_compact --index /path/to/v2-index
-```
-
-manifest公開前後のcrashでも旧または新generationの完全な一方だけを読み、次回compactionが
-未参照segmentを回収します。詳細は [compaction recovery](docs/compaction_recovery.md) を参照してください。
-
-インストール先を指定する場合:
-
-```bash
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/yappod" ...
-cmake --build build -j
-cmake --install build
-```
-
-## インデックス作成
-
-### 入力フォーマット
-
-1行1ドキュメント、タブ区切り:
-
-```text
-URL\tCOMMAND\tTITLE\tBODY_SIZE\tBODY
-```
-
-- `COMMAND`: `ADD` / `DELETE`
-- `BODY` に改行・タブは含めない
-- 不正行（列不足、`COMMAND`不正、`BODY_SIZE`非数値）は警告してスキップし、処理は継続
-- `BODY_SIZE` は**宣言値（メタデータ）**として扱います。本文実長との一致チェックは行いません。
-- `--min-body-size` / `--max-body-size` の判定、および検索結果の `(size:...)` 表示にはこの宣言値を使います。
-
-`ADD` の扱い:
-
-- URL が未登録なら新規追加します。
-- URL が既登録なら更新扱いで再登録します。
-- ただし既存レコードの方が新しい（`lastmod` が新しい、または `lastmod` 同一かつ `BODY_SIZE` 同一）場合は `ADD` をスキップします。
-- 同一バッチ内で同じ URL の `ADD` が重複した場合は、先に処理した `ADD` を優先し、後続の重複 `ADD` はスキップします。
-
-サンプル: `tests/fixtures/index.txt`
-
-### インデックスディレクトリ作成
-
-`pos/` サブディレクトリが必須です。
-
-```bash
-mkdir -p /tmp/yappoindex/pos
-```
-
-### 実行
-
-```bash
-yappo_makeindex -f tests/fixtures/index.txt -d /tmp/yappoindex
-```
-
-`-f` と `-l` は入力ソースの指定です。
-
-- `-f <path>`: 単一の入力ファイルを処理
-- `-l <dir>`: ディレクトリ内の `.gz` ファイルを順次処理
-
-ディレクトリ一括処理の例:
-
-```bash
-yappo_makeindex -l /path/to/gz_dir -d /tmp/yappoindex
-```
-
-本文サイズフィルタ（デフォルト: `24`〜`102400` バイト）:
-
-```bash
-yappo_makeindex -f tests/fixtures/index.txt -d /tmp/yappoindex \
-  --min-body-size 1 --max-body-size 200000
-```
-
-補足:
-
-- ここでいう「本文サイズ」は `BODY` の実バイト長ではなく、入力列 `BODY_SIZE` の宣言値です。
-
-## pos 統合（`yappo_mergepos`）
-
-`yappo_mergepos` は、`<index_dir>/pos/` 配下に分割された位置情報DBを1つにまとめる補助コマンドです。  
-大量更新後のメンテナンスや、検索時のI/O断片化を減らしたいときに使います。
-
-```bash
-yappo_mergepos -l /tmp/yappoindex -d /tmp/yappoindex/pos/merged -s 0 -e 31
-```
-
-- `-l`: 入力インデックスディレクトリ（`deletefile` / `keywordnum` / `pos/` がある場所）
-- `-d`: 出力ファイルのベース名（`<base>`, `<base>_index`, `<base>_size` を生成）
-- `-s`, `-e`: 取り込む `pos` 番号の開始・終了（**両端を含む**）
-
-補足:
-
-- 指定範囲の入力は `pos/<n>`, `pos/<n>_index`, `pos/<n>_size` を読みます。
-- `deletefile` を参照し、削除済みドキュメントの位置情報は除外して再生成します。
-- 範囲内の一部ファイルが欠けていても、読めるものだけで処理を継続します。
-
-主なエラー条件:
-
-- `-l` が存在しないディレクトリ
-- `-s` / `-e` が非数値、または `-s > -e`
-- `-d` の出力先に書き込めない
-
-## 検索
-
-### CLI
-
-```bash
-search -l /tmp/yappoindex キーワード
-```
-
-複数語:
-
-```bash
-search -l /tmp/yappoindex -a キーワード1 キーワード2 キーワード3
-search -l /tmp/yappoindex -o キーワード1 キーワード2
-```
-
-- `-a`: AND 検索（すべてのキーワードを含む文書のみヒット）
-- `-o`: OR 検索（いずれかのキーワードを含む文書がヒット）
-- 指定しない場合は AND（`-a`）として扱われます。
-
-### デーモン
-
-役割:
-
-- `yappod_core`: 検索処理を実行するバックエンド（既定 TCP `10086`、`-p` で変更）
-- `yappod_front`: HTTPリクエスト受付と結果集約を行うフロント（既定 TCP `10080`、`-p` で変更）
-- `yappod_front` は接続先 `yappod_core` ポートを `-P` で指定（既定 `10086`）
-
-起動:
-
-```bash
-yappod_core -l /tmp/yappoindex
-yappod_front -l /tmp/yappoindex -s localhost
-```
-
-ヘルプ表示:
-
-```bash
-yappod_core --help
-yappod_front --help
-```
-
-`yappod_front` の `-s` は複数指定できます。複数の `yappod_core` へ同一クエリを送り、結果を集約します。
-
-```bash
-yappod_front -l /tmp/yappoindex \
-  -s search-server1 \
-  -s search-server2 \
-  -s search-server3
-```
-
-processのlivenessは`GET /health/live`、core接続とv2 indexのconfig/manifest/checksumを含む
-readinessは`GET /health/ready`で確認します。`GET /healthz`は従来互換のliveness aliasです。
-Prometheus形式のrequest件数、latency、generation、in-flight量、embedding/compaction状態は
-`GET /metrics`で取得できます。詳細は[運用runbook](docs/operations_runbook_v2.md)を参照してください。
-検索 API の JSON 応答が必要なクライアントは
-[v2 JSON 検索 API](docs/search_json_api.md) を参照してください。
-
-ポート指定例（front/core を既定以外で起動）:
-
-```bash
-yappod_core -l /tmp/yappoindex -p 12086
-yappod_front -l /tmp/yappoindex -s localhost -p 12080 -P 12086
-```
-
-HTTPクエリ例:
-
-```text
-http://localhost:10080/yappo/100000/AND/0-10?キーワード
-```
-
-※ `10080` は既定ポートです。`yappod_front -p` で変更した場合はそのポートを使ってください。
-
-HTTPリクエスト行としては次の形式です。
-
-```text
-GET /<dict>/<max>/<op>/<start>-<end>?<query> HTTP/1.1
-```
-
-各パラメータの意味:
-
-- `dict`: 論理インデックス名（通常は `yappo` を指定）
-- `max`: 対象にする文書サイズ上限（バイト）
-- `op`: `AND` または `OR`
-- `start` / `end`: 返却範囲（`start` 以上 `end` 未満）
-- `query`: 検索語（URLエンコード前提）
-
-補足:
-
-- 複数語は `&` 区切りで指定できます（例: `...?検索&テスト`）
-- `&` 自体を語として含めたい場合は `%26` を使ってください
-- 実運用では `curl` などでURLエンコードした値を渡すのが安全です
-
-`curl` 例:
-
-```bash
-curl 'http://localhost:10080/yappo/100000/AND/0-10?OpenAI2025'
-curl 'http://localhost:10080/yappo/100000/OR/0-20?検索&テスト'
-```
-
-レスポンス形式:
-
-```text
-<総ヒット件数>
-<今回返した件数>
-
-URL\tタイトル\t文書サイズ\t最終更新時刻(epoch)\tスコア
-...
-```
-
-`400 Bad Request` になりやすい条件:
-
-- リクエスト行が `GET ... HTTP/x.y` 形式でない
-- パスが `/<dict>/<max>/<op>/<start>-<end>?<query>` 形式でない
-- `?` が無い（クエリ文字列が無い）
-- `dict` / `op` / `query` のいずれかが空
-- `max` が `0`
-- パスやクエリが内部バッファ上限（1023文字）を超える
-
-注意:
-
-- `op` に `AND` / `OR` 以外を指定しても、現実装ではエラーではなく **AND 扱い** になります。
-
-## 運用・リリースチェック
-
-リリース前は次の順に確認します。
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-cmake --install build --prefix /tmp/yappod-release-smoke
-```
-
-検索品質・P95 レイテンシの smoke baseline は `ctest --test-dir build -R search_quality` で確認します。
-v2 index を公開する場合は全segmentのchecksumとcomponent creation generationが参照manifest
-generation以下であることを検証し、一つのmanifest snapshotだけを公開してください。CI の
-macOS/Ubuntu、sanitizer、install smoke が全て成功した状態を release gate とします。詳細な
-rollback、監視、負荷試験の基準は [運用・リリース手順](docs/operations_release.md) にまとめています。
-
-## トークナイズ方針（現状）
-
-- 日本語などマルチバイト: バイグラム
-- 英数字: 連続列を1トークン
-- 記号（`-`, `_`, `/`, `+`, `.` など）: 既存互換ルール
-
-トークナイザ差し替えは設計のみで、現在の索引・検索経路には未実装です。実装順序と受入条件は[現代検索基盤の完成契約](docs/modern_search_completion_contract.md)を参照してください。
+CTest は全検索 mode、RAG retrieval、atomic update、compaction/crash recovery、HTTP daemon、
+ANN Recall@10、hybrid nDCG@10、並行検索/更新を検証します。CI は Ubuntu/macOS build、全 CTest、
+ASan/UBSan、parser fuzz、install 後の再索引と検索 smoke を実行します。
+
+100 万 document、300 万 passage、768 dimension の性能受入れは専用 corpus と基準 hardware 上で
+別途実行します。小規模 CI の結果で代替しません。手順と閾値は
+[quality/performance/reliability gate](docs/quality_performance_reliability_v2.md)、製品全体の判定条件は
+[modern search completion contract](docs/modern_search_completion_contract.md)を参照してください。

@@ -1,12 +1,12 @@
 # v2 search and retrieval HTTP API
 
 `yappod_front` は `POST /v2/search`、`POST /v2/retrieve`、
-`POST /v2/documents:batch` を受け、Task 17 の
-length-prefixed frameで `yappod_core` へ転送します。coreはリクエストごとに
+`POST /v2/documents:batch` を受け、内部の length-prefixed v2 frame で
+`yappod_core` へ転送します。coreはリクエストごとに
 `config.toml` と `manifest.json`、全component checksumを検証し、一つのgenerationの
 snapshotと同じsegment順のlexical、vector/ANN、metadata readerを開いて
 `YAP_V2_query_execute` を実行します。retrieveは同じsnapshotのpassage結果を
-`YAP_V2_retrieve_context` へ渡します。旧Berkeley DB検索結果のJSON変換ではありません。
+`YAP_V2_retrieve_context` へ渡します。
 
 3 endpointは `Content-Type: application/json` と明示的な `Content-Length` を必須とし、
 chunked request、重複したlength/type、1 MiBを超えるbody、不完全bodyを拒否します。
@@ -34,7 +34,7 @@ filterable metadata fieldだけを参照できます。レスポンスはsnapsho
 上限外offsetは`400 invalid_request`です。これは衝突耐性digestによるbindingであり、秘密鍵を使う
 認証tokenではありません。
 
-3 endpointへのPOST以外のmethodはlegacy parserへ渡さず、JSONの`405`を返します。
+3 endpointへのPOST以外のmethodはJSONの`405`を返します。旧GET検索APIは存在しません。
 
 ## Retrieval request
 
@@ -46,9 +46,9 @@ retrieveのscopeはpassageに固定されます。レスポンスは連結済み
 返します。citationにはpassage/document ID、URL、title、本文、元文書のUnicode文字offset、
 context内byte offset、lexical/vector/fused scoreが含まれます。回答生成は行いません。
 
-現時点ではvector queryは呼び出し側が事前計算値を渡します。HTTP embedding providerを
-query textから呼ぶためのprovider URL/API keyはindex config schemaに存在しないため、
-暗黙の外部通信は行いません。
+vector queryは呼び出し側が事前計算値を渡します。これは公開 API の確定仕様です。
+index 作成側はベンダー中立な HTTP embedding provider または precomputed vector を利用できますが、
+検索 API は query text を外部 provider へ暗黙送信しません。
 
 ## Atomic document batch
 

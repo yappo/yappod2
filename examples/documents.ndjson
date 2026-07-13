@@ -1,0 +1,2 @@
+{"operation":"upsert","id":"doc-1","url":"https://example.test/modern-search","title":"Modern search","body":"Modern search combines lexical ranking and vector retrieval.","metadata":{"category":"guide","language":"en"},"vectors":[[1,0,0]]}
+{"operation":"upsert","id":"doc-2","url":"https://example.test/rag","title":"RAG retrieval","body":"RAG uses retrieved passages as grounded context.","metadata":{"category":"guide","language":"en"},"vectors":[[0,1,0]]}

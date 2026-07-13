@@ -102,6 +102,9 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"passage_id\":\"passage-fruit\""));assert_non_null(strstr(response,"\"url\":\"https://e.test/fruit\""));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
+  response=get(ctx,"/healthz");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
+  response=get(ctx,"/yappo/100000/AND/0-10?apple");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
+  response=get(ctx,"/v2/search");assert_non_null(strstr(response,"405 Method Not Allowed"));free(response);response=NULL;
   response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"text/plain; version=0.0.4"));
   assert_non_null(strstr(response,"yappod_v2_manifest_generation 1"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 1"));

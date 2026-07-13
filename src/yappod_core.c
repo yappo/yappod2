@@ -1,615 +1,296 @@
-/*
-  サーバ
-  フロントサーバから受け取った検索条件で検索して結果をそのまま返す
-
-*/
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <signal.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-
-#include <netinet/in.h>
-#include <pthread.h>
-
-#include "yappo_alloc.h"
-#include "yappo_io.h"
-#include "yappo_net.h"
-#include "yappo_stat.h"
-#include "yappo_search.h"
-#include "yappo_db.h"
-#include "yappo_index.h"
-#include "yappo_proto.h"
 #include "yappo_core_protocol_v2.h"
 #include "yappo_http_v2.h"
+#include "yappo_net.h"
 #include "yappo_observability_v2.h"
 #include "yappo_runtime_policy_v2.h"
 
-#define BUF_SIZE 1024
+#include <errno.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #define DEFAULT_CORE_PORT 10086
-#define MAX_SOCKET_BUF (1024 * 1024)
+#define CORE_WORKERS 16U
 
-/*
- *スレッド毎の構造
- */
 typedef struct {
-  int id;
-  int socket;
-  char *base_dir;
-} YAP_THREAD_DATA;
+  size_t id;
+  int listen_socket;
+  const char *index_dir;
+} worker_t;
 
-/*スレッドの数*/
-#define MAX_THREAD 5
+static volatile sig_atomic_t shutdown_requested = 0;
+static int listen_socket = -1;
+static const char *pid_file = "core.pid";
+static YAP_V2_RUNTIME_POLICY runtime_policy;
+static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 
-/*キャッシュ*/
-YAPPO_CACHE yappod_core_cache;
-static volatile sig_atomic_t g_shutdown_requested = 0;
-static volatile sig_atomic_t g_shutdown_signal = 0;
-static const char *g_core_pidfile = "./core.pid";
-static YAP_V2_RUNTIME_POLICY g_runtime_policy;
-static YAP_V2_RUNTIME_LIMITER g_runtime_limiter;
-static void YAP_request_shutdown(int sig);
-
-int count;
-
-void YAP_Error(char *msg) {
-  fprintf(stderr, "ERROR: %s\n", msg);
-  exit(EXIT_FAILURE);
+static void usage(FILE *output, const char *program) {
+  fprintf(output,
+          "Usage: %s --index INDEX_DIR [--port PORT]\n"
+          "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
+          "  --port PORT        Internal frame port (default: %d)\n",
+          program, DEFAULT_CORE_PORT);
 }
 
-static void YAP_print_usage(FILE *out, const char *prog) {
-  fprintf(out,
-          "Usage: %s -l <index_dir> [-p <port>]\n"
-          "  -l <index_dir>  Index directory path (required)\n"
-          "  -p <port>       Listen port (default: %d)\n"
-          "  -h, --help      Show this help\n",
-          prog, DEFAULT_CORE_PORT);
-}
-
-static int YAP_parse_port(const char *value, int *port_out) {
-  long port;
-  char *endptr;
-
-  if (value == NULL || port_out == NULL) {
-    return -1;
-  }
-
-  port = strtol(value, &endptr, 10);
-  if (*value == '\0' || *endptr != '\0' || port < 1 || port > 65535) {
-    return -1;
-  }
-  *port_out = (int)port;
+static int parse_port(const char *text, int *port) {
+  char *end = NULL;
+  long value;
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0' || value < 1 || value > 65535) return -1;
+  *port = (int)value;
   return 0;
 }
 
-static int YAP_install_signal_handlers(void) {
-  struct sigaction sa;
-  struct sigaction ign_sa;
+static void request_shutdown(int signal_number) {
+  (void)signal_number;
+  shutdown_requested = 1;
+  if (listen_socket >= 0) (void)close(listen_socket);
+  listen_socket = -1;
+}
 
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = YAP_request_shutdown;
-  sa.sa_flags = SA_RESTART;
-  sigemptyset(&sa.sa_mask);
-  if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGINT, &sa, NULL) != 0) {
+static int install_signal_handlers(void) {
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = request_shutdown;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0)
     return -1;
-  }
+  action.sa_handler = SIG_IGN;
+  return sigaction(SIGPIPE, &action, NULL);
+}
 
-  memset(&ign_sa, 0, sizeof(ign_sa));
-  ign_sa.sa_handler = SIG_IGN;
-  ign_sa.sa_flags = SA_RESTART;
-  sigemptyset(&ign_sa.sa_mask);
-  if (sigaction(SIGPIPE, &ign_sa, NULL) != 0) {
+static void remove_pid_file(void) { (void)unlink(pid_file); }
+
+static int redirect_stream(FILE *stream, const char *path, const char *mode) {
+  FILE *opened = fopen(path, mode);
+  if (opened == NULL) return -1;
+  if (dup2(fileno(opened), fileno(stream)) < 0) { (void)fclose(opened); return -1; }
+  return fclose(opened);
+}
+
+static int daemonize_process(void) {
+  pid_t child = fork();
+  FILE *file;
+  if (child < 0) return -1;
+  if (child > 0) return 1;
+  if (setsid() < 0 || redirect_stream(stdin, "/dev/null", "r") != 0 ||
+      redirect_stream(stdout, "core.log", "a") != 0 ||
+      redirect_stream(stderr, "core.error", "a") != 0) return -1;
+  file = fopen(pid_file, "w");
+  if (file == NULL || fprintf(file, "%ld\n", (long)getpid()) < 0 || fclose(file) != 0)
     return -1;
-  }
-
+  if (atexit(remove_pid_file) != 0) return -1;
   return 0;
 }
 
-static void YAP_log_thread_error(int thread_id, const char *msg) {
-  fprintf(stderr, "ERROR: core thread %d %s\n", thread_id, msg);
+static int create_listener(int port) {
+  struct sockaddr_in address;
+  int descriptor, reuse = 1;
+  descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor < 0 ||
+      setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
+    if (descriptor >= 0) (void)close(descriptor);
+    return -1;
+  }
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons((unsigned short)port);
+  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  if (bind(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+      listen(descriptor, SOMAXCONN) != 0) {
+    (void)close(descriptor);
+    return -1;
+  }
+  return descriptor;
 }
 
-static void YAP_request_shutdown(int sig) {
-  g_shutdown_signal = sig;
-  g_shutdown_requested = 1;
+static int make_error_json(const char *code, const char *message,
+                           char **json, size_t *json_bytes) {
+  int length = snprintf(NULL, 0, "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}",
+                        code, message);
+  if (length < 0) return -1;
+  *json = malloc((size_t)length + 1U);
+  if (*json == NULL) return -1;
+  (void)snprintf(*json, (size_t)length + 1U,
+                 "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}", code, message);
+  *json_bytes = (size_t)length;
+  return 0;
 }
 
-static void YAP_remove_pidfile(void) { unlink(g_core_pidfile); }
-
-static int YAP_is_v2_connection(int fd) {
-  unsigned char magic[4]; ssize_t bytes;
-  do { bytes = recv(fd, magic, sizeof(magic), MSG_PEEK | MSG_WAITALL); } while (bytes < 0 && errno == EINTR);
-  return bytes == (ssize_t)sizeof(magic) && memcmp(magic, "YAP2", sizeof(magic)) == 0;
-}
-
-static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
-  YAP_V2_CORE_FRAME request, response; YAP_V2_HTTP_OPERATION operation;
-  char *json = NULL; size_t json_bytes = 0U; unsigned char *payload = NULL;
-  const unsigned char *request_json; size_t request_json_bytes; int admitted = 0, is_health = 0;
-  int http_status = 500, status;
-  YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
-  status = YAP_V2_core_frame_read(socket, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
+static int handle_request(FILE *stream, const char *index_dir) {
+  YAP_V2_CORE_FRAME request, response;
+  YAP_V2_HTTP_OPERATION operation = YAP_V2_HTTP_SEARCH;
+  char *json = NULL;
+  size_t json_bytes = 0U;
+  unsigned char *payload = NULL;
+  const unsigned char *request_json = NULL;
+  size_t request_json_bytes = 0U;
+  int admitted = 0, health = 0, http_status = 500;
+  int status;
+  YAP_V2_core_frame_init(&request);
+  YAP_V2_core_frame_init(&response);
+  status = YAP_V2_core_frame_read(stream, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
   if (status != YAP_V2_CORE_FRAME_OK) goto done;
   if (request.type == YAP_V2_CORE_HEALTH_REQUEST) {
-    YAP_V2_OPERATIONAL_STATE operational; char probe_error[256] = {0};
+    YAP_V2_OPERATIONAL_STATE state;
+    char probe_error[256] = {0};
     if (request.payload_bytes != 0U) { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
-    is_health = 1;
-    status = YAP_V2_operational_probe_index(index_dir, &operational, probe_error, sizeof(probe_error));
-    http_status = status == YAP_V2_OK && operational.ready ? 200 : 503;
-    if (YAP_V2_operational_state_json(&operational, "yappod_core", &json, &json_bytes) != YAP_V2_OK) {
-      status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done;
+    health = 1;
+    status = YAP_V2_operational_probe_index(index_dir, &state, probe_error,
+                                            sizeof(probe_error));
+    http_status = status == YAP_V2_OK && state.ready ? 200 : 503;
+    if (YAP_V2_operational_state_json(&state, "yappod_core", &json, &json_bytes) !=
+        YAP_V2_OK) {
+      status = YAP_V2_CORE_FRAME_NO_MEMORY;
+      goto done;
     }
-    goto respond;
+  } else {
+    if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
+    else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
+    else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
+    else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
+    if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.payload_bytes) != YAP_V2_OK) {
+      http_status = 503;
+      if (make_error_json("overloaded", "Service Unavailable", &json, &json_bytes) != 0) {
+        status = YAP_V2_CORE_FRAME_NO_MEMORY;
+        goto done;
+      }
+    } else {
+      admitted = 1;
+      request_json = request.payload;
+      request_json_bytes = request.payload_bytes;
+      if (operation == YAP_V2_HTTP_INGEST &&
+          YAP_V2_ingest_envelope_unwrap(&runtime_policy, request.payload,
+                                        request.payload_bytes, &request_json,
+                                        &request_json_bytes) != YAP_V2_OK) {
+        http_status = 401;
+        if (make_error_json("unauthorized", "Unauthorized", &json, &json_bytes) != 0) {
+          status = YAP_V2_CORE_FRAME_NO_MEMORY;
+          goto done;
+        }
+      } else if (request_json_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
+                 YAP_V2_http_execute(index_dir, operation, request_json, request_json_bytes,
+                                     &http_status, &json, &json_bytes) != 0) {
+        status = YAP_V2_CORE_FRAME_IO_ERROR;
+        goto done;
+      }
+    }
   }
-  if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
-  else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
-  else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
-  else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
-  if (YAP_V2_runtime_limiter_acquire(&g_runtime_limiter, request.payload_bytes) != YAP_V2_OK) {
-    static const char overloaded[] = "{\"error\":{\"code\":\"overloaded\",\"message\":\"Service Unavailable\"}}";
-    http_status = 503; json = strdup(overloaded); json_bytes = sizeof(overloaded) - 1U;
-    if (json == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
-    goto respond;
-  }
-  admitted = 1; request_json = request.payload; request_json_bytes = request.payload_bytes;
-  if (operation == YAP_V2_HTTP_INGEST &&
-      YAP_V2_ingest_envelope_unwrap(&g_runtime_policy, request.payload, request.payload_bytes,
-                                    &request_json, &request_json_bytes) != YAP_V2_OK) {
-    static const char unauthorized[] = "{\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\"}}";
-    http_status = 401; json = strdup(unauthorized); json_bytes = sizeof(unauthorized) - 1U;
-    if (json == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
-    goto respond;
-  }
-  if (request_json_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
-      YAP_V2_http_execute(index_dir, operation, request_json, request_json_bytes,
-                          &http_status, &json, &json_bytes) != 0 || json_bytes > UINT32_MAX - 2U) {
-    status = YAP_V2_CORE_FRAME_IO_ERROR; goto done;
-  }
-respond:
+  if (json_bytes > UINT32_MAX - 2U) { status = YAP_V2_CORE_FRAME_TOO_LARGE; goto done; }
   payload = malloc(json_bytes + 2U);
   if (payload == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
   payload[0] = (unsigned char)((unsigned int)http_status >> 8);
-  payload[1] = (unsigned char)http_status; memcpy(payload + 2U, json, json_bytes);
+  payload[1] = (unsigned char)http_status;
+  memcpy(payload + 2U, json, json_bytes);
   response.type = http_status == 200 ?
-    (is_health ? YAP_V2_CORE_HEALTH_RESPONSE :
+    (health ? YAP_V2_CORE_HEALTH_RESPONSE :
      operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
-     operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE : YAP_V2_CORE_INGEST_RESPONSE) :
-    YAP_V2_CORE_ERROR_RESPONSE;
-  response.request_id = request.request_id; response.payload = payload;
+     operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE :
+     YAP_V2_CORE_INGEST_RESPONSE) : YAP_V2_CORE_ERROR_RESPONSE;
+  response.request_id = request.request_id;
+  response.payload = payload;
   response.payload_bytes = (uint32_t)(json_bytes + 2U);
-  status = YAP_V2_core_frame_write(socket, &response, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
-  if (status == YAP_V2_CORE_FRAME_OK && fflush(socket) != 0) status = YAP_V2_CORE_FRAME_IO_ERROR;
+  status = YAP_V2_core_frame_write(stream, &response, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
+  if (status == YAP_V2_CORE_FRAME_OK && fflush(stream) != 0)
+    status = YAP_V2_CORE_FRAME_IO_ERROR;
 done:
-  if (admitted) YAP_V2_runtime_limiter_release(&g_runtime_limiter, request.payload_bytes);
-  free(payload); free(json); YAP_V2_core_frame_free(&request); return status;
+  if (admitted) YAP_V2_runtime_limiter_release(&runtime_limiter, request.payload_bytes);
+  free(payload);
+  free(json);
+  YAP_V2_core_frame_free(&request);
+  return status;
 }
 
-/*
- *URLデコードを行なう
- */
-static char *urldecode(const char *p) {
-  char *ret, *retp;
-  size_t in_len;
-
-  if (p == NULL) {
-    return NULL;
-  }
-
-  in_len = strlen(p);
-  ret = (char *)YAP_malloc(in_len + 1);
-  retp = ret;
-
-  while (*p) {
-    if (*p != '%') {
-      *retp = *p;
-      retp++;
-      p++;
-    } else {
-      /* '%' の後ろが2文字未満なら不正エスケープとしてそのまま残す */
-      if (p[1] == '\0' || p[2] == '\0') {
-        *retp = *p;
-        retp++;
-        p++;
-        continue;
-      }
-      int hi = -1, lo = -1;
-      if (p[1] >= '0' && p[1] <= '9') {
-        hi = p[1] - '0';
-      } else if (p[1] >= 'a' && p[1] <= 'f') {
-        hi = p[1] - 'a' + 10;
-      } else if (p[1] >= 'A' && p[1] <= 'F') {
-        hi = p[1] - 'A' + 10;
-      }
-      if (p[2] >= '0' && p[2] <= '9') {
-        lo = p[2] - '0';
-      } else if (p[2] >= 'a' && p[2] <= 'f') {
-        lo = p[2] - 'a' + 10;
-      } else if (p[2] >= 'A' && p[2] <= 'F') {
-        lo = p[2] - 'A' + 10;
-      }
-      if (hi >= 0 && lo >= 0) {
-        *retp = (char)((hi << 4) + lo);
-        retp++;
-        p += 3;
-      } else {
-        /* 不正な%エスケープはそのまま残して安全に進める */
-        *retp = *p;
-        retp++;
-        p++;
-      }
-    }
-  }
-  *retp = '\0';
-
-  return ret;
-}
-
-static void YAP_free_keyword_list(char **keyword_list, int keyword_list_num) {
-  int i;
-  if (keyword_list == NULL) {
-    return;
-  }
-  for (i = 0; i < keyword_list_num; i++) {
-    free(keyword_list[i]);
-  }
-  free(keyword_list);
-}
-
-static char *YAP_decode_keyword_slice(const char *start, size_t len) {
-  char *buf;
-  char *decoded;
-
-  buf = (char *)YAP_malloc(len + 1);
-  memcpy(buf, start, len);
-  buf[len] = '\0';
-  decoded = urldecode(buf);
-  free(buf);
-  return decoded;
-}
-
-static int YAP_split_keyword_query(const char *keyword, char ***keyword_list_out,
-                                   int *keyword_list_num_out) {
-  const char *p, *start;
-  int keyword_list_num = 1;
-  int i = 0;
-  char **keyword_list;
-
-  if (keyword == NULL) {
-    return -1;
-  }
-
-  p = keyword;
-  while (*p) {
-    if (*p == '&') {
-      keyword_list_num++;
-    }
-    p++;
-  }
-
-  keyword_list = (char **)YAP_malloc(sizeof(char *) * keyword_list_num);
-  start = keyword;
-  p = keyword;
-  while (*p) {
-    if (*p == '&') {
-      keyword_list[i] = YAP_decode_keyword_slice(start, (size_t)(p - start));
-      i++;
-      start = p + 1;
-    }
-    p++;
-  }
-  keyword_list[i] = YAP_decode_keyword_slice(start, (size_t)(p - start));
-
-  *keyword_list_out = keyword_list;
-  *keyword_list_num_out = keyword_list_num;
-  return 0;
-}
-
-/*
- *検索処理のメインルーチン
- */
-SEARCH_RESULT *search_core(YAPPO_DB_FILES *ydfp, char *dict, int max_size, char *op,
-                           char *keyword) {
-  int f_op;
-  char **keyword_list = NULL;
-  SEARCH_RESULT *result;
-  int keyword_list_num = 0;
-  (void)dict;
-
-  /*検索条件*/
-  if (strcmp(op, "OR") == 0) {
-    /*OR*/
-    f_op = 1;
-  } else {
-    /*AND*/
-    f_op = 0;
-  }
-
-  if (YAP_split_keyword_query(keyword, &keyword_list, &keyword_list_num) != 0) {
-    return NULL;
-  }
-
-  printf("max: %d\n", max_size);
-
-  /*
-   *検索を行なう
-   */
-  result = YAP_Search(ydfp, keyword_list, keyword_list_num, max_size, f_op);
-  YAP_free_keyword_list(keyword_list, keyword_list_num);
-  return result;
-}
-
-/*
- *サーバの本体
- */
-void *thread_server(void *ip) {
-  struct sockaddr_in *yap_sin;
-  YAPPO_DB_FILES yappo_db_files;
-  YAP_THREAD_DATA *p = (YAP_THREAD_DATA *)ip;
-
-  /*
-   *データベースの準備
-   */
-  memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
-  yappo_db_files.base_dir = p->base_dir;
-  yappo_db_files.mode = YAPPO_DB_READ;
-  yappo_db_files.cache = &yappod_core_cache;
-
-  printf("GO\n");
-
-  while (!g_shutdown_requested) {
-    SEARCH_RESULT *result;
-    socklen_t sockaddr_len = sizeof(yap_sin);
-    int accept_socket = -1;
-    FILE *socket = NULL;
-    char *dict, *op, *keyword; /*リクエスト*/
-    int recv_code;
-    int max_size;
-
-    if (YAP_Net_accept_stream(p->socket, (struct sockaddr *)&yap_sin, &sockaddr_len, &socket,
-                              &accept_socket, "core", p->id) != 0) {
-      if (g_shutdown_requested) {
-        break;
-      }
+static void *run_worker(void *opaque) {
+  worker_t *worker = opaque;
+  while (!shutdown_requested) {
+    struct sockaddr_storage address;
+    socklen_t address_bytes = sizeof(address);
+    FILE *stream = NULL;
+    int descriptor = -1;
+    if (YAP_Net_accept_stream(worker->listen_socket, (struct sockaddr *)&address,
+                              &address_bytes, &stream, &descriptor, "core",
+                              (int)worker->id) != 0) {
+      if (shutdown_requested) break;
       continue;
     }
-    if (YAP_V2_socket_set_deadline(accept_socket, g_runtime_policy.request_timeout_ms) != YAP_V2_OK) {
-      YAP_Net_close_stream(&socket, &accept_socket); continue;
-    }
-
-    printf("accept: %d\n", p->id);
-
-    while (1) {
-      if (g_shutdown_requested) {
-        break;
-      }
-      /* v2 frames and the legacy protocol share the port during migration. */
-      if (YAP_is_v2_connection(accept_socket)) {
-        if (YAP_handle_v2_request(socket, p->base_dir) != YAP_V2_CORE_FRAME_OK) break;
-        continue;
-      }
-      /*永遠と処理を続ける*/
-      recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);
-      if (recv_code <= 0) {
-        if (recv_code < 0 && !g_shutdown_requested) {
-          YAP_log_thread_error(p->id, "receive query failed");
-        }
-        break;
-      }
-
-      printf("OK: %d/%p\n", p->id, (void *)socket);
-
-      printf("ok:%d: %s/%d/%s/%s\n", p->id, dict, max_size, op, keyword);
-
-      YAP_Db_filename_set(&yappo_db_files);
-      YAP_Db_base_open(&yappo_db_files);
-      /*キャッシュ読みこみ*/
-      YAP_Db_cache_load(&yappo_db_files, &yappod_core_cache);
-
-      result = search_core(&yappo_db_files, dict, max_size, op, keyword);
-
-      /*結果出力*/
-      if (YAP_Proto_send_result(socket, result) != 0) {
-        YAP_log_thread_error(p->id, "send result failed");
-        if (result != NULL) {
-          YAP_Search_result_free(result);
-          free(result);
-        }
-        free(dict);
-        free(op);
-        free(keyword);
-        YAP_Db_base_close(&yappo_db_files);
-        break;
-      }
-      fflush(socket);
-
-      if (result != NULL) {
-        YAP_Search_result_free(result);
-        free(result);
-      }
-      free(dict);
-      free(op);
-      free(keyword);
-      fflush(stdout);
-
-      YAP_Db_base_close(&yappo_db_files);
-    }
-
-    fflush(stdout);
-    YAP_Net_close_stream(&socket, &accept_socket);
+    if (YAP_V2_socket_set_deadline(descriptor, runtime_policy.request_timeout_ms) == YAP_V2_OK)
+      while (!shutdown_requested &&
+             handle_request(stream, worker->index_dir) == YAP_V2_CORE_FRAME_OK) {}
+    YAP_Net_close_stream(&stream, &descriptor);
   }
-
   return NULL;
 }
 
-void start_deamon_thread(char *indextexts_dirpath, int listen_port) {
-  int sock_optval = 1;
-  int yap_socket;
-  struct sockaddr_in yap_sin;
-  int i;
-  pthread_t *pthread;
-  YAP_THREAD_DATA *thread_data;
-  {
-    char policy_error[256] = {0};
-    memset(&g_runtime_limiter, 0, sizeof(g_runtime_limiter));
-    if (YAP_V2_runtime_policy_load_env(&g_runtime_policy, policy_error, sizeof(policy_error)) != YAP_V2_OK ||
-        YAP_V2_runtime_limiter_init(&g_runtime_limiter, &g_runtime_policy) != YAP_V2_OK) {
-      fprintf(stderr, "ERROR: runtime policy: %s\n", policy_error); exit(EXIT_FAILURE);
-    }
-  }
-
-  /*ソケットの作成*/
-  yap_socket = socket(AF_INET, SOCK_STREAM, 0);
-  if (yap_socket == -1)
-    YAP_Error("socket open error");
-
-  /*ソケットの設定*/
-  if (setsockopt(yap_socket, SOL_SOCKET, SO_REUSEADDR, &sock_optval, sizeof(sock_optval)) == -1) {
-    YAP_Error("setsockopt error");
-  }
-
-  /*bindする*/
-  yap_sin.sin_family = AF_INET;
-  yap_sin.sin_port = htons((unsigned short)listen_port);
-  yap_sin.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(yap_socket, (struct sockaddr *)&yap_sin, sizeof(yap_sin)) < 0) {
-    fprintf(stderr, "ERROR: bind failed on port %d: %s\n", listen_port, strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  /*listen*/
-  if (listen(yap_socket, SOMAXCONN) == -1) {
-    YAP_Error("listen error");
-  }
-
-  /*スレッドの準備*/
-  pthread = (pthread_t *)YAP_malloc(sizeof(pthread_t) * MAX_THREAD);
-  thread_data = (YAP_THREAD_DATA *)YAP_malloc(sizeof(YAP_THREAD_DATA) * MAX_THREAD);
-  for (i = 0; i < MAX_THREAD; i++) {
-
-    /*起動準備*/
-    thread_data[i].id = i;
-    thread_data[i].base_dir = (char *)YAP_malloc(strlen(indextexts_dirpath) + 1);
-    memcpy(thread_data[i].base_dir, indextexts_dirpath, strlen(indextexts_dirpath) + 1);
-    thread_data[i].socket = dup(yap_socket);
-
-    /*thread_server(dup(yap_socket), &yap_sin);*/
-    printf("start: %d:%s\n", i, thread_data[i].base_dir);
-    pthread_create(&(pthread[i]), NULL, thread_server, (void *)&(thread_data[i]));
-
-    /*    pthread_join(pthread[i], NULL);
-    //pthread_join(t1, NULL);
-    */
-    printf("GO: %d\n", i);
-  }
-
-  /*メインループ*/
-  while (!g_shutdown_requested) {
-    sleep(1);
-  }
-
-  if (g_shutdown_signal != 0) {
-    fprintf(stderr, "INFO: core shutdown requested by signal %d\n", g_shutdown_signal);
-  }
-  close(yap_socket);
-  printf("end\n");
-}
-
-int main(int argc, char *argv[]) {
-  int i, pid;
-  char *indextexts_dirpath = NULL;
-  struct stat f_stats;
-  int listen_port = DEFAULT_CORE_PORT;
-
-  /*
-   *オプションを取得
-   */
+int main(int argc, char **argv) {
+  const char *index_dir = NULL;
+  int port = DEFAULT_CORE_PORT, i, daemon_status;
+  char policy_error[256] = {0}, probe_error[256] = {0};
+  YAP_V2_OPERATIONAL_STATE state;
+  pthread_t threads[CORE_WORKERS];
+  worker_t workers[CORE_WORKERS];
+  size_t started = 0U;
   for (i = 1; i < argc; i++) {
-    if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
-      YAP_print_usage(stdout, argv[0]);
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (!strcmp(argv[i], "-l")) {
-      if (i + 1 >= argc) {
-        fprintf(stderr, "ERROR: missing value for -l\n");
-        YAP_print_usage(stderr, argv[0]);
+    if (strcmp(argv[i], "--index") == 0) {
+      if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
+      index_dir = argv[i];
+    } else if (strcmp(argv[i], "--port") == 0) {
+      if (++i >= argc || parse_port(argv[i], &port) != 0) {
+        usage(stderr, argv[0]);
         return EXIT_FAILURE;
       }
-      indextexts_dirpath = argv[++i];
-      continue;
+    } else {
+      fprintf(stderr, "Unknown option: %s\n", argv[i]);
+      usage(stderr, argv[0]);
+      return EXIT_FAILURE;
     }
-    if (!strcmp(argv[i], "-p")) {
-      if (i + 1 >= argc || YAP_parse_port(argv[i + 1], &listen_port) != 0) {
-        fprintf(stderr, "ERROR: invalid port for -p\n");
-        YAP_print_usage(stderr, argv[0]);
-        return EXIT_FAILURE;
-      }
-      i++;
-      continue;
-    }
-
-    fprintf(stderr, "ERROR: unknown option: %s\n", argv[i]);
-    YAP_print_usage(stderr, argv[0]);
+  }
+  if (index_dir == NULL ||
+      YAP_V2_operational_probe_index(index_dir, &state, probe_error, sizeof(probe_error)) !=
+        YAP_V2_OK || !state.ready || state.segment_count == 0U) {
+    fprintf(stderr, "Invalid v2 index: %s\n", probe_error);
     return EXIT_FAILURE;
   }
-
-  if (indextexts_dirpath == NULL) {
-    fprintf(stderr, "ERROR: missing required option -l\n");
-    YAP_print_usage(stderr, argv[0]);
+  memset(&runtime_limiter, 0, sizeof(runtime_limiter));
+  if (YAP_V2_runtime_policy_load_env(&runtime_policy, policy_error, sizeof(policy_error)) !=
+        YAP_V2_OK ||
+      YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
+    fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
     return EXIT_FAILURE;
   }
-
-  if (YAP_stat(indextexts_dirpath, &f_stats) != 0 || !S_ISDIR(f_stats.st_mode)) {
-    perror("ERROR: invalid index dir");
-    fprintf(stderr, "%s\n", indextexts_dirpath);
-    exit(EXIT_FAILURE);
-  }
-
-  count = 0;
-
-  printf("Start\n");
-
-  /*
-   *デーモン化
-   */
-  fclose(stdin);
-  fclose(stdout);
-  fclose(stderr);
-  stdout = fopen("./core.log", "a");
-  if (stdout == NULL) {
-    stdout = fopen("/dev/null", "a");
-  }
-  stderr = fopen("./core.error", "a");
-  if (stderr == NULL) {
-    stderr = fopen("/dev/null", "a");
-  }
-  pid = fork();
-  if (pid) {
-    FILE *pidf = fopen("./core.pid", "w");
-    if (pidf != NULL) {
-      fprintf(pidf, "%d", pid);
-      fclose(pidf);
-    }
-    exit(EXIT_SUCCESS);
-  }
-
-  atexit(YAP_remove_pidfile);
-
-  /*
-   *シグナル処理
-   */
-  if (YAP_install_signal_handlers() != 0) {
-    perror("ERROR: sigaction");
+  listen_socket = create_listener(port);
+  if (listen_socket < 0) {
+    fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
+    YAP_V2_runtime_limiter_close(&runtime_limiter);
     return EXIT_FAILURE;
   }
-
-  YAP_Db_cache_init(&yappod_core_cache);
-
-  start_deamon_thread(indextexts_dirpath, listen_port);
-
-  YAP_Db_cache_destroy(&yappod_core_cache);
-  return EXIT_SUCCESS;
+  daemon_status = daemonize_process();
+  if (daemon_status != 0) {
+    (void)close(listen_socket);
+    return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+  if (install_signal_handlers() != 0) return EXIT_FAILURE;
+  for (started = 0U; started < CORE_WORKERS; started++) {
+    workers[started].id = started;
+    workers[started].listen_socket = listen_socket;
+    workers[started].index_dir = index_dir;
+    if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
+  }
+  if (started != CORE_WORKERS) request_shutdown(SIGTERM);
+  for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
+  if (listen_socket >= 0) (void)close(listen_socket);
+  YAP_V2_runtime_limiter_close(&runtime_limiter);
+  return started == CORE_WORKERS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
