@@ -24,6 +24,8 @@
 #include "yappo_db.h"
 #include "yappo_index.h"
 #include "yappo_proto.h"
+#include "yappo_core_protocol_v2.h"
+#include "yappo_http_v2.h"
 
 #define BUF_SIZE 1024
 #define DEFAULT_CORE_PORT 10086
@@ -113,6 +115,41 @@ static void YAP_request_shutdown(int sig) {
 }
 
 static void YAP_remove_pidfile(void) { unlink(g_core_pidfile); }
+
+static int YAP_is_v2_connection(int fd) {
+  unsigned char magic[4]; ssize_t bytes;
+  do { bytes = recv(fd, magic, sizeof(magic), MSG_PEEK | MSG_WAITALL); } while (bytes < 0 && errno == EINTR);
+  return bytes == (ssize_t)sizeof(magic) && memcmp(magic, "YAP2", sizeof(magic)) == 0;
+}
+
+static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
+  YAP_V2_CORE_FRAME request, response; YAP_V2_HTTP_OPERATION operation;
+  char *json = NULL; size_t json_bytes = 0U; unsigned char *payload = NULL;
+  int http_status = 500, status;
+  YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
+  status = YAP_V2_core_frame_read(socket, YAP_V2_HTTP_MAX_BODY_BYTES, &request);
+  if (status != YAP_V2_CORE_FRAME_OK) goto done;
+  if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
+  else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
+  else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
+  if (YAP_V2_http_execute(index_dir, operation, request.payload, request.payload_bytes,
+                          &http_status, &json, &json_bytes) != 0 || json_bytes > UINT32_MAX - 2U) {
+    status = YAP_V2_CORE_FRAME_IO_ERROR; goto done;
+  }
+  payload = malloc(json_bytes + 2U);
+  if (payload == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
+  payload[0] = (unsigned char)((unsigned int)http_status >> 8);
+  payload[1] = (unsigned char)http_status; memcpy(payload + 2U, json, json_bytes);
+  response.type = http_status == 200 ?
+    (operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE : YAP_V2_CORE_RETRIEVE_RESPONSE) :
+    YAP_V2_CORE_ERROR_RESPONSE;
+  response.request_id = request.request_id; response.payload = payload;
+  response.payload_bytes = (uint32_t)(json_bytes + 2U);
+  status = YAP_V2_core_frame_write(socket, &response, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
+  if (status == YAP_V2_CORE_FRAME_OK && fflush(socket) != 0) status = YAP_V2_CORE_FRAME_IO_ERROR;
+done:
+  free(payload); free(json); YAP_V2_core_frame_free(&request); return status;
+}
 
 /*
  *URLデコードを行なう
@@ -308,6 +345,11 @@ void *thread_server(void *ip) {
     while (1) {
       if (g_shutdown_requested) {
         break;
+      }
+      /* v2 frames and the legacy protocol share the port during migration. */
+      if (YAP_is_v2_connection(accept_socket)) {
+        if (YAP_handle_v2_request(socket, p->base_dir) != YAP_V2_CORE_FRAME_OK) break;
+        continue;
       }
       /*永遠と処理を続ける*/
       recv_code = YAP_Proto_recv_query(socket, MAX_SOCKET_BUF, &dict, &max_size, &op, &keyword);

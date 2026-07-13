@@ -70,6 +70,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_query_v2.c
   ${SRC_DIR}/yappo_retrieve_v2.c
   ${SRC_DIR}/yappo_core_protocol_v2.c
+  ${SRC_DIR}/yappo_http_v2.c
   ${SRC_DIR}/yappo_search_api.c
   ${SRC_DIR}/yappo_rag.c
   ${SRC_DIR}/yappo_vector.c
@@ -221,6 +222,13 @@ function(add_yappod_cmocka_test test_name test_source)
 endfunction()
 
 if(YAPPOD_TESTS_DAEMON)
+  add_yappod_cmocka_test(
+    http_v2_daemon
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/http_v2_daemon_test.c
+    RUN_SERIAL
+    LABEL daemon
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+  )
   add_yappod_cmocka_test(
     error_cases
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/error_cases_test.c
@@ -442,6 +450,12 @@ if(YAPPOD_TESTS_NODAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_protocol_v2_test.c
     LABEL standalone
     EXTRA_SOURCES ${SRC_DIR}/yappo_alloc.c ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_core_protocol_v2.c
+  )
+  add_yappod_cmocka_test(
+    http_v2_runtime
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
   )
   add_yappod_cmocka_test(
     search_api

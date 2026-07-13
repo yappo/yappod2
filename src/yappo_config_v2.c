@@ -279,6 +279,12 @@ static void sha_init(SHA256_CTX *ctx){static const uint32_t initial[8]={0x6a09e6
 static void sha_update(SHA256_CTX *ctx,const unsigned char *data,size_t length){size_t take;ctx->bit_count+=(uint64_t)length*8U;while(length>0){take=64U-ctx->block_size;if(take>length)take=length;memcpy(ctx->block+ctx->block_size,data,take);ctx->block_size+=take;data+=take;length-=take;if(ctx->block_size==64U){sha_transform(ctx,ctx->block);ctx->block_size=0;}}}
 static void sha_final(SHA256_CTX *ctx,unsigned char out[32]){size_t i;uint64_t bits=ctx->bit_count;ctx->block[ctx->block_size++]=0x80U;if(ctx->block_size>56U){memset(ctx->block+ctx->block_size,0,64U-ctx->block_size);sha_transform(ctx,ctx->block);ctx->block_size=0;}memset(ctx->block+ctx->block_size,0,56U-ctx->block_size);for(i=0;i<8;i++)ctx->block[63U-i]=(unsigned char)(bits>>(i*8U));sha_transform(ctx,ctx->block);for(i=0;i<8;i++){out[i*4]=(unsigned char)(ctx->state[i]>>24);out[i*4+1]=(unsigned char)(ctx->state[i]>>16);out[i*4+2]=(unsigned char)(ctx->state[i]>>8);out[i*4+3]=(unsigned char)ctx->state[i];}}
 
+void YAP_V2_sha256_bytes(const unsigned char *data, size_t length, unsigned char output[32]) {
+  SHA256_CTX sha;
+  if (output == NULL || (length != 0U && data == NULL)) return;
+  sha_init(&sha); if (length != 0U) sha_update(&sha, data, length); sha_final(&sha, output);
+}
+
 int YAP_V2_config_fingerprint(const YAP_V2_CONFIG *config, unsigned char output[32]) {
   char canonical[32768];
   const char *metric;

@@ -204,7 +204,7 @@ void ytest_stop_pid_if_alive(pid_t pid, int retries, int sleep_ms) {
 
 static int wait_front_ready(int front_port, int retries, int sleep_ms) {
   static const char *k_ready_request =
-    "GET /d/1/OR/0-1?__ytest_ready__ HTTP/1.0\r\nHost: localhost\r\n\r\n";
+    "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
   int i;
 
   if (front_port <= 0 || retries <= 0 || sleep_ms < 0) {
@@ -217,7 +217,7 @@ static int wait_front_ready(int front_port, int retries, int sleep_ms) {
     int rc = ytest_http_send_text(front_port, k_ready_request, &response);
 
     if (rc == 0) {
-      int ok = (response != NULL && strstr(response, "HTTP/1.0") != NULL);
+      int ok = (response != NULL && strstr(response, "200 OK") != NULL);
       free(response);
       if (ok) {
         return 0;
