@@ -167,7 +167,8 @@ static int write_atomic(const char *path, uint64_t generation, BUFFER *payload, 
 
 void YAP_V2_metadata_index_init(YAP_V2_METADATA_INDEX *index) { if (index != NULL) memset(index, 0, sizeof(*index)); }
 void YAP_V2_metadata_index_free(YAP_V2_METADATA_INDEX *index) {
-  if (index == NULL) return; free(index->entries); free(index->storage); memset(index, 0, sizeof(*index));
+  if (index == NULL) return;
+  free(index->entries); free(index->storage); memset(index, 0, sizeof(*index));
 }
 
 int YAP_V2_metadata_write(const char *path, uint64_t generation, const YAP_V2_CONFIG *config,

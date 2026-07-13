@@ -50,14 +50,17 @@ int YAP_V2_snippet(YAP_V2_BYTES_VIEW text, const YAP_V2_BYTES_VIEW *terms, size_
       memcpy(output + out, open_mark, open_len); out += open_len; memcpy(output + out, text.data + i, terms[matched].len); out += terms[matched].len; memcpy(output + out, close_mark, close_len); out += close_len; i += terms[matched].len;
     } else {
       size_t next = i + 1U; while (next < (size_t)points[end_index] && !boundary(points, point_count, next)) next++;
-      if (next - i > output_capacity - 1U - out) goto range_error; memcpy(output + out, text.data + i, next - i); out += next - i; i = next;
+      if (next - i > output_capacity - 1U - out) goto range_error;
+      memcpy(output + out, text.data + i, next - i); out += next - i; i = next;
     }
   }
   output[out] = '\0'; *output_bytes = out; ubrk_close(iterator); utext_close(utext); return YAP_V2_OK;
 range_error:
   ubrk_close(iterator); utext_close(utext); return YAP_V2_OUT_OF_RANGE;
 allocation_error:
-  if (iterator != NULL) ubrk_close(iterator); if (utext != NULL) utext_close(utext); return YAP_V2_ALLOCATION_FAILED;
+  if (iterator != NULL) ubrk_close(iterator);
+  if (utext != NULL) utext_close(utext);
+  return YAP_V2_ALLOCATION_FAILED;
 invalid:
   ubrk_close(iterator); utext_close(utext); return YAP_V2_INVALID_FORMAT;
 }

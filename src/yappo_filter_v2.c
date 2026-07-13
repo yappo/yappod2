@@ -69,7 +69,9 @@ static int literal_equal(const YAP_V2_METADATA_ENTRY *entry, yyjson_val *literal
   if (yyjson_is_str(literal)) return entry->type == YAP_V2_METADATA_STRING && entry->value.len == yyjson_get_len(literal) && memcmp(entry->value.data, yyjson_get_str(literal), entry->value.len) == 0;
   if (yyjson_is_num(literal) && entry->type == YAP_V2_METADATA_NUMBER) {
     char buffer[65]; double stored, wanted = yyjson_get_num(literal);
-    if (entry->value.len >= sizeof(buffer)) return 0; memcpy(buffer, entry->value.data, entry->value.len); buffer[entry->value.len] = '\0'; stored = strtod(buffer, NULL);
+    if (entry->value.len >= sizeof(buffer)) return 0;
+    memcpy(buffer, entry->value.data, entry->value.len);
+    buffer[entry->value.len] = '\0'; stored = strtod(buffer, NULL);
     return stored == wanted;
   }
   return 0;
@@ -98,7 +100,9 @@ static int eval_node(yyjson_val *node, const YAP_V2_METADATA_INDEX *metadata, ui
       if (strcmp(op, "in") == 0) { yyjson_arr_iter values; yyjson_val *value; yyjson_arr_iter_init(yyjson_obj_get(body, "values"), &values); while ((value = yyjson_arr_iter_next(&values)) != NULL) if (literal_equal(entry, value)) return 1; }
       if (strcmp(op, "range") == 0 && entry->type == YAP_V2_METADATA_NUMBER) {
         char buffer[65]; double number; const char *names[] = {"gt", "gte", "lt", "lte"}; size_t i; int ok = 1;
-        if (entry->value.len >= sizeof(buffer)) continue; memcpy(buffer, entry->value.data, entry->value.len); buffer[entry->value.len] = '\0'; number = strtod(buffer, NULL);
+        if (entry->value.len >= sizeof(buffer)) continue;
+        memcpy(buffer, entry->value.data, entry->value.len);
+        buffer[entry->value.len] = '\0'; number = strtod(buffer, NULL);
         for (i = 0U; i < 4U; i++) { yyjson_val *bound = yyjson_obj_get(body, names[i]); if (bound != NULL) { double value = yyjson_get_num(bound); if ((i == 0U && !(number > value)) || (i == 1U && !(number >= value)) || (i == 2U && !(number < value)) || (i == 3U && !(number <= value))) ok = 0; } }
         if (ok) return 1;
       }
