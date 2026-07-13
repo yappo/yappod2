@@ -104,7 +104,7 @@ static void runtime_close(HTTP_RUNTIME *runtime) {
   memset(runtime, 0, sizeof(*runtime));
 }
 
-static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
+static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   char config_path[4096], manifest_path[4096], segment_dir[4096], file_path[4096];
   char error[256]; size_t i; int status;
   memset(runtime, 0, sizeof(*runtime));
@@ -170,6 +170,22 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
     }
   }
   return YAP_V2_OK;
+}
+
+static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
+  size_t attempt;
+  int status = YAP_V2_CONFLICT;
+  for (attempt = 0U; attempt < 4U; attempt++) {
+    status = runtime_open_once(runtime, index_dir);
+    if (status != YAP_V2_OK) {
+      runtime_close(runtime);
+      return status;
+    }
+    if (YAP_V2_snapshot_generation(runtime->snapshot) == runtime->manifest.generation)
+      return YAP_V2_OK;
+    runtime_close(runtime);
+  }
+  return YAP_V2_CONFLICT;
 }
 
 static int only_keys(yyjson_val *object, const char *const *allowed) {

@@ -36,11 +36,15 @@
 ```bash
 cmake --build build -j
 ctest --test-dir build --output-on-failure
-ctest --test-dir build -R search_quality --output-on-failure
+ctest --test-dir build -R 'search_quality|ann_v2|v2_daemon_reliability' --output-on-failure
 cmake --install build --prefix /tmp/yappod-release-smoke
 ```
 
-CI では Ubuntu、macOS、clang sanitizer、install smoke の全 job を必須とする。性能評価は `tests/quality` の小規模 baseline を回帰検出に使い、本番リリース判定では同じ hardware・dataset・repeat 数の大規模負荷試験を別途保存する。
+CI では Ubuntu、macOS、clang sanitizer、libFuzzer、install smoke の全 job を必須とする。
+品質・性能・信頼性の具体的なgateとreference benchmarkは
+[v2 品質・性能・信頼性ゲート](quality_performance_reliability_v2.md)に従う。CIの小規模
+baselineは回帰検出専用であり、本番リリース判定では同じhardware・dataset・request数の
+`v2_load_probe --assert-reference`結果を別途保存する。
 
 ## 失敗時の証跡
 

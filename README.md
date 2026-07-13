@@ -123,15 +123,18 @@ ctest --test-dir build --output-on-failure
 
 ### 検索品質ベースライン
 
-現行検索のランキング品質と検索時間は、`search_quality`で再現・比較できます。
+legacy検索とv2 lexical/vector/hybridのランキング品質、ANN recall、daemon負荷・更新並行性は
+CTestで再現・比較できます。
 
 ```bash
 ctest --test-dir build -R search_quality --output-on-failure
+ctest --test-dir build -R '^(ann_v2|v2_daemon_reliability)$' --output-on-failure
 ```
 
-評価ではnDCG@10、MRR@10、Recall@10、P95検索時間を算出します。評価データ形式、保存済み
-基準値、単体実行方法は`tests/quality/README.md`を参照してください。ここに含まれるデータは
-小規模な回帰検出用であり、本番リリース判定用の大規模な関連度評価セットではありません。
+評価ではmode別nDCG@10、Recall@10、ANN Recall@10、P95検索時間、daemon RSSを算出します。
+CI smoke、sanitizer/fuzz、100万document基準のrelease benchmarkは
+[`docs/quality_performance_reliability_v2.md`](docs/quality_performance_reliability_v2.md)を参照して
+ください。小規模CTestの成功を大規模性能受入れの代替にはできません。
 
 ## インストール
 

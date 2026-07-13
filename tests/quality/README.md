@@ -1,8 +1,12 @@
 # Search quality baseline
 
-This directory contains the deterministic smoke corpus used to detect search-quality regressions.
-It is deliberately small and is not a substitute for the product-level judged corpus planned for
-the modern search release.
+This directory contains deterministic legacy and v2 search-quality and load tooling. All committed
+corpora are deliberately small regression guards; they are not substitutes for the release
+reference benchmark.
+
+The authoritative v2 procedure, including the distinction between CI smoke thresholds and the
+1M-document release profile, is documented in
+[`docs/quality_performance_reliability_v2.md`](../../docs/quality_performance_reliability_v2.md).
 
 ## Data format
 
@@ -43,4 +47,6 @@ cmake --build build -j
   --repeat 5
 ```
 
-The same check is registered with CTest as `search_quality_baseline`.
+The same check is registered with CTest as `search_quality_baseline`. The v2 gates are registered as
+`v2_search_quality`, `ann_v2`, and `v2_daemon_reliability`; `v2_load_probe` runs against an externally
+started reference daemon and is intentionally not a CTest smoke.

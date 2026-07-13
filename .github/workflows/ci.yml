@@ -191,6 +191,7 @@ jobs:
         run: |
           cmake -S . -B build-sanitizer \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DYAPPOD_BUILD_FUZZERS=ON \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_FLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
@@ -215,8 +216,23 @@ jobs:
           set -o pipefail
           ctest --test-dir build-sanitizer --output-on-failure 2>&1 | tee build-sanitizer/ctest.log
 
+      - name: Fuzz v2 parsers (sanitizer)
+        id: fuzz_sanitizer
+        continue-on-error: true
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -o pipefail
+          {
+            ./build-sanitizer/core_protocol_v2_fuzz \
+              -runs=2000 -max_len=4096 tests/fuzz/corpus/core_protocol
+            ./build-sanitizer/ingest_v2_fuzz \
+              -runs=2000 -max_len=16384 tests/fuzz/corpus/ingest
+          } 2>&1 | tee build-sanitizer/fuzz.log
+
       - name: Dump sanitizer logs on failure
-        if: steps.ctest_sanitizer.outcome == 'failure'
+        if: steps.ctest_sanitizer.outcome == 'failure' || steps.fuzz_sanitizer.outcome == 'failure'
         run: |
           echo "::group::ctest.log"
           cat build-sanitizer/ctest.log
@@ -245,9 +261,14 @@ jobs:
               echo "::endgroup::"
             done
           fi
+          if [ -f build-sanitizer/fuzz.log ]; then
+            echo "::group::fuzz.log"
+            cat build-sanitizer/fuzz.log
+            echo "::endgroup::"
+          fi
 
       - name: Collect sanitizer daemon logs on failure
-        if: steps.ctest_sanitizer.outcome == 'failure'
+        if: steps.ctest_sanitizer.outcome == 'failure' || steps.fuzz_sanitizer.outcome == 'failure'
         shell: bash
         run: |
           mkdir -p build-sanitizer/daemon-logs
@@ -261,7 +282,7 @@ jobs:
           done
 
       - name: Upload sanitizer daemon logs artifact
-        if: steps.ctest_sanitizer.outcome == 'failure'
+        if: steps.ctest_sanitizer.outcome == 'failure' || steps.fuzz_sanitizer.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: daemon-logs-sanitizer
@@ -293,12 +314,20 @@ jobs:
               grep -F "[TEST] daemon attempt=" build-sanitizer/ctest.log || echo "(no daemon trace)"
               echo '```'
             fi
+            if [ -f build-sanitizer/fuzz.log ]; then
+              echo ""
+              echo "Fuzz summary:"
+              echo '```text'
+              tail -n 40 build-sanitizer/fuzz.log
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enforce sanitizer test success
         if: always()
         run: |
-          if [ "${{ steps.ctest_sanitizer.outcome }}" != "success" ]; then
-            echo "ctest (sanitizer) failed"
+          if [ "${{ steps.ctest_sanitizer.outcome }}" != "success" ] || \
+             [ "${{ steps.fuzz_sanitizer.outcome }}" != "success" ]; then
+            echo "sanitizer ctest or fuzzing failed"
             exit 1
           fi
