@@ -269,7 +269,10 @@ int YAP_V2_vector_segment_open(const char *path, uint64_t expected_generation,
   }
   status = YAP_V2_OK;
 done:
-  if (fd >= 0) close(fd); free(entries); if (map != NULL) munmap(map, (size_t)info.st_size); return status;
+  if (fd >= 0) close(fd);
+  free(entries);
+  if (map != NULL) munmap(map, (size_t)info.st_size);
+  return status;
 }
 
 int YAP_V2_vector_segment_search(const YAP_V2_VECTOR_SEGMENT *segment, const float *query,
