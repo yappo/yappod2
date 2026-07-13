@@ -7,8 +7,10 @@
 #include "yappo_metadata_v2.h"
 #include "yappo_unicode.h"
 #include "yappo_vector_v2.h"
+#include "yappo_writer_lock_v2.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +29,14 @@ static void set_error(char *error, size_t capacity, const char *message) {
 static int join_path(char *output, size_t capacity, const char *left, const char *right) {
   int written = snprintf(output, capacity, "%s/%s", left, right);
   return written < 0 || (size_t)written >= capacity ? -1 : 0;
+}
+
+static int sync_directory(const char *path) {
+  int fd = open(path, O_RDONLY | O_DIRECTORY), status;
+  if (fd < 0) return YAP_V2_IO_ERROR;
+  status = fsync(fd) == 0 ? YAP_V2_OK : YAP_V2_IO_ERROR;
+  if (close(fd) != 0) status = YAP_V2_IO_ERROR;
+  return status;
 }
 
 static YAP_V2_BYTES_VIEW view(const char *value) {
@@ -77,7 +87,9 @@ int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *op
   size_t i, j, document_count = 0U, passage_count = 0U, tombstone_count = 0U;
   size_t document_index = 0U, passage_index = 0U, tombstone_index = 0U;
   uint64_t next_generation; int status = YAP_V2_OK, published = 0;
+  YAP_V2_WRITER_LOCK writer_lock;
   YAP_V2_manifest_init(&manifest); YAP_Embedding_result_init(&embeddings);
+  YAP_V2_writer_lock_init(&writer_lock);
   if (index_dir == NULL || operations == NULL || result == NULL || operation_count == 0U ||
       operation_count > YAP_V2_UPDATE_MAX_OPERATIONS) return YAP_V2_INVALID_ARGUMENT;
   memset(result, 0, sizeof(*result));
@@ -86,6 +98,8 @@ int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *op
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0) {
     set_error(error, error_size, "index path is too long"); return YAP_V2_OUT_OF_RANGE;
   }
+  status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
+  if (status != YAP_V2_OK) { set_error(error, error_size, "cannot acquire index writer lock"); goto done; }
   status = validate_unique_ids(operations, operation_count);
   if (status != YAP_V2_OK) { set_error(error, error_size, "batch contains duplicate document IDs"); goto done; }
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
@@ -194,6 +208,8 @@ int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *op
     if (status == YAP_V2_OK) status = add_component(&descriptor, &component);
     descriptor.tombstone_count = tombstone_count;
   }
+  if (status == YAP_V2_OK) status = sync_directory(segment_template);
+  if (status == YAP_V2_OK) status = sync_directory(segments_path);
   if (status == YAP_V2_OK) status = YAP_V2_manifest_add_segment(&manifest, &descriptor);
   if (status == YAP_V2_OK) {
     manifest.generation = next_generation;
@@ -209,6 +225,7 @@ done:
   if (!published && segment_id != NULL) cleanup_segment_dir(segment_template);
   free(documents); free(passages); free(tombstones); free(vector_values);
   free_chunks(chunks, operation_count); YAP_V2_manifest_free(&manifest);
+  YAP_V2_writer_lock_release(&writer_lock);
   return status;
 }
 

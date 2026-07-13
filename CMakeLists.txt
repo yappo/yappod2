@@ -56,6 +56,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_unicode.c
   ${SRC_DIR}/yappo_ingest.c
   ${SRC_DIR}/yappo_update_v2.c
+  ${SRC_DIR}/yappo_writer_lock_v2.c
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_lexical_v2.c
@@ -86,33 +87,39 @@ set(YAPPO_SEARCH_SOURCES
   ${SRC_DIR}/yappo_proto.c
 )
 
+add_library(yappod_base STATIC ${YAPPO_BASE_SOURCES})
+target_include_directories(yappod_base PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
+target_link_libraries(yappod_base PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads
+  yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
+yappod_enable_warnings(yappod_base)
+
 add_executable(search
-  ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
   ${SRC_DIR}/search.c
 )
 
 add_executable(yappo_makeindex
-  ${YAPPO_BASE_SOURCES}
   ${SRC_DIR}/yappo_ngram.c
   ${SRC_DIR}/yappo_minibtree.c
   ${SRC_DIR}/yappo_makeindex.c
 )
 
 add_executable(yappo_mergepos
-  ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
   ${SRC_DIR}/yappo_mergepos.c
 )
 
+add_executable(yappo_compact
+  ${SRC_DIR}/yappo_compact_v2.c
+  ${SRC_DIR}/yappo_compact.c
+)
+
 add_executable(yappod_core
-  ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
   ${SRC_DIR}/yappod_core.c
 )
 
 add_executable(yappod_front
-  ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
   ${SRC_DIR}/yappod_front.c
 )
@@ -121,13 +128,14 @@ set(ALL_TARGETS
   search
   yappo_makeindex
   yappo_mergepos
+  yappo_compact
   yappod_core
   yappod_front
 )
 
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR} ${BDB_INCLUDE_DIR})
-  target_link_libraries(${tgt} PRIVATE ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
+  target_link_libraries(${tgt} PRIVATE yappod_base ${BDB_LIB} ZLIB::ZLIB Threads::Threads yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -456,14 +464,15 @@ if(YAPPOD_TESTS_NODAEMON)
     http_v2_runtime
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_writer_lock_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
   )
   add_yappod_cmocka_test(
     update_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/update_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${YAPPO_BASE_SOURCES}
+    EXTRA_SOURCES ${SRC_DIR}/yappo_compact_v2.c
   )
+  target_link_libraries(update_v2_test PRIVATE yappod_base)
   add_yappod_cmocka_test(
     search_api
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/search_api_test.c
