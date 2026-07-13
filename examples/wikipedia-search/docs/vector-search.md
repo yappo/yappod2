@@ -113,6 +113,20 @@ yappod2自身のchunkerで、embedding対象のpassageを確定します。
 `passages.ndjson`の各行には`document_id`、`passage_id`、`ordinal`、`text`が入ります。このファイルは
 embedding対象を確定する中間形式であり、`yappo_makeindex build`へ直接渡す入力ではありません。
 
+## embedが読む2つのTOML
+
+`wikipedia_data.py embed`は、同じ設定値をCLIへ再入力させず、次の2ファイルを読みます。
+
+| 設定ファイル | 読み取る内容 |
+|---|---|
+| `config.vector.toml` | `[vector]`の有効状態、index互換性用`model_id`、vector次元数 |
+| `web/config.toml` | `[embedding]`のprovider、base URL、実model ID、profile、認証token、timeout、batch size |
+
+標準では`wikipedia_data.py`と同じdirectoryにある上記2ファイルを読みます。別の設定ファイルを使う場合だけ
+`--index-config PATH`と`--web-config PATH`で変更できます。`[vector].dimensions`と
+`[embedding].dimensions`、`[vector].model_id`と`[embedding].index_model_id`が不一致なら、embedding APIを
+呼ぶ前に停止します。`web/config.toml`の`[llm]`は回答生成用なので、この処理では読みません。
+
 ## LM Studioを使う
 
 LM Studio 0.3.25以降で`google/embedding-gemma-300m`を取得してloadし、Developer画面からLocal Serverを
@@ -122,26 +136,21 @@ LM Studio 0.3.25以降で`google/embedding-gemma-300m`を取得してloadし、D
 lms server start
 ```
 
-既定のbase URLは`http://127.0.0.1:1234/v1`です。利用可能なmodel IDを確認します。
+`web/config.toml`へ次の`[embedding]`を設定します。`model`はLM Studioに表示されたEmbeddingGemmaの
+model identifierです。identifierが不明な場合だけ、`curl -sS http://127.0.0.1:1234/v1/models`で
+Local Serverが公開しているIDを確認できます。このcurlはembeddingを生成する処理ではなく、通常は不要です。
 
-```sh
-curl -sS http://127.0.0.1:1234/v1/models
+```toml
+[embedding]
+provider = "lmstudio"
+base_url = "http://127.0.0.1:1234/v1"
+model = "LM Studioに表示されたEmbeddingGemmaのmodel identifier"
+index_model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+profile = "embeddinggemma"
+timeout_ms = 60000
+batch_size = 16
 ```
-
-表示されたEmbeddingGemmaのmodel IDを指定し、prompt付きpassageをbatchで送ります。
-
-```sh
-curl -sS http://127.0.0.1:1234/v1/embeddings \
-  -H 'Content-Type: application/json' \
-  --data '{
-    "model": "LM Studioに表示されたEmbeddingGemmaのmodel ID",
-    "input": ["title: 記事名 | text: 最初のpassage", "title: 記事名 | text: 次のpassage"]
-  }'
-```
-
-responseの`data`を`index`の昇順に並べ、それぞれの`embedding`を入力passageへ対応させます。最初の
-responseで、各`embedding`が768要素であることを必ず確認してください。LM Studioは
-OpenAI-compatibleな`POST /v1/embeddings`を提供します。
 
 同梱adapterで全passageをvector化します。
 
@@ -149,13 +158,7 @@ OpenAI-compatibleな`POST /v1/embeddings`を提供します。
 python3 wikipedia_data.py embed \
   --documents data/documents.ndjson \
   --passages data/passages.ndjson \
-  --output data/documents.vector.ndjson \
-  --provider lmstudio \
-  --base-url http://127.0.0.1:1234/v1 \
-  --model 'LM Studioに表示されたEmbeddingGemmaのmodel ID' \
-  --dimensions 768 \
-  --profile embeddinggemma \
-  --batch-size 16
+  --output data/documents.vector.ndjson
 ```
 
 ## Ollamaを使う
@@ -168,36 +171,31 @@ ollama pull embeddinggemma
 ollama serve
 ```
 
-既定のURLは`http://127.0.0.1:11434`です。passageをbatchで送ります。
+既定のURLは`http://127.0.0.1:11434`です。`web/config.toml`の`[embedding]`をOllama用に設定してから
+adapterを実行します。
 
-```sh
-curl -sS http://127.0.0.1:11434/api/embed \
-  -H 'Content-Type: application/json' \
-  --data '{
-    "model": "embeddinggemma",
-    "input": ["title: 記事名 | text: 最初のpassage", "title: 記事名 | text: 次のpassage"]
-  }'
+```toml
+[embedding]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "embeddinggemma"
+index_model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+profile = "embeddinggemma"
+timeout_ms = 60000
+batch_size = 16
 ```
-
-responseの`embeddings`は入力順です。最初のresponseで、各vectorが768要素であることを必ず
-確認してください。
 
 ```sh
 python3 wikipedia_data.py embed \
   --documents data/documents.ndjson \
   --passages data/passages.ndjson \
-  --output data/documents.vector.ndjson \
-  --provider ollama \
-  --base-url http://127.0.0.1:11434 \
-  --model embeddinggemma \
-  --dimensions 768 \
-  --profile embeddinggemma \
-  --batch-size 16
+  --output data/documents.vector.ndjson
 ```
 
 ## embedding adapterの検証内容
 
-`wikipedia_data.py embed`はproviderの違いを吸収し、次の処理を行います。
+adapterはproviderの違いを吸収し、次の処理を行います。
 
 1. `data/documents.ndjson`の元文書を`id`で保持する。
 2. `data/passages.ndjson`を読み、`document_id`と`ordinal`の順序を保持する。

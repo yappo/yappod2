@@ -157,6 +157,116 @@ class WikipediaDataTest(unittest.TestCase):
             self.assertEqual((written, skipped), (2, 0))
             self.assertEqual(len(read_ndjson(output)), 2)
 
+    def test_load_embedding_settings_reads_index_and_web_toml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_config = root / "config.vector.toml"
+            web_config = root / "config.toml"
+            index_config.write_text("""
+[vector]
+enabled = true
+model_id = "embed-index-v1"
+dimensions = 3
+metric = "cosine"
+""", encoding="utf-8")
+            web_config.write_text("""
+[llm]
+base_url = "http://localhost:1234/v1"
+model = "answer-model"
+
+[embedding]
+provider = "lmstudio"
+base_url = "http://localhost:1234/v1"
+model = "embedding-model"
+index_model_id = "embed-index-v1"
+dimensions = 3
+profile = "plain"
+authorization_token = "secret"
+timeout_ms = 45000
+batch_size = 8
+""", encoding="utf-8")
+            settings = wikipedia_data.load_embedding_settings(index_config, web_config)
+            self.assertEqual(settings, wikipedia_data.EmbeddingSettings(
+                "lmstudio", "http://localhost:1234/v1", "embedding-model", 3,
+                8, 45.0, "plain", "secret",
+            ))
+
+    def test_load_embedding_settings_rejects_index_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_config = root / "config.vector.toml"
+            web_config = root / "config.toml"
+            index_config.write_text(
+                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=768\n', encoding="utf-8"
+            )
+            web_config.write_text("""
+[embedding]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "embeddinggemma"
+index_model_id = "different-index"
+dimensions = 768
+""", encoding="utf-8")
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "index_model_id"):
+                wikipedia_data.load_embedding_settings(index_config, web_config)
+            web_config.write_text("""
+[embedding]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "embeddinggemma"
+index_model_id = "index-v1"
+dimensions = 384
+""", encoding="utf-8")
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "dimensions"):
+                wikipedia_data.load_embedding_settings(index_config, web_config)
+
+    def test_load_embedding_settings_rejects_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_config = root / "config.vector.toml"
+            web_config = root / "config.toml"
+            index_config.write_text(
+                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=768\n', encoding="utf-8"
+            )
+            web_config.write_text("""
+[embedding]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "embeddinggemma"
+batch_szie = 8
+""", encoding="utf-8")
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "batch_szie"):
+                wikipedia_data.load_embedding_settings(index_config, web_config)
+
+    def test_embed_command_passes_toml_settings_to_adapter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_config = root / "config.vector.toml"
+            web_config = root / "config.toml"
+            index_config.write_text(
+                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=2\n', encoding="utf-8"
+            )
+            web_config.write_text("""
+[embedding]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "embeddinggemma"
+index_model_id = "index-v1"
+dimensions = 2
+""", encoding="utf-8")
+            with mock.patch.object(wikipedia_data, "embed_documents", return_value=(1, 2)) as adapter:
+                status = wikipedia_data.main([
+                    "embed", "--documents", str(root / "documents.ndjson"),
+                    "--passages", str(root / "passages.ndjson"),
+                    "--output", str(root / "vector.ndjson"),
+                    "--index-config", str(index_config), "--web-config", str(web_config),
+                ])
+            self.assertEqual(status, 0)
+            self.assertEqual(adapter.call_args.args[3:], (
+                "ollama", "http://localhost:11434", "embeddinggemma", 2,
+                16, 60.0, "embeddinggemma", None,
+            ))
+
     def test_embed_documents_uses_prepared_passage_order_and_lm_studio_indexes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

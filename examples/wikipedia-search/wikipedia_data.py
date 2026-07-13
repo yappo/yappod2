@@ -14,10 +14,15 @@ import re
 import sys
 import tempfile
 import time
-from typing import Dict, Iterable, Iterator, List, Optional, TextIO, Tuple
+from typing import Dict, Iterable, Iterator, List, NamedTuple, Optional, TextIO, Tuple
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
+
+try:
+    import tomllib
+except ImportError:  # Python 3.9 and 3.10
+    tomllib = None
 
 
 DEFAULT_API_URL = "https://ja.wikipedia.org/w/api.php"
@@ -27,6 +32,9 @@ CHECKSUM_FILENAME = "jawiki-latest-sha1sums.txt"
 DUMP_CHECKSUM_PATTERN = re.compile(r"^jawiki-\d{8}-pages-articles-multistream\.xml\.bz2$")
 API_SEARCH_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
+EXAMPLE_DIR = Path(__file__).resolve().parent
+DEFAULT_VECTOR_CONFIG = EXAMPLE_DIR / "config.vector.toml"
+DEFAULT_WEB_CONFIG = EXAMPLE_DIR / "web" / "config.toml"
 DEFAULT_TOPICS = (
     "日本の歴史",
     "日本の地理",
@@ -53,6 +61,163 @@ DEFAULT_TOPICS = (
 
 class WikipediaDataError(Exception):
     """A user-facing failure that should not publish partial output."""
+
+
+class EmbeddingSettings(NamedTuple):
+    provider: str
+    base_url: str
+    model: str
+    dimensions: int
+    batch_size: int
+    timeout: float
+    profile: str
+    authorization_token: Optional[str]
+
+
+def _strip_toml_comment(line: str) -> str:
+    quote: Optional[str] = None
+    escaped = False
+    for index, character in enumerate(line):
+        if quote == '"' and escaped:
+            escaped = False
+            continue
+        if quote == '"' and character == "\\":
+            escaped = True
+            continue
+        if character in ("'", '"'):
+            quote = None if quote == character else character if quote is None else quote
+        elif character == "#" and quote is None:
+            return line[:index]
+    return line
+
+
+def _fallback_toml_value(value: str, path: Path, line_number: int) -> object:
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as error:
+            raise WikipediaDataError("invalid TOML string at {}:{}".format(path, line_number)) from error
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if re.fullmatch(r"[+-]?[0-9][0-9_]*", value):
+        return int(value.replace("_", ""))
+    raise WikipediaDataError("unsupported TOML value at {}:{}".format(path, line_number))
+
+
+def _fallback_toml_table(source: str, path: Path, table_name: str) -> Dict[str, object]:
+    current_table: Optional[str] = None
+    result: Dict[str, object] = {}
+    for line_number, raw_line in enumerate(source.splitlines(), 1):
+        line = _strip_toml_comment(raw_line).strip()
+        if not line:
+            continue
+        table_match = re.fullmatch(r"\[([A-Za-z0-9_.-]+)\]", line)
+        if table_match:
+            current_table = table_match.group(1)
+            continue
+        if current_table != table_name:
+            continue
+        assignment = re.fullmatch(r"([A-Za-z0-9_-]+)\s*=\s*(.+)", line)
+        if not assignment:
+            raise WikipediaDataError("invalid TOML assignment at {}:{}".format(path, line_number))
+        key = assignment.group(1)
+        if key in result:
+            raise WikipediaDataError("duplicate TOML key {}.{}".format(table_name, key))
+        result[key] = _fallback_toml_value(assignment.group(2).strip(), path, line_number)
+    return result
+
+
+def _read_toml_table(path: Path, table_name: str) -> Dict[str, object]:
+    try:
+        if tomllib is not None:
+            with path.open("rb") as source:
+                document = tomllib.load(source)
+            value = document.get(table_name)
+        else:
+            value = _fallback_toml_table(path.read_text(encoding="utf-8"), path, table_name)
+    except (OSError, UnicodeDecodeError) as error:
+        raise WikipediaDataError("cannot read TOML config {}: {}".format(path, error)) from error
+    except Exception as error:
+        if tomllib is not None and isinstance(error, tomllib.TOMLDecodeError):
+            raise WikipediaDataError("invalid TOML config {}: {}".format(path, error)) from error
+        raise
+    if not isinstance(value, dict) or not value:
+        raise WikipediaDataError("{} must contain a [{}] table".format(path, table_name))
+    return value
+
+
+def _config_string(table: Dict[str, object], key: str, name: str, required: bool = True) -> Optional[str]:
+    value = table.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise WikipediaDataError("{} must be a non-empty string".format(name))
+    return value.strip()
+
+
+def _config_integer(
+    table: Dict[str, object], key: str, name: str, default: Optional[int], minimum: int, maximum: int
+) -> int:
+    value = table.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum or value > maximum:
+        raise WikipediaDataError("{} must be an integer from {} to {}".format(name, minimum, maximum))
+    return value
+
+
+def _only_config_keys(table: Dict[str, object], allowed: Tuple[str, ...], name: str) -> None:
+    unknown = next((key for key in table if key not in allowed), None)
+    if unknown is not None:
+        raise WikipediaDataError("{} contains unknown key: {}".format(name, unknown))
+
+
+def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSettings:
+    vector = _read_toml_table(index_config, "vector")
+    embedding = _read_toml_table(web_config, "embedding")
+    _only_config_keys(vector, ("enabled", "model_id", "dimensions", "metric"), "vector")
+    _only_config_keys(embedding, (
+        "provider", "base_url", "model", "index_model_id", "dimensions", "profile",
+        "authorization_token", "timeout_ms", "batch_size",
+    ), "embedding")
+    if vector.get("enabled") is not True:
+        raise WikipediaDataError("vector.enabled must be true in {}".format(index_config))
+    index_model_id = _config_string(vector, "model_id", "vector.model_id")
+    dimensions = _config_integer(vector, "dimensions", "vector.dimensions", None, 1, 65536)
+    configured_dimensions = embedding.get("dimensions", dimensions)
+    if configured_dimensions != dimensions:
+        raise WikipediaDataError("embedding.dimensions must match vector.dimensions")
+    configured_model_id = _config_string(
+        embedding, "index_model_id", "embedding.index_model_id", required=False
+    )
+    if configured_model_id is not None and configured_model_id != index_model_id:
+        raise WikipediaDataError("embedding.index_model_id must match vector.model_id")
+    provider = _config_string(embedding, "provider", "embedding.provider")
+    if provider not in ("lmstudio", "ollama"):
+        raise WikipediaDataError("embedding.provider must be lmstudio or ollama")
+    base_url = _config_string(embedding, "base_url", "embedding.base_url")
+    parsed_url = urlsplit(base_url)
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+        raise WikipediaDataError("embedding.base_url must be an http or https URL")
+    profile = _config_string(embedding, "profile", "embedding.profile", required=False) or "embeddinggemma"
+    if profile not in ("embeddinggemma", "plain"):
+        raise WikipediaDataError("embedding.profile must be embeddinggemma or plain")
+    authorization_token = _config_string(
+        embedding, "authorization_token", "embedding.authorization_token", required=False
+    )
+    timeout_ms = _config_integer(embedding, "timeout_ms", "embedding.timeout_ms", 60000, 1000, 600000)
+    return EmbeddingSettings(
+        provider,
+        base_url,
+        _config_string(embedding, "model", "embedding.model"),
+        dimensions,
+        _config_integer(embedding, "batch_size", "embedding.batch_size", 16, 1, 1024),
+        timeout_ms / 1000.0,
+        profile,
+        authorization_token,
+    )
 
 
 def _request_bytes(
@@ -576,14 +741,8 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--documents", type=Path, required=True)
     embed.add_argument("--passages", type=Path, required=True)
     embed.add_argument("--output", type=Path, required=True)
-    embed.add_argument("--provider", choices=("lmstudio", "ollama"), required=True)
-    embed.add_argument("--base-url", required=True)
-    embed.add_argument("--model", required=True)
-    embed.add_argument("--dimensions", type=_positive_int, default=768)
-    embed.add_argument("--batch-size", type=_positive_int, default=16)
-    embed.add_argument("--timeout", type=float, default=60.0)
-    embed.add_argument("--api-key", default=os.environ.get("EMBEDDING_API_KEY"))
-    embed.add_argument("--profile", choices=("embeddinggemma", "plain"), default="embeddinggemma")
+    embed.add_argument("--index-config", type=Path, default=DEFAULT_VECTOR_CONFIG)
+    embed.add_argument("--web-config", type=Path, default=DEFAULT_WEB_CONFIG)
     return parser
 
 
@@ -602,11 +761,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             written, skipped = convert_wikiextractor(args.input, args.output, args.limit)
             result = {"output": str(args.output), "written": written, "skipped": skipped}
         else:
-            if args.timeout <= 0:
-                raise WikipediaDataError("embedding timeout must be greater than zero")
+            settings = load_embedding_settings(args.index_config, args.web_config)
             documents, passages = embed_documents(
-                args.documents, args.passages, args.output, args.provider, args.base_url,
-                args.model, args.dimensions, args.batch_size, args.timeout, args.profile, args.api_key,
+                args.documents, args.passages, args.output, settings.provider, settings.base_url,
+                settings.model, settings.dimensions, settings.batch_size, settings.timeout,
+                settings.profile, settings.authorization_token,
             )
             result = {"output": str(args.output), "documents": documents, "passages": passages}
     except WikipediaDataError as error:
