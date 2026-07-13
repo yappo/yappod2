@@ -129,6 +129,10 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
     return (await embedding.embedQueries([text]))[0];
   }
 
+  app.get("/api/health", async (_request, reply) => {
+    return reply.send({ ready: true });
+  });
+
   app.get("/api/status", async (_request, reply) => {
     try {
       const status = await client.status();

@@ -139,7 +139,7 @@ while [ "$i" -lt 50 ]; do
     fi
     exit 1
   fi
-  status=$(curl -fsS "http://$web_host:$web_port/api/status" 2>/dev/null || true)
+  status=$(curl -fsS "http://$web_host:$web_port/api/health" 2>/dev/null || true)
   if grep -q '^Wikipedia search web is ready:' "$run_dir/web.log" 2>/dev/null &&
      printf '%s' "$status" | grep -q '"ready":true'; then
     break
@@ -148,7 +148,7 @@ while [ "$i" -lt 50 ]; do
   i=$((i + 1))
 done
 if [ "$i" -eq 50 ]; then
-  echo "Web application did not become ready at http://$web_host:$web_port/api/status" >&2
+  echo "Web application did not become ready at http://$web_host:$web_port/api/health" >&2
   if [ -n "$status" ]; then
     echo "Last status response: $status" >&2
   fi
@@ -163,6 +163,24 @@ fi
 cleanup_needed=0
 trap - 0 1 2 15
 echo "Wikipedia search demo is ready: http://$web_host:$web_port"
+daemon_status=$(curl -fsS "http://$web_host:$web_port/api/status" 2>/dev/null || true)
+if ! printf '%s' "$daemon_status" | grep -q '"ready":true'; then
+  echo "Warning: Web UI is running, but yappod is not connected: $daemon_status" >&2
+  for service in core front; do
+    if [ ! -f "$run_dir/$service.pid" ]; then
+      echo "$service daemon is not running (PID file is missing)." >&2
+    else
+      service_pid=$(sed -n '1p' "$run_dir/$service.pid")
+      if ! kill -0 "$service_pid" 2>/dev/null; then
+        echo "$service daemon exited (PID $service_pid)." >&2
+      fi
+    fi
+    if [ -s "$run_dir/$service.error" ]; then
+      echo "$service daemon error:" >&2
+      sed -n '1,20p' "$run_dir/$service.error" >&2
+    fi
+  done
+fi
 if [ "$mock_enabled" -eq 1 ]; then
   echo "mock LLM is enabled for local testing"
 fi

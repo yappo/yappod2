@@ -39,6 +39,13 @@ describe("Wikipedia search BFF", () => {
     expect(defaultStaticDir()).toBe(join(import.meta.dirname, "../../client/dist"));
   });
 
+  it("reports BFF health without requiring the search daemon", async () => {
+    const app = await appWith((async () => { throw new Error("must not fetch"); }) as typeof fetch);
+    const response = await app.inject({ method: "GET", url: "/api/health" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ready: true });
+  });
+
   it("normalizes daemon readiness without exposing connection settings", async () => {
     const app = await appWith(fakeFetch(({ url }) => {
       expect(url).toBe("http://127.0.0.1:10080/health/ready");
