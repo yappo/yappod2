@@ -27,7 +27,7 @@ static void write_fixture(const char *directory) {
   memset(&passage, 0, sizeof(passage));
   documents[0].id = bytes("doc-1");
   documents[0].title = bytes("Search Search");
-  documents[0].body = bytes("modern retrieval");
+  documents[0].body = bytes("modern retrieval searching");
   documents[0].updated_at_unix_ms = 1;
   documents[1].id = bytes("doc-2");
   documents[1].title = bytes("search");
@@ -66,6 +66,7 @@ static void test_reader_lookup_and_iterators(void **state) {
   term = YAP_V2_lexical_term_find(&segment, bytes("search"));
   assert_non_null(term);
   assert_int_equal(term->document_frequency, 3U);
+  assert_non_null(YAP_V2_lexical_term_find(&segment, bytes("searching")));
   assert_null(YAP_V2_lexical_term_find(&segment, bytes("missing")));
   assert_int_equal(YAP_V2_posting_iterator_init(&segment, term, &postings), YAP_V2_OK);
   assert_int_equal(YAP_V2_posting_iterator_block(&postings, 0U, &block), YAP_V2_OK);

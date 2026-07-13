@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "../src/app.js";
+import { join } from "node:path";
+import { buildApp, defaultStaticDir } from "../src/app.js";
 
 interface CapturedRequest {
   url: string;
@@ -32,6 +33,10 @@ async function appWith(fetchImpl: typeof fetch, writeToken?: string): Promise<Fa
 }
 
 describe("Wikipedia search BFF", () => {
+  it("resolves the production UI beside the server directory", () => {
+    expect(defaultStaticDir()).toBe(join(import.meta.dirname, "../../client/dist"));
+  });
+
   it("normalizes daemon readiness without exposing connection settings", async () => {
     const app = await appWith(fakeFetch(({ url }) => {
       expect(url).toBe("http://127.0.0.1:10080/health/ready");

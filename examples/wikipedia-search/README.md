@@ -202,6 +202,54 @@ flowchart TB
 図はBrowser、Web application、Runtime services、Search dataの4段に分け、各段を2要素以内にしています。
 検索の主経路とLLMへの分岐だけを示し、横長・縦長のどちらにも偏らない構成です。
 
+### 一括起動
+
+index、core、front、production BFF/UIをまとめて起動できます。最初にWeb依存関係を導入してください。
+
+```sh
+cd examples/wikipedia-search/web
+npm install
+
+cd ..
+export YAPPOD_WRITE_TOKEN='replace-with-16-or-more-characters'
+./scripts/start_demo.sh data/documents.ndjson ./index
+```
+
+第1引数はcanonical NDJSON、第2引数はindex directoryです。第2引数に有効なindexがある場合はそのまま
+利用します。indexが存在しない場合だけ第1引数から新規作成し、既存directoryは上書きしません。
+起動時にWeb UIをproduction buildし、標準では`http://127.0.0.1:4173`で配信します。
+
+RAGの一巡だけを外部LLMなしで確認する場合は、loopbackだけで待ち受ける決定的なmockを有効にします。
+このmockは接続確認用であり、質問内容に応じた回答品質を評価するものではありません。
+
+```sh
+YAPPOD_DEMO_MOCK_LLM=1 \
+  ./scripts/start_demo.sh data/documents.ndjson ./index
+```
+
+実LLMを利用する場合は`YAPPOD_DEMO_MOCK_LLM`を指定せず、後述の`LLM_BASE_URL`と`LLM_MODEL`を
+設定して起動します。確認後はWeb、mock LLM、front、coreをまとめて停止します。
+
+```sh
+./scripts/stop_demo.sh
+```
+
+PIDとlogは標準で`run/`に保存します。起動失敗時は起動済みprocessを自動停止します。問題が残る場合は
+`run/*.error`と`run/*.log`を確認してから`stop_demo.sh`を再実行してください。processが動作中のまま
+PID fileだけを削除しないでください。停止は最初にSIGTERMを送り、5秒以内に終了しないprocessだけを
+SIGKILLへ切り替えます。
+
+| 一括起動用環境変数 | 既定値 | 用途 |
+|---|---|---|
+| `YAPPOD_RUN_DIR` | `./run` | PIDとlogの保存先 |
+| `YAPPOD_CORE_PORT` | `10086` | coreの内部port |
+| `YAPPOD_FRONT_PORT` | `10080` | frontのHTTP port |
+| `YAPPOD_WEB_HOST` | `127.0.0.1` | production BFF/UIのlisten address |
+| `YAPPOD_WEB_PORT` | `4173` | production BFF/UIのport |
+| `YAPPOD_DEMO_MOCK_LLM` | `0` | `1`の場合だけlocal mock LLMを起動 |
+| `YAPPOD_MOCK_LLM_HOST` | `127.0.0.1` | mock LLMのlisten address。loopbackのみ許可 |
+| `YAPPOD_MOCK_LLM_PORT` | `1234` | mock LLMのport |
+
 ### 開発起動
 
 最初に依存関係を導入します。
@@ -282,7 +330,12 @@ cd examples/wikipedia-search/web
 npm run typecheck
 npm test
 npm run build
+npm run test:e2e
 ```
+
+`test:e2e`はfixtureから一時indexを作り、core、front、mock LLM、production BFF/UIを起動します。
+初期検索、BFF経由の単一文書登録、登録後の再検索、`/v2/retrieve`、`[1]`付きmock回答、全process停止を
+検証します。外部networkや実LLM API keyは使用しません。
 
 ## テスト
 

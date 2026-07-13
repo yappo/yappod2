@@ -12,6 +12,7 @@
     "build:server": "tsc -p server/tsconfig.json",
     "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
+    "test:e2e": "../tests/e2e.sh",
     "start": "node server/dist/index.js"
   },
   "dependencies": {
