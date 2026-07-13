@@ -47,7 +47,10 @@ static yyjson_mut_val *canonical_json_copy(yyjson_mut_doc *doc, yyjson_val *valu
   }
   if (yyjson_is_arr(value)) {
     yyjson_mut_val *array = yyjson_mut_arr(doc); yyjson_arr_iter iterator; yyjson_val *item;
-    if (array == NULL) return NULL; yyjson_arr_iter_init(value, &iterator);
+    if (array == NULL) {
+      return NULL;
+    }
+    yyjson_arr_iter_init(value, &iterator);
     while ((item = yyjson_arr_iter_next(&iterator)) != NULL) {
       yyjson_mut_val *child = canonical_json_copy(doc, item);
       if (child == NULL || !yyjson_mut_arr_append(array, child)) return NULL;
@@ -296,7 +299,10 @@ static int parse_request(yyjson_val *root, const HTTP_RUNTIME *runtime,
     if (strcmp(yyjson_get_str(op), "and") == 0) request->query_operator = YAP_V2_QUERY_AND;
     else if (strcmp(yyjson_get_str(op), "or") != 0) goto invalid;
   }
-  if (phrase != NULL) { if (!yyjson_is_bool(phrase)) goto invalid; request->phrase = yyjson_get_bool(phrase); }
+  if (phrase != NULL) {
+    if (!yyjson_is_bool(phrase)) goto invalid;
+    request->phrase = yyjson_get_bool(phrase);
+  }
   if (limit != NULL) {
     if (!yyjson_is_uint(limit) || yyjson_get_uint(limit) == 0U || yyjson_get_uint(limit) > 100U) goto invalid;
     request->top_k = (size_t)yyjson_get_uint(limit);
@@ -416,7 +422,10 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   status = runtime_open(&runtime, index_dir);
   if (status != YAP_V2_OK) goto unavailable;
   parsed = parse_request(root, &runtime, operation, &request, &vector, &retrieve);
-  if (parsed != 0) { if (parsed == -2) goto unavailable; goto bad_request; }
+  if (parsed != 0) {
+    if (parsed == -2) goto unavailable;
+    goto bad_request;
+  }
   if (request_fingerprint(&request, yyjson_obj_get(root, "filter"), query_digest) != 0) goto unavailable;
   if (operation == YAP_V2_HTTP_SEARCH && yyjson_obj_get(root, "cursor") != NULL) {
     yyjson_val *cursor = yyjson_obj_get(root, "cursor");

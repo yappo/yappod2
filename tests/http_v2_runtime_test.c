@@ -84,6 +84,20 @@ static yyjson_doc *execute(ytest_env_t *env, YAP_V2_HTTP_OPERATION operation, co
   return document;
 }
 
+static void copy_json_string(char *output, size_t capacity, yyjson_val *value) {
+  const char *text;
+  size_t length;
+  assert_non_null(output);
+  assert_true(capacity > 0U);
+  assert_true(yyjson_is_str(value));
+  text = yyjson_get_str(value);
+  length = yyjson_get_len(value);
+  assert_non_null(text);
+  assert_true(length < capacity);
+  memcpy(output, text, length);
+  output[length] = '\0';
+}
+
 static void test_real_search_and_retrieve_runtime(void **state) {
   ytest_env_t env; yyjson_doc *document; yyjson_val *root, *results, *item;
   char cursor[256], request[1024], first_id[64], tampered[256];
@@ -111,9 +125,8 @@ static void test_real_search_and_retrieve_runtime(void **state) {
   document = execute(&env, YAP_V2_HTTP_SEARCH,
     "{\"query\":\"apple\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":1}", 200);
   root = yyjson_doc_get_root(document); item = yyjson_arr_get_first(yyjson_obj_get(root, "results"));
-  assert_non_null(yyjson_get_str(yyjson_obj_get(root, "next_cursor")));
-  assert_true(snprintf(cursor, sizeof(cursor), "%s", yyjson_get_str(yyjson_obj_get(root, "next_cursor"))) > 0);
-  assert_true(snprintf(first_id, sizeof(first_id), "%s", yyjson_get_str(yyjson_obj_get(item, "id"))) > 0);
+  copy_json_string(cursor, sizeof(cursor), yyjson_obj_get(root, "next_cursor"));
+  copy_json_string(first_id, sizeof(first_id), yyjson_obj_get(item, "id"));
   yyjson_doc_free(document);
   assert_true(snprintf(request, sizeof(request),
     "{\"scope\":\"documents\",\"limit\":1,\"mode\":\"lexical\",\"query\":\"apple\",\"cursor\":\"%s\"}", cursor) > 0);
