@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <cmocka.h>
 #include <yyjson.h>
@@ -13,6 +15,7 @@
 #include "test_env.h"
 #include "test_fs.h"
 #include "yappo_config_v2.h"
+#include "yappo_compact_v2.h"
 #include "yappo_http_v2.h"
 #include "yappo_lexical_v2.h"
 #include "yappo_manifest_v2.h"
@@ -150,10 +153,105 @@ static void test_cli_update_and_strict_batch_schema(void **state) {
   yyjson_doc_free(document); ytest_env_destroy(&env);
 }
 
+static void assert_manifest_shape(ytest_env_t *env, uint64_t generation, size_t segment_count,
+                                  size_t tombstone_count) {
+  char path[PATH_MAX]; YAP_V2_MANIFEST manifest;
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.generation, generation); assert_int_equal(manifest.segment_count, segment_count);
+  if (segment_count != 0U) assert_int_equal(manifest.segments[0].tombstone_count, tombstone_count);
+  assert_int_equal(YAP_V2_manifest_verify_components(env->tmp_root, &manifest), YAP_V2_OK);
+  YAP_V2_manifest_free(&manifest);
+}
+
+static void assert_search_mode(ytest_env_t *env, const char *mode, const char *scope,
+                               const char *expected_id) {
+  char request[512]; yyjson_doc *document; yyjson_val *results, *first;
+  assert_true(snprintf(request, sizeof(request),
+    "{\"query\":\"fresh\",\"vector\":[1,0],\"mode\":\"%s\","
+    "\"scope\":\"%s\",\"limit\":10}", mode, scope) > 0);
+  document = execute(env, YAP_V2_HTTP_SEARCH, request, 200);
+  results = yyjson_obj_get(yyjson_doc_get_root(document), "results");
+  assert_true(yyjson_arr_size(results) > 0U); first = yyjson_arr_get_first(results);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(first,
+    strcmp(scope, "passages") == 0 ? "document_id" : "id")), expected_id);
+  yyjson_doc_free(document);
+}
+
+static void assert_retrieval(ytest_env_t *env) {
+  yyjson_doc *document = execute(env, YAP_V2_HTTP_RETRIEVE,
+    "{\"query\":\"fresh\",\"vector\":[1,0],\"mode\":\"hybrid\","
+    "\"limit\":10,\"max_passages_per_document\":2,\"max_context_bytes\":1024}", 200);
+  yyjson_val *root = yyjson_doc_get_root(document);
+  yyjson_val *citation = yyjson_arr_get_first(yyjson_obj_get(root, "citations"));
+  assert_non_null(strstr(yyjson_get_str(yyjson_obj_get(root, "context")), "fresh"));
+  assert_non_null(citation);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(citation, "document_id")), "doc-a");
+  yyjson_doc_free(document);
+}
+
+static void apply_live_changes(ytest_env_t *env) {
+  yyjson_doc *document = execute(env, YAP_V2_HTTP_INGEST,
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-a\","
+    "\"url\":\"https://e.test/new\",\"title\":\"Fresh\",\"body\":\"fresh\","
+    "\"metadata\":{\"category\":\"new\"},\"vectors\":[[1,0]]},"
+    "{\"operation\":\"delete\",\"id\":\"doc-b\"}]}", 200);
+  yyjson_doc_free(document);
+}
+
+static void test_compaction_live_only_preserves_all_search_modes(void **state) {
+  ytest_env_t env;
+  char executable[PATH_MAX]; char *argv[4]; ytest_cmd_result_t command;
+  (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env); apply_live_changes(&env);
+  assert_int_equal(ytest_path_join(executable, sizeof(executable), env.build_dir, "yappo_compact"), 0);
+  argv[0] = executable; argv[1] = "--index"; argv[2] = env.tmp_root; argv[3] = NULL;
+  ytest_cmd_result_init(&command); assert_int_equal(ytest_cmd_run(argv, NULL, NULL, 0U, &command), 0);
+  assert_true(command.exited); assert_int_equal(command.exit_code, 0);
+  assert_non_null(strstr(command.output, "\"generation\":3")); ytest_cmd_result_free(&command);
+  assert_manifest_shape(&env, 3U, 1U, 0U);
+  assert_int_equal(search_count(&env, "old", NULL), 0U); assert_int_equal(search_count(&env, "gone", NULL), 0U);
+  assert_int_equal(search_count(&env, "fresh", "doc-a"), 1U);
+  assert_search_mode(&env, "vector", "documents", "doc-a");
+  assert_search_mode(&env, "hybrid", "documents", "doc-a");
+  assert_search_mode(&env, "hybrid", "passages", "doc-a");
+  assert_retrieval(&env);
+  ytest_env_destroy(&env);
+}
+
+static void run_crashing_compaction(ytest_env_t *env, const char *point) {
+  pid_t child = fork(); int child_status;
+  assert_true(child >= 0);
+  if (child == 0) {
+    YAP_V2_COMPACTION_RESULT result; char error[256] = {0};
+    (void)setenv("YAPPOD_V2_COMPACTION_FAILPOINT", point, 1);
+    (void)YAP_V2_compact(env->tmp_root, &result, error, sizeof(error)); _exit(99);
+  }
+  assert_int_equal(waitpid(child, &child_status, 0), child);
+  assert_true(WIFEXITED(child_status)); assert_int_equal(WEXITSTATUS(child_status), 86);
+}
+
+static void test_compaction_crash_recovery_and_orphan_gc(void **state) {
+  ytest_env_t env; YAP_V2_COMPACTION_RESULT result; char error[256] = {0};
+  (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  run_crashing_compaction(&env, "before_publish");
+  assert_manifest_shape(&env, 1U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
+  assert_int_equal(result.generation, 2U); assert_true(result.removed_segments >= 2U);
+  run_crashing_compaction(&env, "after_publish");
+  assert_manifest_shape(&env, 3U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
+  memset(&result, 0, sizeof(result)); memset(error, 0, sizeof(error));
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
+  assert_int_equal(result.generation, 4U); assert_true(result.removed_segments >= 2U);
+  assert_manifest_shape(&env, 4U, 1U, 0U); ytest_env_destroy(&env);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_http_atomic_update_latest_wins_and_delete),
-    cmocka_unit_test(test_cli_update_and_strict_batch_schema)
+    cmocka_unit_test(test_cli_update_and_strict_batch_schema),
+    cmocka_unit_test(test_compaction_live_only_preserves_all_search_modes),
+    cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

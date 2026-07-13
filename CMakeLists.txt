@@ -56,6 +56,8 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_unicode.c
   ${SRC_DIR}/yappo_ingest.c
   ${SRC_DIR}/yappo_update_v2.c
+  ${SRC_DIR}/yappo_writer_lock_v2.c
+  ${SRC_DIR}/yappo_compact_v2.c
   ${SRC_DIR}/yappo_segment_v2.c
   ${SRC_DIR}/yappo_manifest_v2.c
   ${SRC_DIR}/yappo_lexical_v2.c
@@ -105,6 +107,11 @@ add_executable(yappo_mergepos
   ${SRC_DIR}/yappo_mergepos.c
 )
 
+add_executable(yappo_compact
+  ${YAPPO_BASE_SOURCES}
+  ${SRC_DIR}/yappo_compact.c
+)
+
 add_executable(yappod_core
   ${YAPPO_BASE_SOURCES}
   ${YAPPO_SEARCH_SOURCES}
@@ -121,6 +128,7 @@ set(ALL_TARGETS
   search
   yappo_makeindex
   yappo_mergepos
+  yappo_compact
   yappod_core
   yappod_front
 )
@@ -456,7 +464,7 @@ if(YAPPOD_TESTS_NODAEMON)
     http_v2_runtime
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_writer_lock_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
   )
   add_yappod_cmocka_test(
     update_v2

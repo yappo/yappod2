@@ -1,8 +1,8 @@
 # v2 manifest と NRT publish
 
 > **現在の状態:** Task 19でcanonical batch writer、CLI/HTTP ingest、generation publish、
-> 検索readerへの反映まで接続しました。compaction、orphan GC、crash failpointはTask 20、
-> deadlineやwriter queue/tokenはTask 21の範囲です。
+> 検索readerへの反映まで接続し、Task 20でlive-only compaction、orphan GC、公開前後の
+> crash recoveryを接続しました。deadlineやwriter queue/tokenはTask 21の範囲です。
 
 `manifest.json` は公開済み immutable segment のスナップショットです。検索側は一つの generation を読み続け、writer は新しい manifest を完成させてから atomic rename します。そのため検索中に未完成の segment 一覧を観測しません。
 
@@ -20,7 +20,7 @@ manifestの`segments`は古い順から新しい順です。検索snapshotは末
 
 ## 更新手順
 
-1. 新しい document/passage segment を一時ファイルへ生成して fsync する。
+1. 新しい document/passage segment を一時ファイルへ生成し、component、segment、`segments/`親directoryをfsyncする。
 2. segment を公開名へ atomic rename する（この時点では manifest から未参照でよい）。
 3. 現在の manifest を読み、既存 segment と新しい segment を含む候補を作る。
 4. 読み込んだgenerationをexpectedとして`YAP_V2_manifest_publish_if_generation`を呼び出す。
@@ -33,3 +33,6 @@ component headerのgenerationは、そのimmutable segmentが作成されたgene
 合わせて検証します。このため既存segmentを書き換えずに新delta segmentだけを追加できます。
 
 JSON parser は未定義キー、重複 segment ID、path separator を含む ID、checksum の桁数違い、末尾の余分なデータを拒否します。
+
+compactionの公開・復旧・GC手順は [v2 compaction・GC・crash recovery](compaction_recovery.md)
+を参照してください。
