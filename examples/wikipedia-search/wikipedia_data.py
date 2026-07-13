@@ -369,7 +369,9 @@ def embed_documents(
         if not isinstance(document_id, str) or document_id not in by_id or not isinstance(ordinal, int) or isinstance(ordinal, bool):
             raise WikipediaDataError("passage refers to an invalid document or ordinal")
         if not isinstance(text, str) or not text.strip():
-            raise WikipediaDataError("passage text must be non-empty")
+            raise WikipediaDataError(
+                "passage text must be non-empty for {} ordinal {}".format(document_id, ordinal)
+            )
         expected = len(passage_indexes[document_id])
         if ordinal != expected:
             raise WikipediaDataError("passage ordinals for {} must be contiguous and ordered".format(document_id))

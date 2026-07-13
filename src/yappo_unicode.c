@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unicode/ubrk.h>
+#include <unicode/uchar.h>
 #include <unicode/unorm2.h>
 #include <unicode/ustring.h>
 #include <unicode/utf16.h>
@@ -126,6 +127,15 @@ static uint64_t passage_hash(const char *document_id, uint32_t ordinal, const ch
   return hash;
 }
 
+static int range_has_non_whitespace(const UChar *text, int32_t start, int32_t end) {
+  while (start < end) {
+    UChar32 codepoint;
+    U16_NEXT(text, start, end, codepoint);
+    if (!u_isUWhiteSpace(codepoint)) return 1;
+  }
+  return 0;
+}
+
 void YAP_V2_chunk_sequence_free(YAP_V2_CHUNK_SEQUENCE *sequence) {
   size_t i;
   if (sequence == NULL) return;
@@ -158,6 +168,11 @@ int YAP_V2_unicode_chunk(const char *document_id, const char *utf8, size_t utf8_
     candidate=ubrk_following(sentences,start);
     while(candidate!=UBRK_DONE && candidate<=limit){end=candidate;candidate=ubrk_next(sentences);}
     if(end<=start)end=limit;
+    if(!range_has_non_whitespace(text.text,start,end)){
+      if(end==text.length)break;
+      start=end;
+      continue;
+    }
     if(sequence->chunk_count==capacity){size_t new_capacity=capacity==0U?4U:capacity*2U;YAP_V2_CHUNK *grown=(YAP_V2_CHUNK *)realloc(sequence->chunks,new_capacity*sizeof(*grown));if(grown==NULL){status=YAP_V2_ALLOCATION_FAILED;goto done;}sequence->chunks=grown;capacity=new_capacity;}
     {
       YAP_V2_CHUNK *chunk=&sequence->chunks[sequence->chunk_count];

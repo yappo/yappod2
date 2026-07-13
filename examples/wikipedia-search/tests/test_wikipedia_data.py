@@ -321,6 +321,29 @@ dimensions = 2
                 )
             self.assertEqual(output.read_text(encoding="utf-8"), "original\n")
 
+    def test_embed_reports_whitespace_passage_location(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents.ndjson"
+            passages = root / "passages.ndjson"
+            output = root / "vector.ndjson"
+            documents.write_text(
+                '{"operation":"upsert","id":"jawiki:1","title":"記事","body":"本文"}\n',
+                encoding="utf-8",
+            )
+            passages.write_text(
+                '{"operation":"upsert","document_id":"jawiki:1","passage_id":"p1",'
+                '"ordinal":0,"text":"\\n　"}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                wikipedia_data.WikipediaDataError, "jawiki:1 ordinal 0"
+            ):
+                wikipedia_data.embed_documents(
+                    documents, passages, output, "ollama", "http://localhost:11434",
+                    "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
