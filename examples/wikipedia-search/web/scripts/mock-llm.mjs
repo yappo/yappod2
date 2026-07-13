@@ -4,11 +4,12 @@ const host = process.env.MOCK_LLM_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.MOCK_LLM_PORT ?? "1234", 10);
 const model = process.env.MOCK_LLM_MODEL ?? "yappod-demo-mock";
 const answer = process.env.MOCK_LLM_ANSWER ?? "参照資料から確認できる内容です。[1]";
+const embeddingDimensions = Number.parseInt(process.env.MOCK_EMBEDDING_DIMENSIONS ?? "3", 10);
 
 if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
   throw new Error("mock LLM must listen on a loopback address");
 }
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
+if (!Number.isInteger(port) || port < 1 || port > 65535 || !Number.isInteger(embeddingDimensions) || embeddingDimensions < 1) {
   throw new Error("MOCK_LLM_PORT must be a valid TCP port");
 }
 
@@ -21,7 +22,7 @@ const server = createServer((request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     return send(response, 200, { ready: true });
   }
-  if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+  if (request.method !== "POST" || (request.url !== "/v1/chat/completions" && request.url !== "/v1/embeddings")) {
     return send(response, 404, { error: { message: "endpoint not found" } });
   }
 
@@ -37,6 +38,21 @@ const server = createServer((request, response) => {
       payload = JSON.parse(body);
     } catch {
       return send(response, 400, { error: { message: "invalid JSON" } });
+    }
+    if (request.url === "/v1/embeddings") {
+      if (payload.model !== model || !Array.isArray(payload.input) ||
+          payload.input.length === 0 || payload.input.some((item) => typeof item !== "string" || !item.trim())) {
+        return send(response, 400, { error: { message: "invalid mock embedding request" } });
+      }
+      return send(response, 200, {
+        object: "list",
+        model,
+        data: payload.input.map((_, index) => ({
+          object: "embedding",
+          index,
+          embedding: Array.from({ length: embeddingDimensions }, (_unused, dimension) => dimension === 0 ? 1 : 0),
+        })),
+      });
     }
     const userMessage = Array.isArray(payload.messages)
       ? payload.messages.find((message) => message?.role === "user")

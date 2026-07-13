@@ -1,10 +1,28 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { webApi, type WebApi } from "./api";
 import { RagView } from "./RagView";
-import type { RegisterInput, RegisterResponse, SearchResult, StatusResponse } from "./types";
+import { SearchModeControl, searchModeLabel } from "./SearchModeControl";
+import type { RegisterInput, RegisterResponse, SearchMode, SearchResult, StatusResponse } from "./types";
 
 type View = "search" | "ask" | "register";
 type RequestState = "idle" | "loading" | "success" | "error";
+
+function savedSearchMode(): SearchMode {
+  try {
+    const saved = window.localStorage.getItem("wikipedia-search-mode");
+    return saved === "vector" || saved === "hybrid" ? saved : "lexical";
+  } catch {
+    return "lexical";
+  }
+}
+
+function saveSearchMode(mode: SearchMode): void {
+  try {
+    window.localStorage.setItem("wikipedia-search-mode", mode);
+  } catch {
+    // Search still works when storage is unavailable or disabled.
+  }
+}
 
 function visibleUrl(url: string): string {
   return url.replace(/^https?:\/\//, "");
@@ -44,6 +62,7 @@ function SearchResultItem({ result }: { result: SearchResult }) {
         <dl className="result-metadata">
           <div><dt>文書ID</dt><dd>{result.document_id}</dd></div>
           <div><dt>Lexical score</dt><dd>{score(result.lexical_score)}</dd></div>
+          <div><dt>Vector score</dt><dd>{score(result.vector_score)}</dd></div>
           <div><dt>Fused score</dt><dd>{score(result.fused_score)}</dd></div>
         </dl>
       </details>
@@ -51,7 +70,13 @@ function SearchResultItem({ result }: { result: SearchResult }) {
   );
 }
 
-function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }) {
+function SearchView({ api, initialQuery, mode, availableModes, onModeChange }: {
+  api: WebApi;
+  initialQuery: string;
+  mode: SearchMode;
+  availableModes: SearchMode[];
+  onModeChange: (mode: SearchMode) => void;
+}) {
   const [input, setInput] = useState(initialQuery);
   const [activeQuery, setActiveQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -61,6 +86,8 @@ function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }
   const [state, setState] = useState<RequestState>("idle");
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const previousMode = useRef(mode);
+  const previousInitialQuery = useRef("");
 
   const runSearch = useCallback(async (query: string, nextCursor?: string) => {
     const normalized = query.trim();
@@ -73,7 +100,7 @@ function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }
     setState("loading");
     setError("");
     try {
-      const response = await api.search(normalized, 10, nextCursor);
+      const response = await api.search(normalized, 10, mode, nextCursor);
       setResults((current) => nextCursor ? [...current, ...response.results] : response.results);
       setTotal(response.total);
       setGeneration(response.generation);
@@ -84,12 +111,20 @@ function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }
       setError(caught instanceof Error ? caught.message : "検索に失敗しました");
       setState("error");
     }
-  }, [api]);
+  }, [api, mode]);
 
   useEffect(() => {
+    if (initialQuery === previousInitialQuery.current) return;
+    previousInitialQuery.current = initialQuery;
     setInput(initialQuery);
     if (initialQuery) void runSearch(initialQuery);
   }, [initialQuery, runSearch]);
+
+  useEffect(() => {
+    if (previousMode.current === mode) return;
+    previousMode.current = mode;
+    if (activeQuery) void runSearch(activeQuery);
+  }, [activeQuery, mode, runSearch]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -119,6 +154,7 @@ function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }
         <button className="primary-button" type="submit" aria-label="検索を実行" disabled={state === "loading"}>
           {state === "loading" && results.length === 0 ? "検索中…" : "検索"}
         </button>
+        <SearchModeControl mode={mode} availableModes={availableModes} onChange={onModeChange} />
       </form>
 
       {error && (
@@ -140,7 +176,7 @@ function SearchView({ api, initialQuery }: { api: WebApi; initialQuery: string }
         <section aria-labelledby="results-heading">
           <div className="results-summary">
             <h2 id="results-heading">「{activeQuery}」の検索結果</h2>
-            <p>{total.toLocaleString("ja-JP")}件<span aria-hidden="true"> · </span>generation {generation}</p>
+            <p>{searchModeLabel(mode)}<span aria-hidden="true"> · </span>{total.toLocaleString("ja-JP")}件<span aria-hidden="true"> · </span>generation {generation}</p>
           </div>
           <div className="results-list">
             {results.map((result) => <SearchResultItem key={`${result.id}:${result.document_id}`} result={result} />)}
@@ -247,6 +283,7 @@ export function App({ api = webApi }: { api?: WebApi }) {
   const [searchSeed, setSearchSeed] = useState("");
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [checking, setChecking] = useState(true);
+  const [mode, setMode] = useState<SearchMode>(savedSearchMode);
 
   const refreshStatus = useCallback(async () => {
     setChecking(true);
@@ -260,6 +297,17 @@ export function App({ api = webApi }: { api?: WebApi }) {
   }, [api]);
 
   useEffect(() => { void refreshStatus(); }, [refreshStatus]);
+
+  const availableModes = status?.available_modes ?? ["lexical"];
+
+  useEffect(() => {
+    if (!availableModes.includes(mode)) setMode("lexical");
+  }, [availableModes, mode]);
+
+  function changeMode(next: SearchMode) {
+    setMode(next);
+    saveSearchMode(next);
+  }
 
   function searchRegisteredDocument(query: string) {
     setSearchSeed(query);
@@ -284,8 +332,8 @@ export function App({ api = webApi }: { api?: WebApi }) {
           <DaemonStatus status={status} checking={checking} onRetry={() => void refreshStatus()} />
         </div>
       </header>
-      {view === "search" && <SearchView api={api} initialQuery={searchSeed} />}
-      {view === "ask" && <RagView api={api} />}
+      {view === "search" && <SearchView api={api} initialQuery={searchSeed} mode={mode} availableModes={availableModes} onModeChange={changeMode} />}
+      {view === "ask" && <RagView api={api} mode={mode} availableModes={availableModes} onModeChange={changeMode} />}
       {view === "register" && <RegisterView api={api} onSearch={searchRegisteredDocument} />}
       <footer className="site-footer">
         <span>yappod Wikipedia search example</span>

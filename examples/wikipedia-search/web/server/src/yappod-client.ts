@@ -1,9 +1,11 @@
-import type { ReadyResponse, RegisterResponse, RetrieveResponse, SearchResponse } from "./types.js";
+import type { PrepareResponse, ReadyResponse, RegisterResponse, RetrieveResponse, SearchMode, SearchResponse } from "./types.js";
 
 export interface SearchInput {
   query: string;
   limit: number;
   cursor?: string;
+  mode: SearchMode;
+  vector?: number[];
 }
 
 export interface DocumentInput {
@@ -11,6 +13,7 @@ export interface DocumentInput {
   title: string;
   url?: string;
   body: string;
+  vectors?: number[][];
 }
 
 export interface YappodClientOptions {
@@ -81,7 +84,8 @@ export class YappodClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: input.query,
-        mode: "lexical",
+        mode: input.mode,
+        ...(input.vector ? { vector: input.vector } : {}),
         scope: "documents",
         limit: input.limit,
         ...(input.cursor ? { cursor: input.cursor } : {}),
@@ -89,17 +93,26 @@ export class YappodClient {
     });
   }
 
-  retrieve(question: string): Promise<RetrieveResponse> {
+  retrieve(question: string, mode: SearchMode, vector?: number[]): Promise<RetrieveResponse> {
     return this.request<RetrieveResponse>("/v2/retrieve", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: question,
-        mode: "lexical",
+        mode,
+        ...(vector ? { vector } : {}),
         limit: 8,
         max_passages_per_document: 2,
         max_context_bytes: 16384,
       }),
+    });
+  }
+
+  prepareDocument(id: string, body: string): Promise<PrepareResponse> {
+    return this.request<PrepareResponse>("/v2/passages:prepare", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, body }),
     });
   }
 
@@ -117,6 +130,7 @@ export class YappodClient {
           ...(input.url ? { url: input.url } : {}),
           body: input.body,
           metadata: { language: "ja", source: "manual" },
+          ...(input.vectors ? { vectors: input.vectors } : {}),
         }],
       }),
     });

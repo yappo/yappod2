@@ -16,6 +16,8 @@ export interface SearchResponse {
   next_cursor: string | null;
 }
 
+export type SearchMode = "lexical" | "vector" | "hybrid";
+
 export interface StatusResponse {
   ready: boolean;
   generation?: number;
@@ -23,6 +25,13 @@ export interface StatusResponse {
   code?: string;
   message?: string;
   llm_configured?: boolean;
+  embedding_configured?: boolean;
+  index_embedding?: {
+    state: "disabled" | "precomputed_ready";
+    model_id: string;
+    dimensions: number;
+  };
+  available_modes?: SearchMode[];
 }
 
 export interface RegisterInput {
@@ -59,6 +68,7 @@ export type GenerationStatus = "answered" | "unconfigured" | "failed" | "invalid
 export interface RagResponse {
   generation: number;
   question: string;
+  retrieval_mode: SearchMode;
   context: string;
   citations: Citation[];
   answer: string | null;

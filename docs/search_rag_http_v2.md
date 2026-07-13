@@ -1,14 +1,14 @@
 # v2 search and retrieval HTTP API
 
 `yappod_front` は `POST /v2/search`、`POST /v2/retrieve`、
-`POST /v2/documents:batch` を受け、内部の length-prefixed v2 frame で
+`POST /v2/passages:prepare`、`POST /v2/documents:batch` を受けます。search、retrieve、batchは内部の length-prefixed v2 frame で
 `yappod_core` へ転送します。coreはリクエストごとに
 `config.toml` と `manifest.json`、全component checksumを検証し、一つのgenerationの
 snapshotと同じsegment順のlexical、vector/ANN、metadata readerを開いて
 `YAP_V2_query_execute` を実行します。retrieveは同じsnapshotのpassage結果を
 `YAP_V2_retrieve_context` へ渡します。
 
-3 endpointは `Content-Type: application/json` と明示的な `Content-Length` を必須とし、
+4 endpointは `Content-Type: application/json` と明示的な `Content-Length` を必須とし、
 chunked request、重複したlength/type、1 MiBを超えるbody、不完全bodyを拒否します。
 検索`limit`は1から100です。JSONの未知field、型不一致、非有限vector、設定dimensionと
 異なるvector、modeに必要なquery/vectorの欠落もfail-closedで `400` を返します。
@@ -58,7 +58,7 @@ vector-only検索は先頭から取得します。snippetはHTML highlight marke
 上限外offsetは`400 invalid_request`です。これは衝突耐性digestによるbindingであり、秘密鍵を使う
 認証tokenではありません。
 
-3 endpointへのPOST以外のmethodはJSONの`405`を返します。旧GET検索APIは存在しません。
+4 endpointへのPOST以外のmethodはJSONの`405`を返します。旧GET検索APIは存在しません。
 
 ## Retrieval request
 
@@ -73,6 +73,34 @@ context内byte offset、lexical/vector/fused scoreが含まれます。回答生
 vector queryは呼び出し側が事前計算値を渡します。これは公開 API の確定仕様です。
 index 作成側はベンダー中立な HTTP embedding provider または precomputed vector を利用できますが、
 検索 API は query text を外部 provider へ暗黙送信しません。
+
+## Passage preparation
+
+```json
+{"id":"doc-1","body":"Indexへ登録する本文"}
+```
+
+`POST /v2/passages:prepare`は、接続中indexのtokenizer・chunk設定を使って本文を正規化・分割し、
+各passageのID、ordinal、元本文内のUnicode文字offset、embedding対象textを返すread-only endpointです。
+外部embedding providerは呼び出さず、indexも更新しません。
+
+```json
+{
+  "model_id": "embeddinggemma-300m-768-local-v1",
+  "dimensions": 768,
+  "passages": [{
+    "id": "passage-id",
+    "ordinal": 0,
+    "start_char": 0,
+    "end_char": 14,
+    "text": "indexへ登録する本文"
+  }]
+}
+```
+
+vector indexへ文書を追加するclientは、この順序のtextをembeddingし、得られた二次元配列を同じ文書の
+`vectors`へ設定します。これによりclient側でUnicode chunkingを再実装せず、batch ingestが要求する
+passage数とordinalを一致させられます。
 
 ## Atomic document batch
 

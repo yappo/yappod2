@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { WebApi } from "./api";
-import type { Citation, RagResponse } from "./types";
+import { SearchModeControl, searchModeLabel } from "./SearchModeControl";
+import type { Citation, RagResponse, SearchMode } from "./types";
 
 type RequestState = "idle" | "loading" | "success" | "error";
 
@@ -47,6 +48,8 @@ function CitationItem({ citation, number, referenced }: {
             <div><dt>Passage ID</dt><dd>{citation.passage_id}</dd></div>
             <div><dt>本文位置</dt><dd>{citation.start_char}–{citation.end_char}</dd></div>
             <div><dt>Lexical score</dt><dd>{citation.lexical_score.toFixed(4)}</dd></div>
+            <div><dt>Vector score</dt><dd>{citation.vector_score.toFixed(4)}</dd></div>
+            <div><dt>Fused score</dt><dd>{citation.fused_score.toFixed(4)}</dd></div>
           </dl>
         </details>
       </div>
@@ -54,7 +57,12 @@ function CitationItem({ citation, number, referenced }: {
   );
 }
 
-export function RagView({ api }: { api: WebApi }) {
+export function RagView({ api, mode = "lexical", availableModes = ["lexical"], onModeChange = () => {} }: {
+  api: WebApi;
+  mode?: SearchMode;
+  availableModes?: SearchMode[];
+  onModeChange?: (mode: SearchMode) => void;
+}) {
   const [question, setQuestion] = useState("");
   const [state, setState] = useState<RequestState>("idle");
   const [error, setError] = useState("");
@@ -74,7 +82,7 @@ export function RagView({ api }: { api: WebApi }) {
     setError("");
     setResult(null);
     try {
-      setResult(await api.ask(normalized));
+      setResult(await api.ask(normalized, mode));
       setState("success");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "参照資料を取得できませんでした");
@@ -103,6 +111,7 @@ export function RagView({ api }: { api: WebApi }) {
           placeholder="例: 日本の情報検索技術はどのように発展しましたか？"
           aria-describedby={error ? "rag-error" : "rag-help"}
         />
+        <SearchModeControl mode={mode} availableModes={availableModes} onChange={onModeChange} />
         <div className="question-actions">
           <p id="rag-help">回答中の[1]は、下の参照資料番号に対応します。</p>
           <button className="primary-button" type="submit" disabled={state === "loading"}>
@@ -131,6 +140,7 @@ export function RagView({ api }: { api: WebApi }) {
             <div className="section-heading">
               <p className="section-kicker">質問</p>
               <p className="question-text">{result.question}</p>
+              <p className="retrieval-method">検索方法: {searchModeLabel(result.retrieval_mode)}</p>
               <h2 id="answer-heading">根拠に基づく回答</h2>
             </div>
             {result.generation_status === "answered" && result.answer

@@ -21,6 +21,27 @@ export interface ReadyResponse {
   ready: boolean;
   generation?: number;
   state?: string;
+  embedding?: {
+    state: "disabled" | "precomputed_ready";
+    model_id: string;
+    dimensions: number;
+  };
+}
+
+export type SearchMode = "lexical" | "vector" | "hybrid";
+
+export interface PreparedPassage {
+  id: string;
+  ordinal: number;
+  start_char: number;
+  end_char: number;
+  text: string;
+}
+
+export interface PrepareResponse {
+  model_id: string;
+  dimensions: number;
+  passages: PreparedPassage[];
 }
 
 export interface RegisterResponse {
@@ -57,6 +78,7 @@ export type GenerationStatus = "answered" | "unconfigured" | "failed" | "invalid
 
 export interface RagResponse extends RetrieveResponse {
   question: string;
+  retrieval_mode: SearchMode;
   answer: string | null;
   referenced_citations: number[];
   generation_status: GenerationStatus;

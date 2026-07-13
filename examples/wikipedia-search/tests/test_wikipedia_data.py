@@ -97,6 +97,60 @@ class WikipediaDataTest(unittest.TestCase):
             self.assertEqual((written, skipped), (2, 0))
             self.assertEqual(len(read_ndjson(output)), 2)
 
+    def test_embed_documents_uses_prepared_passage_order_and_lm_studio_indexes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents.ndjson"
+            passages = root / "passages.ndjson"
+            output = root / "vector.ndjson"
+            documents.write_text(
+                json.dumps({"operation": "upsert", "id": "doc:1", "title": "記事", "body": "本文"}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            passages.write_text("".join([
+                json.dumps({"operation": "upsert", "document_id": "doc:1", "passage_id": "p1", "ordinal": 0, "text": "第一"}, ensure_ascii=False) + "\n",
+                json.dumps({"operation": "upsert", "document_id": "doc:1", "passage_id": "p2", "ordinal": 1, "text": "第二"}, ensure_ascii=False) + "\n",
+            ]), encoding="utf-8")
+            response = {"data": [
+                {"index": 1, "embedding": [0, 1]},
+                {"index": 0, "embedding": [1, 0]},
+            ]}
+            with mock.patch.object(wikipedia_data, "_post_json", return_value=response) as post:
+                counts = wikipedia_data.embed_documents(
+                    documents, passages, output, "lmstudio", "http://localhost:1234/v1",
+                    "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
+                )
+            self.assertEqual(counts, (1, 2))
+            self.assertEqual(read_ndjson(output)[0]["vectors"], [[1.0, 0.0], [0.0, 1.0]])
+            self.assertEqual(post.call_args.args[0], "http://localhost:1234/v1/embeddings")
+            self.assertEqual(post.call_args.args[1]["input"], [
+                "title: 記事 | text: 第一",
+                "title: 記事 | text: 第二",
+            ])
+
+    def test_embed_failure_does_not_replace_existing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents.ndjson"
+            passages = root / "passages.ndjson"
+            output = root / "vector.ndjson"
+            documents.write_text(
+                '{"operation":"upsert","id":"doc:1","title":"記事","body":"本文"}\n', encoding="utf-8"
+            )
+            passages.write_text(
+                '{"operation":"upsert","document_id":"doc:1","passage_id":"p1","ordinal":0,"text":"第一"}\n',
+                encoding="utf-8",
+            )
+            output.write_text("original\n", encoding="utf-8")
+            with mock.patch.object(
+                wikipedia_data, "_post_json", return_value={"embeddings": [[float("nan"), 0.0]]}
+            ), self.assertRaises(wikipedia_data.WikipediaDataError):
+                wikipedia_data.embed_documents(
+                    documents, passages, output, "ollama", "http://localhost:11434",
+                    "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
+                )
+            self.assertEqual(output.read_text(encoding="utf-8"), "original\n")
+
 
 if __name__ == "__main__":
     unittest.main()

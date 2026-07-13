@@ -7,6 +7,7 @@ import contextlib
 import gzip
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -88,6 +89,146 @@ def _request_json(url: str, user_agent: str) -> Dict[str, object]:
     if "error" in value:
         raise WikipediaDataError("Wikimedia API returned an error: {}".format(value["error"]))
     return value
+
+
+def _post_json(url: str, payload: Dict[str, object], timeout: float, api_key: Optional[str]) -> Dict[str, object]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        raise WikipediaDataError("embedding server returned HTTP {}".format(error.code)) from error
+    except (URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise WikipediaDataError("embedding request failed: {}".format(error)) from error
+    if not isinstance(value, dict):
+        raise WikipediaDataError("embedding response root must be an object")
+    return value
+
+
+def _validated_vector(value: object, dimensions: int) -> List[float]:
+    if not isinstance(value, list) or len(value) != dimensions:
+        raise WikipediaDataError("embedding vector must contain {} values".format(dimensions))
+    if any(not isinstance(item, (int, float)) or isinstance(item, bool) or not math.isfinite(item) for item in value):
+        raise WikipediaDataError("embedding vector contains a non-finite number")
+    return [float(item) for item in value]
+
+
+def _embedding_batch(
+    provider: str,
+    base_url: str,
+    model: str,
+    inputs: List[str],
+    dimensions: int,
+    timeout: float,
+    api_key: Optional[str],
+) -> List[List[float]]:
+    endpoint = base_url.rstrip("/") + ("/embeddings" if provider == "lmstudio" else "/api/embed")
+    response = _post_json(endpoint, {"model": model, "input": inputs}, timeout, api_key)
+    if provider == "ollama":
+        embeddings = response.get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(inputs):
+            raise WikipediaDataError("Ollama embedding count does not match the input count")
+        return [_validated_vector(item, dimensions) for item in embeddings]
+    data = response.get("data")
+    if not isinstance(data, list) or len(data) != len(inputs):
+        raise WikipediaDataError("LM Studio embedding count does not match the input count")
+    ordered: List[Optional[List[float]]] = [None] * len(inputs)
+    for item in data:
+        if not isinstance(item, dict):
+            raise WikipediaDataError("LM Studio embedding item must be an object")
+        index = item.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index >= len(inputs) or ordered[index] is not None:
+            raise WikipediaDataError("LM Studio embedding indexes are invalid")
+        ordered[index] = _validated_vector(item.get("embedding"), dimensions)
+    if any(item is None for item in ordered):
+        raise WikipediaDataError("LM Studio embedding response has missing indexes")
+    return [item for item in ordered if item is not None]
+
+
+def _read_ndjson(path: Path, label: str) -> List[Dict[str, object]]:
+    records: List[Dict[str, object]] = []
+    try:
+        with path.open("r", encoding="utf-8") as source:
+            for line_number, line in enumerate(source, 1):
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise WikipediaDataError("invalid {} JSON at {}:{}".format(label, path, line_number)) from error
+                if not isinstance(value, dict):
+                    raise WikipediaDataError("{} record must be an object".format(label))
+                records.append(value)
+    except (UnicodeDecodeError, OSError) as error:
+        raise WikipediaDataError("cannot read {}: {}".format(path, error)) from error
+    return records
+
+
+def embed_documents(
+    documents_path: Path,
+    passages_path: Path,
+    output_path: Path,
+    provider: str,
+    base_url: str,
+    model: str,
+    dimensions: int,
+    batch_size: int,
+    timeout: float,
+    profile: str,
+    api_key: Optional[str] = None,
+) -> Tuple[int, int]:
+    documents = _read_ndjson(documents_path, "document")
+    passages = _read_ndjson(passages_path, "passage")
+    by_id: Dict[str, Dict[str, object]] = {}
+    passage_indexes: Dict[str, List[Tuple[int, int]]] = {}
+    texts: List[str] = []
+    for document in documents:
+        document_id = document.get("id")
+        if document.get("operation") != "upsert" or not isinstance(document_id, str) or not document_id or document_id in by_id:
+            raise WikipediaDataError("documents must be unique canonical upsert operations")
+        by_id[document_id] = document
+        passage_indexes[document_id] = []
+    for passage in passages:
+        document_id = passage.get("document_id")
+        ordinal = passage.get("ordinal")
+        text = passage.get("text")
+        if not isinstance(document_id, str) or document_id not in by_id or not isinstance(ordinal, int) or isinstance(ordinal, bool):
+            raise WikipediaDataError("passage refers to an invalid document or ordinal")
+        if not isinstance(text, str) or not text.strip():
+            raise WikipediaDataError("passage text must be non-empty")
+        expected = len(passage_indexes[document_id])
+        if ordinal != expected:
+            raise WikipediaDataError("passage ordinals for {} must be contiguous and ordered".format(document_id))
+        passage_indexes[document_id].append((ordinal, len(texts)))
+        if profile == "embeddinggemma":
+            title = by_id[document_id].get("title")
+            texts.append("title: {} | text: {}".format(title.strip() if isinstance(title, str) and title.strip() else "none", text))
+        else:
+            texts.append(text)
+    if not documents or not texts or any(not indexes for indexes in passage_indexes.values()):
+        raise WikipediaDataError("every input document must have at least one prepared passage")
+    vectors: List[List[float]] = []
+    for offset in range(0, len(texts), batch_size):
+        vectors.extend(_embedding_batch(
+            provider, base_url, model, texts[offset:offset + batch_size], dimensions, timeout, api_key
+        ))
+    if len(vectors) != len(texts):
+        raise WikipediaDataError("embedding count does not match the passage count")
+    with _atomic_text_output(output_path) as output:
+        for document in documents:
+            document_id = str(document["id"])
+            enriched = dict(document)
+            enriched["vectors"] = [vectors[index] for _, index in passage_indexes[document_id]]
+            _write_document(output, enriched)
+    return len(documents), len(passages)
 
 
 def _canonical_document(
@@ -397,6 +538,19 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--input", type=Path, required=True)
     convert.add_argument("--output", type=Path, required=True)
     convert.add_argument("--limit", type=_positive_int)
+
+    embed = subparsers.add_parser("embed", help="attach LM Studio or Ollama embeddings to canonical documents")
+    embed.add_argument("--documents", type=Path, required=True)
+    embed.add_argument("--passages", type=Path, required=True)
+    embed.add_argument("--output", type=Path, required=True)
+    embed.add_argument("--provider", choices=("lmstudio", "ollama"), required=True)
+    embed.add_argument("--base-url", required=True)
+    embed.add_argument("--model", required=True)
+    embed.add_argument("--dimensions", type=_positive_int, default=768)
+    embed.add_argument("--batch-size", type=_positive_int, default=16)
+    embed.add_argument("--timeout", type=float, default=60.0)
+    embed.add_argument("--api-key", default=os.environ.get("EMBEDDING_API_KEY"))
+    embed.add_argument("--profile", choices=("embeddinggemma", "plain"), default="embeddinggemma")
     return parser
 
 
@@ -411,9 +565,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "download-dump":
             path = download_dump(args.base_url, args.output_dir, args.user_agent)
             result = {"output": str(path), "sha1": _sha1(path)}
-        else:
+        elif args.command == "convert-dump":
             written, skipped = convert_wikiextractor(args.input, args.output, args.limit)
             result = {"output": str(args.output), "written": written, "skipped": skipped}
+        else:
+            if args.timeout <= 0:
+                raise WikipediaDataError("embedding timeout must be greater than zero")
+            documents, passages = embed_documents(
+                args.documents, args.passages, args.output, args.provider, args.base_url,
+                args.model, args.dimensions, args.batch_size, args.timeout, args.profile, args.api_key,
+            )
+            result = {"output": str(args.output), "documents": documents, "passages": passages}
     except WikipediaDataError as error:
         print("error: {}".format(error), file=sys.stderr)
         return 1

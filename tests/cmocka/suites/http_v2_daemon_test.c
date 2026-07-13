@@ -95,6 +95,7 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   const char *body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"scope\":\"documents\",\"limit\":1}";char request[1024];
   response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"status\":\"live\""));free(response);response=NULL;
   response=get(ctx,"/health/ready");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"ready\":true"));assert_non_null(strstr(response,"\"generation\":1"));assert_non_null(strstr(response,"\"state\":\"precomputed_ready\""));free(response);response=NULL;
+  response=post(ctx,"/v2/passages:prepare","{\"id\":\"doc-new\",\"body\":\"Fresh APPLE.\"}");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"model_id\":\"embed-v1\""));assert_non_null(strstr(response,"\"dimensions\":2"));assert_non_null(strstr(response,"\"text\":\"fresh apple.\""));free(response);response=NULL;
   assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-fruit\""));free(response);response=NULL;
   body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"limit\":1,\"max_context_bytes\":100}";
@@ -108,7 +109,7 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"text/plain; version=0.0.4"));
   assert_non_null(strstr(response,"yappod_v2_manifest_generation 1"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 1"));
-  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"retrieve\",status_class=\"2xx\"} 1"));
+  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"retrieve\",status_class=\"2xx\"} 2"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
   assert_non_null(strstr(response,"yappod_v2_compaction_state{state=\"idle\"} 1"));
   free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
