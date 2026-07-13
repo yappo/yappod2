@@ -15,6 +15,7 @@ enable_testing()
 option(YAPPOD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(YAPPOD_TESTS_DAEMON "Enable daemon-based test suites" ON)
 option(YAPPOD_TESTS_NODAEMON "Enable non-daemon test suites" ON)
+option(YAPPOD_BUILD_FUZZERS "Build Clang libFuzzer parser targets" OFF)
 
 function(yappod_enable_warnings target)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -258,6 +259,17 @@ if(YAPPOD_TESTS_DAEMON)
     RUN_SERIAL
     LABEL daemon
   )
+  add_yappod_cmocka_test(
+    v2_daemon_reliability
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality/v2_daemon_reliability_test.c
+    RUN_SERIAL
+    LABEL daemon
+    EXTRA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality/v2_quality_fixture.c
+  )
+  target_include_directories(v2_daemon_reliability_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality)
+  target_link_libraries(v2_daemon_reliability_test PRIVATE yappod_base)
+  set_tests_properties(v2_daemon_reliability PROPERTIES TIMEOUT 120)
 endif()
 
 if(YAPPOD_TESTS_NODAEMON)
@@ -515,6 +527,11 @@ if(YAPPOD_TESTS_NODAEMON)
     target_link_libraries(search_quality PRIVATE ${M_LIB})
   endif()
 
+  add_executable(v2_load_probe ${QUALITY_TEST_DIR}/v2_load_probe.c)
+  yappod_enable_warnings(v2_load_probe)
+  target_include_directories(v2_load_probe PRIVATE ${TEST_COMMON_DIR})
+  target_link_libraries(v2_load_probe PRIVATE yappod_test_support yappod::yyjson Threads::Threads)
+
   add_test(
     NAME search_quality_baseline
     COMMAND $<TARGET_FILE:search_quality>
@@ -529,4 +546,43 @@ if(YAPPOD_TESTS_NODAEMON)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     LABELS standalone
   )
+
+  add_yappod_cmocka_test(
+    v2_search_quality
+    ${QUALITY_TEST_DIR}/v2_search_quality_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${QUALITY_TEST_DIR}/v2_quality_fixture.c
+                  ${QUALITY_TEST_DIR}/search_quality_metrics.c
+  )
+  target_include_directories(v2_search_quality_test PRIVATE ${QUALITY_TEST_DIR})
+  target_link_libraries(v2_search_quality_test PRIVATE yappod_base)
+endif()
+
+if(YAPPOD_BUILD_FUZZERS)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "YAPPOD_BUILD_FUZZERS requires Clang")
+  endif()
+
+  add_executable(core_protocol_v2_fuzz
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/core_protocol_v2_fuzz.c
+    ${SRC_DIR}/yappo_io.c
+    ${SRC_DIR}/yappo_core_protocol_v2.c
+  )
+  target_include_directories(core_protocol_v2_fuzz PRIVATE ${SRC_DIR})
+  target_compile_options(core_protocol_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(core_protocol_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  yappod_enable_warnings(core_protocol_v2_fuzz)
+
+  add_executable(ingest_v2_fuzz
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/ingest_v2_fuzz.c
+    ${SRC_DIR}/yappo_index_v2.c
+    ${SRC_DIR}/yappo_config_v2.c
+    ${SRC_DIR}/yappo_unicode.c
+    ${SRC_DIR}/yappo_ingest.c
+  )
+  target_include_directories(ingest_v2_fuzz PRIVATE ${SRC_DIR})
+  target_compile_options(ingest_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(ingest_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_libraries(ingest_v2_fuzz PRIVATE yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
+  yappod_enable_warnings(ingest_v2_fuzz)
 endif()
