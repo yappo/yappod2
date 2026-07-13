@@ -40,6 +40,14 @@ static int range_valid(size_t offset, size_t bytes, size_t size) {
   return offset <= size && bytes <= size - offset;
 }
 
+static int term_compare(YAP_V2_BYTES_VIEW left, YAP_V2_BYTES_VIEW right) {
+  size_t common = left.len < right.len ? left.len : right.len;
+  int order = memcmp(left.data, right.data, common);
+  if (order != 0) return order;
+  if (left.len == right.len) return 0;
+  return left.len < right.len ? -1 : 1;
+}
+
 static int map_component(const char *path, uint32_t type, uint64_t expected_generation,
                          void **map_out, size_t *bytes_out, uint64_t *generation_out) {
   struct stat info;
@@ -147,11 +155,7 @@ static int validate_term_stream(YAP_V2_LEXICAL_SEGMENT *segment) {
     term->positions_bytes = get_u64(data + offset + 32U);
     offset += 40U;
     if (term->document_frequency == 0U ||
-        (i > 0U &&
-         (segment->terms[i - 1U].term.len > term->term.len
-            ? memcmp(segment->terms[i - 1U].term.data, term->term.data, term->term.len) >= 0
-            : memcmp(segment->terms[i - 1U].term.data, term->term.data,
-                     segment->terms[i - 1U].term.len) >= 0)))
+        (i > 0U && term_compare(segment->terms[i - 1U].term, term->term) >= 0))
       return YAP_V2_INVALID_FORMAT;
   }
   return offset == size ? YAP_V2_OK : YAP_V2_INVALID_FORMAT;

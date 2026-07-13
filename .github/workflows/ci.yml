@@ -216,6 +216,40 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=moderate
 
+  wikipedia-search-e2e:
+    name: wikipedia-search-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install C dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev libcurl4-openssl-dev libevent-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/wikipedia-search/web/package-lock.json
+
+      - name: Build demo binaries
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j --target yappo_makeindex yappod_core yappod_front
+
+      - name: Install Web dependencies
+        working-directory: examples/wikipedia-search/web
+        run: npm ci
+
+      - name: Run integration E2E
+        working-directory: examples/wikipedia-search/web
+        run: npm run test:e2e
+
   build-and-test-sanitizer:
     name: ubuntu-latest (sanitizer)
     runs-on: ubuntu-latest

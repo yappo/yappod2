@@ -196,5 +196,5 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
 }
 
 export function defaultStaticDir(): string {
-  return join(import.meta.dirname, "../../../client/dist");
+  return join(import.meta.dirname, "../../client/dist");
 }
