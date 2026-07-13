@@ -5,6 +5,7 @@
 
 #include "yappo_ingest.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static void test_upsert_and_metadata_are_canonical(void **state) {
@@ -60,7 +61,34 @@ static void test_tsv_adapter(void **state) {
   assert_string_equal(operation.body,"Body"); YAP_V2_ingest_operation_free(&operation);
 }
 
+static void test_url_has_a_separate_limit_and_reports_oversize(void **state) {
+  char url[YAP_V2_MAX_URL_BYTES + 2U];
+  char line[YAP_V2_MAX_URL_BYTES + 80U];
+  char error[128];
+  YAP_V2_INGEST_OPERATION operation;
+  int length;
+  (void)state;
+
+  memset(url, 'u', sizeof(url) - 1U);
+  url[316] = '\0';
+  length = snprintf(line, sizeof(line),
+                    "{\"operation\":\"upsert\",\"id\":\"doc\",\"url\":\"%s\",\"body\":\"body\"}", url);
+  assert_true(length > 0);
+  assert_int_equal(YAP_V2_ingest_parse_ndjson(line, (size_t)length, &operation,
+                                               error, sizeof(error)), YAP_V2_OK);
+  YAP_V2_ingest_operation_free(&operation);
+
+  memset(url, 'u', YAP_V2_MAX_URL_BYTES + 1U);
+  url[YAP_V2_MAX_URL_BYTES + 1U] = '\0';
+  length = snprintf(line, sizeof(line),
+                    "{\"operation\":\"upsert\",\"id\":\"doc\",\"url\":\"%s\",\"body\":\"body\"}", url);
+  assert_true(length > 0);
+  assert_int_equal(YAP_V2_ingest_parse_ndjson(line, (size_t)length, &operation,
+                                               error, sizeof(error)), YAP_V2_OUT_OF_RANGE);
+  assert_string_equal(error, "url exceeds maximum of 8192 bytes (got 8193)");
+}
+
 int main(void) {
-  const struct CMUnitTest tests[]={cmocka_unit_test(test_upsert_and_metadata_are_canonical),cmocka_unit_test(test_delete_is_strict),cmocka_unit_test(test_unknown_key_is_rejected),cmocka_unit_test(test_duplicate_metadata_key_is_rejected),cmocka_unit_test(test_precomputed_passage_vectors),cmocka_unit_test(test_tsv_adapter)};
+  const struct CMUnitTest tests[]={cmocka_unit_test(test_upsert_and_metadata_are_canonical),cmocka_unit_test(test_delete_is_strict),cmocka_unit_test(test_unknown_key_is_rejected),cmocka_unit_test(test_duplicate_metadata_key_is_rejected),cmocka_unit_test(test_precomputed_passage_vectors),cmocka_unit_test(test_tsv_adapter),cmocka_unit_test(test_url_has_a_separate_limit_and_reports_oversize)};
   return cmocka_run_group_tests(tests,NULL,NULL);
 }

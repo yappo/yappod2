@@ -93,7 +93,7 @@ int YAP_V2_document_validate(const YAP_V2_DOCUMENT_VIEW *document) {
   if (status != YAP_V2_OK) {
     return status;
   }
-  status = bytes_view_validate(document->url, YAP_V2_MAX_IDENTIFIER_BYTES, 0);
+  status = bytes_view_validate(document->url, YAP_V2_MAX_URL_BYTES, 0);
   if (status != YAP_V2_OK) {
     return status;
   }

@@ -69,6 +69,19 @@ static void test_document_rejects_nul_and_negative_time(void **state) {
   assert_int_equal(YAP_V2_document_validate(&document), YAP_V2_OUT_OF_RANGE);
 }
 
+static void test_document_accepts_long_url_with_separate_limit(void **state) {
+  unsigned char url[YAP_V2_MAX_URL_BYTES + 1U];
+  YAP_V2_DOCUMENT_VIEW document = sample_document();
+  (void)state;
+
+  memset(url, 'u', sizeof(url));
+  document.url.data = url;
+  document.url.len = 316U;
+  assert_int_equal(YAP_V2_document_validate(&document), YAP_V2_OK);
+  document.url.len = sizeof(url);
+  assert_int_equal(YAP_V2_document_validate(&document), YAP_V2_OUT_OF_RANGE);
+}
+
 static void test_config_vector_contract(void **state) {
   YAP_V2_CONFIG config;
   (void)state;
@@ -185,6 +198,7 @@ int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_document_and_passage_contract),
     cmocka_unit_test(test_document_rejects_nul_and_negative_time),
+    cmocka_unit_test(test_document_accepts_long_url_with_separate_limit),
     cmocka_unit_test(test_config_vector_contract),
     cmocka_unit_test(test_config_rejects_invalid_chunking),
     cmocka_unit_test(test_config_rejects_unterminated_identifier),

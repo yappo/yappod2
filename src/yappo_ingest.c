@@ -115,10 +115,17 @@ static int only_keys(yyjson_val *object, const char *const *allowed) {
   return 1;
 }
 
-static int assign_string(yyjson_val *object, const char *key, int required, char **output) {
+static int assign_string(yyjson_val *object, const char *key, int required, size_t max_bytes,
+                         char **output, char *error, size_t error_size) {
   yyjson_val *value = yyjson_obj_get(object, key);
   if (value == NULL) return required ? YAP_V2_INVALID_FORMAT : YAP_V2_OK;
-  if (!yyjson_is_str(value) || yyjson_get_len(value) > YAP_V2_MAX_METADATA_BYTES) return YAP_V2_INVALID_FORMAT;
+  if (!yyjson_is_str(value)) return YAP_V2_INVALID_FORMAT;
+  if (yyjson_get_len(value) > max_bytes) {
+    if (error != NULL && error_size > 0U)
+      (void)snprintf(error, error_size, "%s exceeds maximum of %zu bytes (got %zu)",
+                     key, max_bytes, yyjson_get_len(value));
+    return YAP_V2_OUT_OF_RANGE;
+  }
   *output = copy_text(yyjson_get_str(value), yyjson_get_len(value));
   return *output == NULL ? YAP_V2_ALLOCATION_FAILED : YAP_V2_OK;
 }
@@ -129,6 +136,7 @@ int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OP
   yyjson_read_err read_error; yyjson_doc *document; yyjson_val *root,*kind,*metadata,*updated,*vectors;
   int status;
   if(line==NULL||operation==NULL)return YAP_V2_INVALID_ARGUMENT;
+  if(error!=NULL&&error_size>0U)error[0]='\0';
   memset(operation,0,sizeof(*operation));
   document=yyjson_read_opts((char *)line,length,YYJSON_READ_NOFLAG,NULL,&read_error);
   if(document==NULL){error_set(error,error_size,"invalid JSON");return YAP_V2_INVALID_FORMAT;}
@@ -139,14 +147,14 @@ int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OP
   if(strcmp(yyjson_get_str(kind),"upsert")==0)operation->kind=YAP_V2_INGEST_UPSERT;
   else if(strcmp(yyjson_get_str(kind),"delete")==0)operation->kind=YAP_V2_INGEST_DELETE;
   else{error_set(error,error_size,"operation must be upsert or delete");status=YAP_V2_INVALID_FORMAT;goto done;}
-  status=assign_string(root,"id",1,&operation->id);if(status!=YAP_V2_OK||operation->id[0]=='\0')goto invalid;
+  status=assign_string(root,"id",1,YAP_V2_MAX_IDENTIFIER_BYTES,&operation->id,error,error_size);if(status!=YAP_V2_OK||operation->id[0]=='\0')goto invalid;
   if(operation->kind==YAP_V2_INGEST_DELETE){
     if(yyjson_obj_size(root)!=2U){status=YAP_V2_INVALID_FORMAT;goto invalid;}
     status=YAP_V2_OK;goto done;
   }
-  status=assign_string(root,"url",0,&operation->url);if(status!=YAP_V2_OK)goto invalid;
-  status=assign_string(root,"title",0,&operation->title);if(status!=YAP_V2_OK)goto invalid;
-  status=assign_string(root,"body",1,&operation->body);if(status!=YAP_V2_OK)goto invalid;
+  status=assign_string(root,"url",0,YAP_V2_MAX_URL_BYTES,&operation->url,error,error_size);if(status!=YAP_V2_OK)goto invalid;
+  status=assign_string(root,"title",0,YAP_V2_MAX_IDENTIFIER_BYTES,&operation->title,error,error_size);if(status!=YAP_V2_OK)goto invalid;
+  status=assign_string(root,"body",1,YAP_V2_MAX_METADATA_BYTES,&operation->body,error,error_size);if(status!=YAP_V2_OK)goto invalid;
   if(operation->url==NULL)operation->url=copy_text("",0U);
   if(operation->title==NULL)operation->title=copy_text("",0U);
   metadata=yyjson_obj_get(root,"metadata");
@@ -177,7 +185,7 @@ int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OP
   status=YAP_V2_OK;goto done;
 invalid:
   if(status==YAP_V2_OK)status=YAP_V2_INVALID_FORMAT;
-  error_set(error,error_size,"record violates the canonical ingest schema");
+  if(error==NULL||error_size==0U||error[0]=='\0')error_set(error,error_size,"record violates the canonical ingest schema");
 done:
   yyjson_doc_free(document);
   if(status!=YAP_V2_OK)YAP_V2_ingest_operation_free(operation);
