@@ -1,6 +1,6 @@
 # Yappod2 v2索引契約
 
-> **現在の状態:** この文書で実装済みなのは共通header、document/passage segment、manifestの基礎契約です。terms、postings、positions、metadata、vectorsを含む製品index layoutと最終configは未完成であり、[現代検索基盤の完成契約](modern_search_completion_contract.md)に従って置き換えます。
+> **現在の状態:** 共通header、document/passage segment、manifest、lexical component、metadata filter、snippetを実装済みです。永続vector以降の未完成部分は[現代検索基盤の完成契約](modern_search_completion_contract.md)に従って実装します。
 
 この文書は、v2索引を生成・読み込むコンポーネント間の契約です。ここではデータ形式と検証規則を定義し、segmentの生成・検索・既存v1形式との接続は別の実装仕様で扱います。
 
@@ -53,6 +53,9 @@ enabled = false
 model_id = ""
 dimensions = 0
 metric = "cosine"
+
+[metadata]
+filterable_fields = ["author.name", "lang", "year"]
 ```
 
 - `tokenizer.id`は空でない識別子です。
@@ -63,6 +66,8 @@ metric = "cosine"
 - 省略可能な値のdefaultはtokenizer `unicode_nfkc_casefold_v2`、chunk max 1200、overlap 200、vector disabledです。
 - 未知のtop-level key、table、table内keyは将来の綴り間違いを黙認しないため拒否します。
 - fingerprintはdefault適用後の全設定を固定順のcanonical表現へ変換し、SHA-256を計算した32-byte値です。空白、コメント、key順序の違いはfingerprintへ影響しません。
+- `metadata.filterable_fields`は省略可能です。dot区切りのJSON object pathを最大64件指定し、
+  byte順へ正規化して重複を拒否します。この一覧はfingerprintへ含めます。
 
 ## manifest.json
 
@@ -179,6 +184,20 @@ positionはfield、token ordinal順に決定的に並びます。
   評価対象をskipします。ANDはobject keyのposting intersection、phraseは同一field内の連続
   positionを要求します。
 - score降順、同点はobject type、object ordinal昇順の決定的順序です。
+
+## metadata filterとsnippet
+
+`metadata.yap2`（file type=5）はpayload version、設定済みfield一覧、document数、entry数に続き、
+field ordinal、document ordinal、型、値を持つentryを格納します。型はnull、boolean、number、stringです。
+scalar配列は複数entryとして扱い、objectとobjectを含む配列はindex化しません。readerはheader、generation、
+CRC32C、設定済みfield一覧、ordinal、型、payload境界を検証します。
+
+filter ASTはJSON objectで、`eq`、`in`、`range`（`gt`/`gte`/`lt`/`lte`）、`exists`、
+`and`、`or`、`not`を扱います。未知のoperator、key、設定外field、型違反、空の論理配列、
+深さ32超、1024 node超はcompile時に拒否します。lexical searchは候補をtop-kへ追加する前にfilter callbackを評価します。
+
+snippetはICUのgrapheme境界でwindowを選び、UTF-8 byte列を途中で切りません。指定termと一致した
+grapheme範囲だけを呼び出し側指定の開始・終了markerで囲みます。
 
 ## C APIの所有権
 

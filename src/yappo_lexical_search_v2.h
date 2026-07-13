@@ -11,6 +11,8 @@ typedef struct {
   int phrase;
   double field_boost[3];
   size_t top_k;
+  int (*accept)(void *context, uint32_t object_type, uint64_t object_ordinal);
+  void *accept_context;
 } YAP_V2_LEXICAL_SEARCH_OPTIONS;
 
 typedef struct {

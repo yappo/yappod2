@@ -82,6 +82,58 @@ static int read_uint32(toml_table_t *table, const char *key, uint32_t *output, i
   return YAP_V2_OK;
 }
 
+static int field_compare(const void *left, const void *right) {
+  return strcmp((const char *)left, (const char *)right);
+}
+
+static int read_filterable_fields(toml_table_t *metadata, YAP_V2_CONFIG *config,
+                                  char *error, size_t error_size) {
+  toml_array_t *array;
+  int count;
+  int i;
+  if (metadata == NULL)
+    return YAP_V2_OK;
+  array = toml_array_in(metadata, "filterable_fields");
+  if (array == NULL) {
+    if (toml_key_exists(metadata, "filterable_fields")) {
+      set_error(error, error_size, "filterable_fields must be an array of strings");
+      return YAP_V2_INVALID_FORMAT;
+    }
+    return YAP_V2_OK;
+  }
+  count = toml_array_nelem(array);
+  if (count < 0 || count > (int)YAP_V2_MAX_FILTER_FIELDS) {
+    set_error(error, error_size, "too many filterable_fields");
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  for (i = 0; i < count; i++) {
+    toml_datum_t value = toml_string_at(array, i);
+    size_t length;
+    if (!value.ok) {
+      set_error(error, error_size, "filterable_fields must contain only strings");
+      return YAP_V2_INVALID_FORMAT;
+    }
+    length = strlen(value.u.s);
+    if (length == 0U || length > YAP_V2_MAX_FILTER_FIELD_BYTES) {
+      free(value.u.s);
+      set_error(error, error_size, "filterable field is empty or too long");
+      return YAP_V2_OUT_OF_RANGE;
+    }
+    memcpy(config->filterable_fields[i], value.u.s, length + 1U);
+    free(value.u.s);
+  }
+  config->filterable_field_count = (size_t)count;
+  qsort(config->filterable_fields, config->filterable_field_count,
+        sizeof(config->filterable_fields[0]), field_compare);
+  for (i = 1; i < count; i++) {
+    if (strcmp(config->filterable_fields[i - 1], config->filterable_fields[i]) == 0) {
+      set_error(error, error_size, "filterable_fields contains a duplicate");
+      return YAP_V2_DUPLICATE;
+    }
+  }
+  return YAP_V2_OK;
+}
+
 void YAP_V2_config_init(YAP_V2_CONFIG *config) {
   if (config == NULL) return;
   memset(config, 0, sizeof(*config));
@@ -93,15 +145,18 @@ void YAP_V2_config_init(YAP_V2_CONFIG *config) {
 }
 
 int YAP_V2_config_load(const char *path, YAP_V2_CONFIG *config, char *error, size_t error_size) {
-  static const char *const root_keys[] = {"format_version", "tokenizer", "chunking", "vector", NULL};
+  static const char *const root_keys[] = {"format_version", "tokenizer", "chunking", "vector",
+                                          "metadata", NULL};
   static const char *const tokenizer_keys[] = {"id", NULL};
   static const char *const chunking_keys[] = {"max_chars", "overlap_chars", NULL};
   static const char *const vector_keys[] = {"enabled", "model_id", "dimensions", "metric", NULL};
+  static const char *const metadata_keys[] = {"filterable_fields", NULL};
   FILE *file;
   toml_table_t *root = NULL;
   toml_table_t *tokenizer;
   toml_table_t *chunking;
   toml_table_t *vector;
+  toml_table_t *metadata;
   toml_datum_t enabled;
   toml_datum_t metric;
   uint32_t version;
@@ -128,9 +183,10 @@ int YAP_V2_config_load(const char *path, YAP_V2_CONFIG *config, char *error, siz
   tokenizer = toml_table_in(root, "tokenizer");
   chunking = toml_table_in(root, "chunking");
   vector = toml_table_in(root, "vector");
+  metadata = toml_table_in(root, "metadata");
   if (tokenizer == NULL || chunking == NULL || vector == NULL ||
       !key_allowed(tokenizer, tokenizer_keys) || !key_allowed(chunking, chunking_keys) ||
-      !key_allowed(vector, vector_keys)) {
+      !key_allowed(vector, vector_keys) || (metadata != NULL && !key_allowed(metadata, metadata_keys))) {
     set_error(error, error_size, "required table is missing or contains an unknown key");
     goto done;
   }
@@ -187,6 +243,8 @@ int YAP_V2_config_load(const char *path, YAP_V2_CONFIG *config, char *error, siz
     }
     if (model.ok) free(model.u.s);
   }
+  status = read_filterable_fields(metadata, config, error, error_size);
+  if (status != YAP_V2_OK) goto done;
   status = YAP_V2_config_validate(config);
   if (status != YAP_V2_OK) set_error(error, error_size, "configuration violates the v2 schema");
 done:
@@ -222,9 +280,11 @@ static void sha_update(SHA256_CTX *ctx,const unsigned char *data,size_t length){
 static void sha_final(SHA256_CTX *ctx,unsigned char out[32]){size_t i;uint64_t bits=ctx->bit_count;ctx->block[ctx->block_size++]=0x80U;if(ctx->block_size>56U){memset(ctx->block+ctx->block_size,0,64U-ctx->block_size);sha_transform(ctx,ctx->block);ctx->block_size=0;}memset(ctx->block+ctx->block_size,0,56U-ctx->block_size);for(i=0;i<8;i++)ctx->block[63U-i]=(unsigned char)(bits>>(i*8U));sha_transform(ctx,ctx->block);for(i=0;i<8;i++){out[i*4]=(unsigned char)(ctx->state[i]>>24);out[i*4+1]=(unsigned char)(ctx->state[i]>>16);out[i*4+2]=(unsigned char)(ctx->state[i]>>8);out[i*4+3]=(unsigned char)ctx->state[i];}}
 
 int YAP_V2_config_fingerprint(const YAP_V2_CONFIG *config, unsigned char output[32]) {
-  char canonical[1024];
+  char canonical[32768];
   const char *metric;
   int length;
+  size_t used;
+  size_t i;
   SHA256_CTX sha;
   if (config == NULL || output == NULL) return YAP_V2_INVALID_ARGUMENT;
   if (YAP_V2_config_validate(config) != YAP_V2_OK) return YAP_V2_INVALID_FORMAT;
@@ -239,7 +299,14 @@ int YAP_V2_config_fingerprint(const YAP_V2_CONFIG *config, unsigned char output[
                     config->chunk_overlap_chars, config->vector_model_id,
                     config->vector_dimensions, metric);
   if (length < 0 || (size_t)length >= sizeof(canonical)) return YAP_V2_OUT_OF_RANGE;
-  sha_init(&sha); sha_update(&sha, (const unsigned char *)canonical, (size_t)length); sha_final(&sha, output);
+  used = (size_t)length;
+  for (i = 0U; i < config->filterable_field_count; i++) {
+    length = snprintf(canonical + used, sizeof(canonical) - used, "metadata.filterable_fields[%zu]=%s\n",
+                      i, config->filterable_fields[i]);
+    if (length < 0 || (size_t)length >= sizeof(canonical) - used) return YAP_V2_OUT_OF_RANGE;
+    used += (size_t)length;
+  }
+  sha_init(&sha); sha_update(&sha, (const unsigned char *)canonical, used); sha_final(&sha, output);
   return YAP_V2_OK;
 }
 

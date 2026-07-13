@@ -22,6 +22,8 @@
 #define YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES (256U * 1024U * 1024U)
 #define YAP_V2_MAX_COMPONENTS 8U
 #define YAP_V2_MAX_COMPONENT_NAME_BYTES 63U
+#define YAP_V2_MAX_FILTER_FIELDS 64U
+#define YAP_V2_MAX_FILTER_FIELD_BYTES 127U
 
 typedef enum {
   YAP_V2_OK = 0,
@@ -84,6 +86,8 @@ typedef struct {
   char vector_model_id[YAP_V2_MAX_MODEL_ID_BYTES + 1U];
   uint32_t vector_dimensions;
   YAP_V2_VECTOR_METRIC vector_metric;
+  char filterable_fields[YAP_V2_MAX_FILTER_FIELDS][YAP_V2_MAX_FILTER_FIELD_BYTES + 1U];
+  size_t filterable_field_count;
 } YAP_V2_CONFIG;
 
 typedef struct {
