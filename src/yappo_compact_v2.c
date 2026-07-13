@@ -219,7 +219,8 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   YAP_V2_DOCUMENT_VIEW *documents = NULL; YAP_V2_PASSAGE_VIEW *passages = NULL; float *vectors = NULL;
   char config_path[4096], manifest_path[4096], segments_path[4096], segment_path[4096];
   char config_error[256]; const char *segment_id = NULL; size_t documents_count = 0U, passages_count = 0U;
-  size_t removed_before = 0U, removed_after = 0U; uint64_t next_generation; int status = YAP_V2_OK, published = 0;
+  size_t removed_before = 0U, removed_after = 0U, segment_id_length = 0U;
+  uint64_t next_generation; int status = YAP_V2_OK, published = 0;
   YAP_V2_WRITER_LOCK writer_lock;
   YAP_V2_manifest_init(&manifest); YAP_V2_manifest_init(&candidate); YAP_V2_snapshot_manager_init(&manager);
   YAP_V2_writer_lock_init(&writer_lock);
@@ -251,6 +252,8 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
     status = YAP_V2_IO_ERROR; goto done;
   }
   segment_id = strrchr(segment_path, '/'); segment_id = segment_id == NULL ? segment_path : segment_id + 1;
+  segment_id_length = strlen(segment_id);
+  if (segment_id_length >= sizeof(result->segment_id)) { status = YAP_V2_OUT_OF_RANGE; goto done; }
   status = write_segment(segment_path, segment_id, next_generation, &config, documents, documents_count,
                          passages, passages_count, vectors, &descriptor);
   if (status == YAP_V2_OK) status = sync_directory(segments_path);
@@ -268,7 +271,7 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   if (status != YAP_V2_OK) { set_error(error, error_size, "obsolete segment cleanup failed"); goto done; }
   result->generation = next_generation; result->documents = documents_count;
   result->passages = passages_count; result->removed_segments = removed_before + removed_after;
-  (void)snprintf(result->segment_id, sizeof(result->segment_id), "%s", segment_id);
+  memcpy(result->segment_id, segment_id, segment_id_length + 1U);
 done:
   if (!published && segment_id != NULL) (void)remove_segment_directory(segment_path);
   free(documents); free(passages); free(vectors); YAP_V2_snapshot_release(snapshot);
