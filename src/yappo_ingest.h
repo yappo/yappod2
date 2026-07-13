@@ -16,6 +16,9 @@ typedef struct {
   char *body;
   char *metadata_json;
   int64_t updated_at_unix_ms;
+  float *vectors;
+  size_t vector_count;
+  size_t vector_dimensions;
 } YAP_V2_INGEST_OPERATION;
 
 void YAP_V2_ingest_operation_free(YAP_V2_INGEST_OPERATION *operation);

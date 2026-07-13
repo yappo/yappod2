@@ -39,6 +39,16 @@ static void test_duplicate_metadata_key_is_rejected(void **state) {
   assert_int_equal(YAP_V2_ingest_parse_ndjson(line,strlen(line),&operation,error,sizeof(error)),YAP_V2_INVALID_FORMAT);
 }
 
+static void test_precomputed_passage_vectors(void **state) {
+  const char good[]="{\"operation\":\"upsert\",\"id\":\"doc\",\"body\":\"body\",\"vectors\":[[1,0],[0.5,-0.25]]}";
+  const char ragged[]="{\"operation\":\"upsert\",\"id\":\"doc\",\"body\":\"body\",\"vectors\":[[1,0],[1]]}";
+  YAP_V2_INGEST_OPERATION operation; char error[128]; (void)state;
+  assert_int_equal(YAP_V2_ingest_parse_ndjson(good,strlen(good),&operation,error,sizeof(error)),YAP_V2_OK);
+  assert_int_equal(operation.vector_count,2U);assert_int_equal(operation.vector_dimensions,2U);
+  assert_float_equal(operation.vectors[2],0.5f,0.0001f);YAP_V2_ingest_operation_free(&operation);
+  assert_int_equal(YAP_V2_ingest_parse_ndjson(ragged,strlen(ragged),&operation,error,sizeof(error)),YAP_V2_INVALID_FORMAT);
+}
+
 static void test_tsv_adapter(void **state) {
   char line[]="https://example.test/\tADD\tTitle\t4\tBody\n";
   YAP_V2_INGEST_OPERATION operation; char error[128]; (void)state;
@@ -48,6 +58,6 @@ static void test_tsv_adapter(void **state) {
 }
 
 int main(void) {
-  const struct CMUnitTest tests[]={cmocka_unit_test(test_upsert_and_metadata_are_canonical),cmocka_unit_test(test_delete_is_strict),cmocka_unit_test(test_unknown_key_is_rejected),cmocka_unit_test(test_duplicate_metadata_key_is_rejected),cmocka_unit_test(test_tsv_adapter)};
+  const struct CMUnitTest tests[]={cmocka_unit_test(test_upsert_and_metadata_are_canonical),cmocka_unit_test(test_delete_is_strict),cmocka_unit_test(test_unknown_key_is_rejected),cmocka_unit_test(test_duplicate_metadata_key_is_rejected),cmocka_unit_test(test_precomputed_passage_vectors),cmocka_unit_test(test_tsv_adapter)};
   return cmocka_run_group_tests(tests,NULL,NULL);
 }

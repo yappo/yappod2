@@ -12,6 +12,7 @@
 #include "yappo_manifest_v2.h"
 #include "yappo_query_v2.h"
 #include "yappo_retrieve_v2.h"
+#include "yappo_update_v2.h"
 
 #define YAP_V2_CURSOR_MAX_OFFSET 10000U
 
@@ -138,7 +139,7 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
     YAP_V2_ann_segment_init(&runtime->ann[i]);
     YAP_V2_metadata_index_init(&runtime->metadata[i]);
     if (component(descriptor, YAP_V2_FILE_TERMS) != NULL) {
-      status = YAP_V2_lexical_segment_open(segment_dir, runtime->manifest.generation,
+      status = YAP_V2_lexical_segment_open(segment_dir, 0U,
                                            &runtime->lexical[i]);
       if (status != YAP_V2_OK) return status;
       runtime->query[i].lexical = &runtime->lexical[i];
@@ -146,7 +147,7 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
     if (component(descriptor, YAP_V2_FILE_VECTORS) != NULL) {
       if (path_join(file_path, sizeof(file_path), segment_dir, "vectors.yap2") != 0)
         return YAP_V2_INVALID_ARGUMENT;
-      status = YAP_V2_vector_segment_open(file_path, runtime->manifest.generation, &runtime->config,
+      status = YAP_V2_vector_segment_open(file_path, 0U, &runtime->config,
                                           &runtime->vectors[i], NULL);
       if (status != YAP_V2_OK) return status;
       runtime->ann[i].vectors = &runtime->vectors[i];
@@ -162,7 +163,7 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
     if (component(descriptor, YAP_V2_FILE_METADATA) != NULL) {
       if (path_join(file_path, sizeof(file_path), segment_dir, "metadata.yap2") != 0)
         return YAP_V2_INVALID_ARGUMENT;
-      status = YAP_V2_metadata_read(file_path, runtime->manifest.generation, &runtime->config,
+      status = YAP_V2_metadata_read(file_path, 0U, &runtime->config,
                                     &runtime->metadata[i], NULL);
       if (status != YAP_V2_OK) return status;
       runtime->query[i].metadata = &runtime->metadata[i];
@@ -404,6 +405,21 @@ static char *error_json(const char *code, const char *message, size_t *bytes) {
   yyjson_mut_doc_free(doc); return json;
 }
 
+static char *update_json(const YAP_V2_UPDATE_RESULT *result, size_t *bytes) {
+  yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL); yyjson_mut_val *root; char *json;
+  if (doc == NULL) return NULL;
+  root = yyjson_mut_obj(doc); yyjson_mut_doc_set_root(doc, root);
+  if (root == NULL || !yyjson_mut_obj_add_uint(doc, root, "generation", result->generation) ||
+      !yyjson_mut_obj_add_uint(doc, root, "accepted", result->accepted) ||
+      !yyjson_mut_obj_add_uint(doc, root, "upserts", result->upserts) ||
+      !yyjson_mut_obj_add_uint(doc, root, "deletes", result->deletes) ||
+      !yyjson_mut_obj_add_str(doc, root, "segment_id", result->segment_id)) {
+    yyjson_mut_doc_free(doc); return NULL;
+  }
+  json = yyjson_mut_write_opts(doc, YYJSON_WRITE_NOFLAG, NULL, bytes, NULL);
+  yyjson_mut_doc_free(doc); return json;
+}
+
 int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
                         const unsigned char *body, size_t body_bytes, int *http_status,
                         char **response, size_t *response_bytes) {
@@ -415,7 +431,26 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   memset(&runtime, 0, sizeof(runtime)); memset(&request, 0, sizeof(request));
   *http_status = 500; *response = NULL; *response_bytes = 0U;
   if (index_dir == NULL || body == NULL || body_bytes == 0U || body_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
-      (operation != YAP_V2_HTTP_SEARCH && operation != YAP_V2_HTTP_RETRIEVE)) return -1;
+      (operation != YAP_V2_HTTP_SEARCH && operation != YAP_V2_HTTP_RETRIEVE &&
+       operation != YAP_V2_HTTP_INGEST)) return -1;
+  if (operation == YAP_V2_HTTP_INGEST) {
+    YAP_V2_UPDATE_RESULT update; char update_error[256] = {0};
+    status = YAP_V2_update_json_batch(index_dir, body, body_bytes, &update,
+                                      update_error, sizeof(update_error));
+    if (update_error[0] == '\0')
+      (void)snprintf(update_error, sizeof(update_error), "%s", YAP_V2_status_string(status));
+    if (status == YAP_V2_OK) {
+      *http_status = 200; *response = update_json(&update, response_bytes);
+    } else if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT ||
+               status == YAP_V2_OUT_OF_RANGE || status == YAP_V2_DUPLICATE) {
+      *http_status = 400; *response = error_json("invalid_batch", update_error, response_bytes);
+    } else if (status == YAP_V2_CONFLICT) {
+      *http_status = 409; *response = error_json("generation_conflict", update_error, response_bytes);
+    } else {
+      *http_status = 503; *response = error_json("update_unavailable", update_error, response_bytes);
+    }
+    return *response == NULL ? -1 : 0;
+  }
   document = yyjson_read((const char *)body, body_bytes, YYJSON_READ_NOFLAG);
   root = document == NULL ? NULL : yyjson_doc_get_root(document);
   if (!yyjson_is_obj(root)) goto bad_request;

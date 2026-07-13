@@ -18,7 +18,7 @@ message typeはsearch、retrieve、ingest、healthそれぞれのrequest/respons
 区別します。requestとresponseは同じrequest IDを保持します。payloadは上位runtimeが解釈する
 UTF-8 JSONで、frame層はopaque bytesとして転送します。
 
-検索・retrieve request payloadはJSON本体です。対応するresponseとerror responseは先頭2 byteを
+search・retrieve・ingest request payloadはJSON本体です。対応するresponseとerror responseは先頭2 byteを
 network byte orderのHTTP status、その後をUTF-8 JSON本体とします。frontはmessage type、
 request ID、statusの組み合わせを検証してからHTTP responseへ変換します。
 

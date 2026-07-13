@@ -131,6 +131,7 @@ static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
   if (status != YAP_V2_CORE_FRAME_OK) goto done;
   if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
   else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
+  else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
   else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
   if (YAP_V2_http_execute(index_dir, operation, request.payload, request.payload_bytes,
                           &http_status, &json, &json_bytes) != 0 || json_bytes > UINT32_MAX - 2U) {
@@ -141,7 +142,8 @@ static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
   payload[0] = (unsigned char)((unsigned int)http_status >> 8);
   payload[1] = (unsigned char)http_status; memcpy(payload + 2U, json, json_bytes);
   response.type = http_status == 200 ?
-    (operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE : YAP_V2_CORE_RETRIEVE_RESPONSE) :
+    (operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
+     operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE : YAP_V2_CORE_INGEST_RESPONSE) :
     YAP_V2_CORE_ERROR_RESPONSE;
   response.request_id = request.request_id; response.payload = payload;
   response.payload_bytes = (uint32_t)(json_bytes + 2U);

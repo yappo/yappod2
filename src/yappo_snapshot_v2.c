@@ -127,7 +127,7 @@ static int snapshot_load(const MANAGER_STATE *state, YAP_V2_SEARCH_SNAPSHOT **sn
     if (documents == NULL) { status = YAP_V2_INVALID_FORMAT; break; }
     status = component_path(state->index_dir, descriptor->id, documents->name, &path);
     if (status == YAP_V2_OK)
-      status = YAP_V2_segment_read(path, snapshot->manifest.generation,
+      status = YAP_V2_segment_read(path, 0U,
                                    &snapshot->segments[i].documents, NULL);
     free(path); path = NULL;
     if (status == YAP_V2_OK &&
@@ -138,7 +138,7 @@ static int snapshot_load(const MANAGER_STATE *state, YAP_V2_SEARCH_SNAPSHOT **sn
     if (status == YAP_V2_OK && tombstones != NULL) {
       status = component_path(state->index_dir, descriptor->id, tombstones->name, &path);
       if (status == YAP_V2_OK)
-        status = YAP_V2_tombstones_read(path, snapshot->manifest.generation,
+        status = YAP_V2_tombstones_read(path, 0U,
                                         &snapshot->segments[i].tombstones);
       free(path);
     }

@@ -98,6 +98,7 @@ static void test_manifest_roundtrip_and_atomic_publish(void **state) {
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_publish_next(path, &manifest), YAP_V2_OK);
   assert_int_equal(manifest.generation, 2U);
+  assert_int_equal(YAP_V2_manifest_publish_if_generation(path, 1U, &manifest), YAP_V2_CONFLICT);
   assert_int_equal(YAP_V2_manifest_load(path, &loaded), YAP_V2_OK);
   assert_int_equal(loaded.generation, 2U);
   assert_int_equal(loaded.segment_count, 2U);
@@ -176,8 +177,7 @@ static void test_tombstone_component_verification(void **state) {
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_verify_components(env.tmp_root, &manifest), YAP_V2_OK);
   manifest.generation = 2U;
-  assert_int_equal(YAP_V2_manifest_verify_components(env.tmp_root, &manifest),
-                   YAP_V2_INVALID_FORMAT);
+  assert_int_equal(YAP_V2_manifest_verify_components(env.tmp_root, &manifest), YAP_V2_OK);
   manifest.generation = 1U;
 
   file = fopen(tombstone_path, "ab");

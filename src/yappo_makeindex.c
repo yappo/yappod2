@@ -25,6 +25,7 @@
 #include "yappo_ngram.h"
 #include "yappo_minibtree.h"
 #include "yappo_ingest.h"
+#include "yappo_update_v2.h"
 
 #define GZ_BUF_SIZE 1024
 #define MAX_STACK_SIZE 2040
@@ -906,6 +907,9 @@ int main(int argc, char *argv[]) {
 
   if (argc > 1 && strcmp(argv[1], "prepare") == 0) {
     return YAP_V2_prepare_main(argc - 1, argv + 1);
+  }
+  if (argc > 1 && strcmp(argv[1], "update") == 0) {
+    return YAP_V2_update_main(argc - 1, argv + 1);
   }
 
   /*

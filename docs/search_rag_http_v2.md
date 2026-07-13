@@ -1,13 +1,14 @@
 # v2 search and retrieval HTTP API
 
-`yappod_front` は `POST /v2/search` と `POST /v2/retrieve` を受け、Task 17 の
+`yappod_front` は `POST /v2/search`、`POST /v2/retrieve`、
+`POST /v2/documents:batch` を受け、Task 17 の
 length-prefixed frameで `yappod_core` へ転送します。coreはリクエストごとに
 `config.toml` と `manifest.json`、全component checksumを検証し、一つのgenerationの
 snapshotと同じsegment順のlexical、vector/ANN、metadata readerを開いて
 `YAP_V2_query_execute` を実行します。retrieveは同じsnapshotのpassage結果を
 `YAP_V2_retrieve_context` へ渡します。旧Berkeley DB検索結果のJSON変換ではありません。
 
-両endpointは `Content-Type: application/json` と明示的な `Content-Length` を必須とし、
+3 endpointは `Content-Type: application/json` と明示的な `Content-Length` を必須とし、
 chunked request、重複したlength/type、1 MiBを超えるbody、不完全bodyを拒否します。
 検索`limit`は1から100です。JSONの未知field、型不一致、非有限vector、設定dimensionと
 異なるvector、modeに必要なquery/vectorの欠落もfail-closedで `400` を返します。
@@ -31,7 +32,7 @@ filterable metadata fieldだけを参照できます。レスポンスはsnapsho
 上限外offsetは`400 invalid_request`です。これは衝突耐性digestによるbindingであり、秘密鍵を使う
 認証tokenではありません。
 
-`/v2/search`と`/v2/retrieve`へのPOST以外のmethodはlegacy parserへ渡さず、JSONの`405`を返します。
+3 endpointへのPOST以外のmethodはlegacy parserへ渡さず、JSONの`405`を返します。
 
 ## Retrieval request
 
@@ -46,3 +47,22 @@ context内byte offset、lexical/vector/fused scoreが含まれます。回答生
 現時点ではvector queryは呼び出し側が事前計算値を渡します。HTTP embedding providerを
 query textから呼ぶためのprovider URL/API keyはindex config schemaに存在しないため、
 暗黙の外部通信は行いません。
+
+## Atomic document batch
+
+```json
+{"operations":[
+  {"operation":"upsert","id":"doc-1","url":"https://example.test/1","title":"Title","body":"Body","metadata":{"lang":"ja"},"vectors":[[0.1,0.2]]},
+  {"operation":"delete","id":"doc-2"}
+]}
+```
+
+`operations`は1件以上100件以下です。未知key、重複document ID、canonical ingest違反、
+chunk後passage数とvector数の不一致、dimension違反が1件でもあれば`400 invalid_batch`で
+batch全体を拒否します。成功時は`generation`、accepted/upsert/delete件数、segment IDを返します。
+
+coreは全操作を検証してからdocuments、lexical postings/positions、metadata、vectors、HNSW、
+tombstoneを一つのimmutable delta segmentへ書きます。全component完成後にgeneration CASで
+manifestをatomic publishするため、失敗時にpartial batchは検索されません。検索runtimeは
+各request開始時に最新manifestの全checksumを検証してsnapshotを開くため、成功応答後の次requestは
+新generationを読みます。writer競合は`409 generation_conflict`、index I/O/検証不能は`503`です。

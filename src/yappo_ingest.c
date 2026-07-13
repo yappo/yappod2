@@ -4,6 +4,8 @@
 #include "yappo_unicode.h"
 
 #include <errno.h>
+#include <float.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,7 @@ void YAP_V2_ingest_operation_free(YAP_V2_INGEST_OPERATION *operation) {
   if (operation == NULL) return;
   free(operation->id); free(operation->url); free(operation->title);
   free(operation->body); free(operation->metadata_json);
+  free(operation->vectors);
   memset(operation, 0, sizeof(*operation));
 }
 
@@ -122,8 +125,8 @@ static int assign_string(yyjson_val *object, const char *key, int required, char
 
 int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OPERATION *operation,
                                char *error, size_t error_size) {
-  static const char *const keys[]={"operation","id","url","title","body","metadata","updated_at_unix_ms",NULL};
-  yyjson_read_err read_error; yyjson_doc *document; yyjson_val *root,*kind,*metadata,*updated;
+  static const char *const keys[]={"operation","id","url","title","body","metadata","updated_at_unix_ms","vectors",NULL};
+  yyjson_read_err read_error; yyjson_doc *document; yyjson_val *root,*kind,*metadata,*updated,*vectors;
   int status;
   if(line==NULL||operation==NULL)return YAP_V2_INVALID_ARGUMENT;
   memset(operation,0,sizeof(*operation));
@@ -153,6 +156,24 @@ int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OP
   if(operation->url==NULL||operation->title==NULL||operation->metadata_json==NULL){status=YAP_V2_ALLOCATION_FAILED;goto done;}
   updated=yyjson_obj_get(root,"updated_at_unix_ms");
   if(updated!=NULL){if(!yyjson_is_int(updated))goto invalid;operation->updated_at_unix_ms=yyjson_get_sint(updated);}
+  vectors=yyjson_obj_get(root,"vectors");
+  if(vectors!=NULL){
+    yyjson_arr_iter outer;yyjson_val *row;size_t rows,dimensions=0U,index=0U;
+    if(!yyjson_is_arr(vectors)||(rows=yyjson_arr_size(vectors))==0U||rows>YAP_V2_MAX_SEGMENT_PASSAGES)goto invalid;
+    yyjson_arr_iter_init(vectors,&outer);
+    while((row=yyjson_arr_iter_next(&outer))!=NULL){
+      size_t current;if(!yyjson_is_arr(row)||(current=yyjson_arr_size(row))==0U||current>YAP_V2_MAX_VECTOR_DIMENSIONS)goto invalid;
+      if(dimensions==0U)dimensions=current;else if(current!=dimensions)goto invalid;
+    }
+    if(rows>SIZE_MAX/dimensions||rows*dimensions>SIZE_MAX/sizeof(float)){status=YAP_V2_OUT_OF_RANGE;goto done;}
+    operation->vectors=malloc(rows*dimensions*sizeof(float));if(operation->vectors==NULL){status=YAP_V2_ALLOCATION_FAILED;goto done;}
+    yyjson_arr_iter_init(vectors,&outer);
+    while((row=yyjson_arr_iter_next(&outer))!=NULL){
+      yyjson_arr_iter inner;yyjson_val *number;yyjson_arr_iter_init(row,&inner);
+      while((number=yyjson_arr_iter_next(&inner))!=NULL){double value;if(!yyjson_is_num(number)||(value=yyjson_get_real(number),!isfinite(value))||value>FLT_MAX||value<-FLT_MAX)goto invalid;operation->vectors[index++]=(float)value;}
+    }
+    operation->vector_count=rows;operation->vector_dimensions=dimensions;
+  }
   status=YAP_V2_OK;goto done;
 invalid:
   if(status==YAP_V2_OK)status=YAP_V2_INVALID_FORMAT;

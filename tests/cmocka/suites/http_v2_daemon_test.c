@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <cmocka.h>
 #include "test_env.h"
 #include "test_fs.h"
@@ -44,6 +45,17 @@ static void make_index(context_t *ctx) {
 static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(ytest_daemon_stack_start(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
 static int teardown(void **state){context_t *ctx=*state;if(ctx){ytest_daemon_stack_stop(&ctx->stack);ytest_env_destroy(&ctx->env);free(ctx);}return 0;}
 
+static char *post(context_t *ctx, const char *endpoint, const char *body) {
+  char request[4096]; char *response = NULL;
+  assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",endpoint,strlen(body),body)>0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);
+  return response;
+}
+
+static double elapsed_seconds(struct timespec start, struct timespec end) {
+  return (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1000000000.0;
+}
+
 static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;char *response=NULL;
   const char *body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"scope\":\"documents\",\"limit\":1}";char request[1024];
   assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
@@ -53,4 +65,28 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"passage_id\":\"passage-fruit\""));assert_non_null(strstr(response,"\"url\":\"https://e.test/fruit\""));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
-int main(void){const struct CMUnitTest tests[]={cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown)};return cmocka_run_group_tests(tests,NULL,NULL);}
+
+static void test_front_core_atomic_nrt_updates(void **state) {
+  context_t *ctx=*state; char *response; struct timespec start,end;
+  response=post(ctx,"/v2/documents:batch","{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-live\",\"url\":\"https://e.test/live\",\"title\":\"Live\",\"body\":\"fresh pear\",\"metadata\":{\"category\":\"fruit\"},\"vectors\":[[1,0]]}]}");
+  assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"generation\":2"));free(response);
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC,&start),0);
+  response=post(ctx,"/v2/search","{\"query\":\"pear\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC,&end),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-live\""));
+  assert_true(elapsed_seconds(start,end)<=1.0);free(response);
+  response=post(ctx,"/v2/documents:batch","{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-live\",\"body\":\"ripe banana\",\"vectors\":[[1,0]]}]}");
+  assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"generation\":3"));free(response);
+  response=post(ctx,"/v2/search","{\"query\":\"pear\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_non_null(strstr(response,"200 OK"));assert_null(strstr(response,"\"id\":\"doc-live\""));free(response);
+  response=post(ctx,"/v2/search","{\"query\":\"banana\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_non_null(strstr(response,"\"id\":\"doc-live\""));free(response);
+  response=post(ctx,"/v2/documents:batch","{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-atomic\",\"body\":\"atomicword\",\"vectors\":[[1,0]]},{\"operation\":\"upsert\",\"id\":\"bad\",\"body\":\"bad\",\"vectors\":[[1]]}]}");
+  assert_non_null(strstr(response,"400 Bad Request"));free(response);
+  response=post(ctx,"/v2/search","{\"query\":\"atomicword\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_null(strstr(response,"\"id\":\"doc-atomic\""));assert_non_null(strstr(response,"\"generation\":3"));free(response);
+  response=post(ctx,"/v2/documents:batch","{\"operations\":[{\"operation\":\"delete\",\"id\":\"doc-live\"}]}");
+  assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"generation\":4"));free(response);
+  response=post(ctx,"/v2/search","{\"query\":\"banana\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
+  assert_null(strstr(response,"\"id\":\"doc-live\""));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+int main(void){const struct CMUnitTest tests[]={cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown)};return cmocka_run_group_tests(tests,NULL,NULL);}

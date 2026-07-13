@@ -211,7 +211,8 @@ int YAP_V2_vector_segment_open(const char *path, uint64_t expected_generation,
   if (map == MAP_FAILED) { map = NULL; status = YAP_V2_IO_ERROR; goto done; }
   status = YAP_V2_file_header_decode(map, &header);
   if (status != YAP_V2_OK || header.file_type != YAP_V2_FILE_VECTORS ||
-      header.generation != expected_generation || header.payload_bytes != (uint64_t)info.st_size - YAP_V2_FILE_HEADER_BYTES) {
+      (expected_generation != 0U && header.generation != expected_generation) ||
+      header.payload_bytes != (uint64_t)info.st_size - YAP_V2_FILE_HEADER_BYTES) {
     status = YAP_V2_INVALID_FORMAT; goto done;
   }
   payload = map + YAP_V2_FILE_HEADER_BYTES; payload_bytes = (size_t)header.payload_bytes;
@@ -258,7 +259,7 @@ int YAP_V2_vector_segment_open(const char *path, uint64_t expected_generation,
   }
   if (expected_id_offset != ids_bytes) goto done;
   YAP_V2_vector_segment_close(segment); segment->map = map; segment->map_bytes = (size_t)info.st_size;
-  segment->generation = expected_generation; segment->metric = config->vector_metric;
+  segment->generation = header.generation; segment->metric = config->vector_metric;
   segment->dimensions = config->vector_dimensions; strcpy(segment->model_id, config->vector_model_id);
   segment->entries = entries; segment->entry_count = count; map = NULL; entries = NULL;
   if (component != NULL) {
