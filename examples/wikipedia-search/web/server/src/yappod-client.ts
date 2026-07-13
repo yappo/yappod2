@@ -1,4 +1,4 @@
-import type { ReadyResponse, RegisterResponse, SearchResponse } from "./types.js";
+import type { ReadyResponse, RegisterResponse, RetrieveResponse, SearchResponse } from "./types.js";
 
 export interface SearchInput {
   query: string;
@@ -85,6 +85,20 @@ export class YappodClient {
         scope: "documents",
         limit: input.limit,
         ...(input.cursor ? { cursor: input.cursor } : {}),
+      }),
+    });
+  }
+
+  retrieve(question: string): Promise<RetrieveResponse> {
+    return this.request<RetrieveResponse>("/v2/retrieve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        query: question,
+        mode: "lexical",
+        limit: 8,
+        max_passages_per_document: 2,
+        max_context_bytes: 16384,
       }),
     });
   }

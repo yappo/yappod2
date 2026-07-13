@@ -40,7 +40,7 @@ describe("Wikipedia search BFF", () => {
 
     const response = await app.inject({ method: "GET", url: "/api/status" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ready: true, generation: 4, state: "precomputed_ready" });
+    expect(response.json()).toEqual({ ready: true, generation: 4, state: "precomputed_ready", llm_configured: false });
     expect(response.body).not.toContain("server-only-secret");
     expect(response.body).not.toContain("10080");
   });

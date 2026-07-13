@@ -22,6 +22,7 @@ export interface StatusResponse {
   state?: string;
   code?: string;
   message?: string;
+  llm_configured?: boolean;
 }
 
 export interface RegisterInput {
@@ -36,4 +37,32 @@ export interface RegisterResponse {
   accepted: number;
   upserts: number;
   deletes: number;
+}
+
+export interface Citation {
+  passage_id: string;
+  document_id: string;
+  url: string;
+  title: string;
+  text: string;
+  start_char: number;
+  end_char: number;
+  context_start: number;
+  context_end: number;
+  lexical_score: number;
+  vector_score: number;
+  fused_score: number;
+}
+
+export type GenerationStatus = "answered" | "unconfigured" | "failed" | "invalid_citations" | "no_context";
+
+export interface RagResponse {
+  generation: number;
+  question: string;
+  context: string;
+  citations: Citation[];
+  answer: string | null;
+  referenced_citations: number[];
+  generation_status: GenerationStatus;
+  generation_message?: string;
 }

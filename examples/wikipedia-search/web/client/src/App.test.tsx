@@ -29,6 +29,15 @@ function api(overrides: Partial<WebApi> = {}): WebApi {
     status: vi.fn().mockResolvedValue({ ready: true, generation: 7 }),
     search: vi.fn().mockResolvedValue(searchResponse()),
     registerDocument: vi.fn().mockResolvedValue({ generation: 8, accepted: 1, upserts: 1, deletes: 0 }),
+    ask: vi.fn().mockResolvedValue({
+      generation: 7,
+      question: "情報検索とは？",
+      context: "情報検索は必要な情報を探し出す処理である。",
+      citations: [],
+      answer: null,
+      referenced_citations: [],
+      generation_status: "no_context",
+    }),
     ...overrides,
   };
 }

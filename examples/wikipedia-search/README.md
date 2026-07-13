@@ -168,9 +168,9 @@ YAPPOD_FRONT_PORT=11080 ./scripts/smoke.sh 日本
 
 ## Web UI
 
-Web UIはTypeScript、Fastify BFF、React/Viteで構成されています。Browserはyappodへ直接接続せず、
-検索、readiness確認、文書登録をBFF経由で行います。daemonの接続先とwrite tokenはBFF processだけが
-保持し、Browserへ返すHTMLやJSONには含めません。
+Web UIはTypeScript、Fastify BFF、React/Viteで構成されています。BrowserはyappodやLLMへ直接接続せず、
+検索、readiness確認、文書登録、引用付きRAGをBFF経由で行います。daemonの接続先、write token、
+LLM API keyはBFF processだけが保持し、Browserへ返すHTMLやJSONには含めません。
 
 ```mermaid
 flowchart TB
@@ -182,21 +182,25 @@ flowchart TB
     bff["Fastify BFF"]
   end
 
-  subgraph runtime["Search runtime"]
+  subgraph services["Runtime services"]
     direction LR
     front["yappod_front"]
-    core["yappod_core"]
+    llm["OpenAI-compatible LLM"]
   end
 
-  index["Wikipedia index"]
+  subgraph search["Search data"]
+    direction LR
+    core["yappod_core"]
+    index["Wikipedia index"]
+  end
 
   browser --> ui --> bff
-  bff --> front --> core
-  core --> index
+  bff --> front --> core --> index
+  bff --> llm
 ```
 
-図はBrowser、Web application、Search runtime、indexの4段に分け、各段を2要素以内にしています。
-一方向の主経路だけを示し、横長・縦長のどちらにも偏らない構成です。
+図はBrowser、Web application、Runtime services、Search dataの4段に分け、各段を2要素以内にしています。
+検索の主経路とLLMへの分岐だけを示し、横長・縦長のどちらにも偏らない構成です。
 
 ### 開発起動
 
@@ -221,6 +225,31 @@ npm run dev
 
 Browserで`http://127.0.0.1:5173`を開きます。Viteは`/api`だけを`127.0.0.1:4173`のBFFへ転送します。
 
+### 引用付きRAG
+
+質問画面は`/v2/retrieve`からlexical passageを取得し、設定済みの場合だけOpenAI-compatibleな
+`POST /chat/completions`へ送ります。modelは固定せず、利用するserverで有効なmodel IDを環境変数へ
+指定します。
+
+```sh
+export LLM_BASE_URL='http://127.0.0.1:1234/v1'
+export LLM_MODEL='local-model-name'
+# 認証が必要なserverの場合だけ設定
+export LLM_API_KEY='replace-with-server-api-key'
+
+cd examples/wikipedia-search/web
+npm run dev
+```
+
+LLMを設定しない場合も質問画面は利用でき、取得contextと参照資料を表示します。LLM失敗時も同様に
+参照資料を残します。生成回答はplain textとして扱い、`[1]`形式の参照番号が取得済みcitationの範囲内に
+あり、少なくとも1件使われている場合だけ表示します。範囲外参照や参照なしの回答は採用しません。
+
+BFFはChat Completionsの`messages` requestと`choices[0].message.content` responseを使用します。
+OpenAI APIへ接続する場合の正式仕様は
+[Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)を確認してください。
+互換serverについては各serverの対応parameterと認証方法を確認してください。
+
 ### production build
 
 ```sh
@@ -236,6 +265,10 @@ productionではFastifyがbuild済みUIも配信します。標準URLは`http://
 | `YAPPOD_URL` | `http://127.0.0.1:10080` | BFFから接続するfront URL |
 | `YAPPOD_WRITE_TOKEN` | 未設定 | 文書登録時だけBFFがBearer headerへ設定 |
 | `YAPPOD_TIMEOUT_MS` | `5000` | BFFからdaemonへのtimeout |
+| `LLM_BASE_URL` | 未設定 | OpenAI-compatible APIの`/v1`等を含むbase URL |
+| `LLM_MODEL` | 未設定 | Chat Completionsへ渡すmodel ID |
+| `LLM_API_KEY` | 未設定 | 必要な場合だけBFFがLLMのBearer headerへ設定 |
+| `LLM_TIMEOUT_MS` | `30000` | BFFからLLMへのtimeout |
 | `HOST` | `127.0.0.1` | BFFのlisten address |
 | `PORT` | `4173` | BFFのlisten port |
 

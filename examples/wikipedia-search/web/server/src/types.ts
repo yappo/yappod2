@@ -30,3 +30,35 @@ export interface RegisterResponse {
   deletes: number;
   segment_id?: string;
 }
+
+export interface Citation {
+  passage_id: string;
+  document_id: string;
+  url: string;
+  title: string;
+  text: string;
+  start_char: number;
+  end_char: number;
+  context_start: number;
+  context_end: number;
+  lexical_score: number;
+  vector_score: number;
+  fused_score: number;
+}
+
+export interface RetrieveResponse {
+  api_version: number;
+  generation: number;
+  context: string;
+  citations: Citation[];
+}
+
+export type GenerationStatus = "answered" | "unconfigured" | "failed" | "invalid_citations" | "no_context";
+
+export interface RagResponse extends RetrieveResponse {
+  question: string;
+  answer: string | null;
+  referenced_citations: number[];
+  generation_status: GenerationStatus;
+  generation_message?: string;
+}
