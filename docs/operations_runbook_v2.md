@@ -14,9 +14,9 @@ export YAPPOD_V2_MAX_INFLIGHT=16
 export YAPPOD_V2_MAX_INFLIGHT_BYTES=16777216
 export YAPPOD_V2_REQUEST_TIMEOUT_MS=5000
 
-yappod_core --index /srv/yappod/index --port 10086
+yappod_core --index /srv/yappod/index --port 18401
 yappod_front --index /srv/yappod/index --core-host 127.0.0.1 \
-  --port 10080 --core-port 10086
+  --port 18400 --core-port 18401
 ```
 
 停止時はfrontをロードバランサから外し、`/health/ready`への新規probeを止めてからfront、coreの
@@ -74,8 +74,8 @@ hardware で採取した release benchmark に従って固定します。
 
 ```sh
 yappo_compact --index /srv/yappod/index
-curl -fsS http://127.0.0.1:10080/health/ready
-curl -fsS http://127.0.0.1:10080/metrics | grep yappod_v2_compaction
+curl -fsS http://127.0.0.1:18400/health/ready
+curl -fsS http://127.0.0.1:18400/metrics | grep yappod_v2_compaction
 ```
 
 `compaction.state`はatomicに更新されます。正常終了は`succeeded`、通常失敗は`failed`、process crash後に

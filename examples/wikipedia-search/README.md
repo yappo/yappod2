@@ -144,7 +144,8 @@ python3 wikipedia_data.py convert-dump \
 
 ## HTTP検索とRAG用passage取得
 
-daemonは`run/`にPIDとlogを保存します。標準portはfrontが`10080`、coreが`10086`です。
+daemonは`run/`にPIDとlogを保存します。daemon用port rangeは`18400`–`18409`で、
+標準ではfrontが`18400`、coreが`18401`を使用します。Web UIは従来どおり`4173`です。
 
 ```sh
 ./scripts/start_daemons.sh ./index
@@ -156,11 +157,11 @@ daemonは`run/`にPIDとlogを保存します。標準portはfrontが`10080`、c
 ```sh
 curl -sS -H 'Content-Type: application/json' \
   --data '{"query":"日本","mode":"lexical","scope":"documents","limit":5}' \
-  http://127.0.0.1:10080/v2/search
+  http://127.0.0.1:18400/v2/search
 
 curl -sS -H 'Content-Type: application/json' \
   --data '{"query":"日本","mode":"lexical","limit":5,"max_passages_per_document":2,"max_context_bytes":16384}' \
-  http://127.0.0.1:10080/v2/retrieve
+  http://127.0.0.1:18400/v2/retrieve
 ```
 
 `/v2/retrieve`は`context`と、記事URL・title・本文offset・scoreを持つ`citations`を返します。
@@ -256,8 +257,8 @@ SIGKILLへ切り替えます。
 | 一括起動用環境変数 | 既定値 | 用途 |
 |---|---|---|
 | `YAPPOD_RUN_DIR` | `./run` | PIDとlogの保存先 |
-| `YAPPOD_CORE_PORT` | `10086` | coreの内部port |
-| `YAPPOD_FRONT_PORT` | `10080` | frontのHTTP port |
+| `YAPPOD_CORE_PORT` | `18401` | coreの内部port |
+| `YAPPOD_FRONT_PORT` | `18400` | frontのHTTP port |
 | `YAPPOD_WEB_HOST` | `127.0.0.1` | production BFF/UIのlisten address |
 | `YAPPOD_WEB_PORT` | `4173` | production BFF/UIのport |
 | `YAPPOD_DEMO_MOCK_LLM` | `0` | `1`の場合だけlocal mock LLMを起動 |
@@ -324,7 +325,7 @@ productionではFastifyがbuild済みUIも配信します。標準URLは`http://
 
 | 環境変数 | 既定値 | 用途 |
 |---|---|---|
-| `YAPPOD_URL` | `http://127.0.0.1:10080` | BFFから接続するfront URL |
+| `YAPPOD_URL` | `http://127.0.0.1:18400` | BFFから接続するfront URL |
 | `YAPPOD_WRITE_TOKEN` | 未設定 | 文書登録時だけBFFがBearer headerへ設定 |
 | `YAPPOD_TIMEOUT_MS` | `5000` | BFFからdaemonへのtimeout |
 | `LLM_BASE_URL` | 未設定 | OpenAI-compatible APIの`/v1`等を含むbase URL |

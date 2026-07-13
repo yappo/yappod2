@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-front_port=${YAPPOD_FRONT_PORT:-10080}
+front_port=${YAPPOD_FRONT_PORT:-18400}
 query=${1:-日本}
 base_url="http://127.0.0.1:$front_port"
 

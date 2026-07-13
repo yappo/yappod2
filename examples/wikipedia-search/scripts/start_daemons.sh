@@ -4,8 +4,8 @@ set -eu
 example_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 repo_root=$(CDPATH= cd -- "$example_dir/../.." && pwd)
 index=${1:-"$example_dir/index"}
-core_port=${YAPPOD_CORE_PORT:-10086}
-front_port=${YAPPOD_FRONT_PORT:-10080}
+core_port=${YAPPOD_CORE_PORT:-18401}
+front_port=${YAPPOD_FRONT_PORT:-18400}
 run_dir=${YAPPOD_RUN_DIR:-"$example_dir/run"}
 
 if [ ! -f "$index/manifest.json" ]; then
