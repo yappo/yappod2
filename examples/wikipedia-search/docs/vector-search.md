@@ -112,6 +112,9 @@ yappod2自身のchunkerで、embedding対象のpassageを確定します。
 
 `passages.ndjson`の各行には`document_id`、`passage_id`、`ordinal`、`text`が入ります。このファイルは
 embedding対象を確定する中間形式であり、`yappo_makeindex build`へ直接渡す入力ではありません。
+chunkerは改行、半角・全角空白などUnicode空白だけの範囲をpassageとして出力しません。古いbuildで作成した
+`passages.ndjson`に空白だけのpassageが含まれている場合は、新しい`yappo_makeindex`で上記`prepare`を
+再実行してください。出力ファイルは再生成され、ordinalも文書ごとに0から連続した値になります。
 
 ## embedが読む2つのTOML
 
@@ -380,6 +383,7 @@ embedding設定がない、index側でvectorが無効、または次元数が一
 | Ollamaへ接続できない | デスクトップアプリまたは`ollama serve`のどちらかが動作しているか確認する |
 | Web UIで意味検索を選べない | `web/config.toml`の`[embedding]`、indexのvector設定、次元数の一致を確認する |
 | Web UIの登録が失敗する | embedding serverの起動、model ID、次元数、write tokenを確認する |
+| `passage text must be non-empty`になる | 最新版をbuildし直し、`yappo_makeindex prepare`で`passages.ndjson`を再生成する |
 
 ## 一次資料
 

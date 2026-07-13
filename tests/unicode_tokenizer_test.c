@@ -5,6 +5,7 @@
 
 #include "yappo_unicode.h"
 
+#include <ctype.h>
 #include <string.h>
 
 static void test_nfkc_casefold_word_boundaries(void **state) {
@@ -56,7 +57,33 @@ static void test_grapheme_fallback_does_not_split_emoji(void **state) {
   YAP_V2_chunk_sequence_free(&sequence);
 }
 
+static void test_chunker_does_not_emit_whitespace_only_passages(void **state) {
+  const char input[] = "First sentence.\n　\n　\n　\n　\nSecond sentence.";
+  YAP_V2_CHUNK_SEQUENCE sequence;
+  size_t i, j;
+  int found_first = 0, found_second = 0;
+  (void)state;
+  assert_int_equal(YAP_V2_unicode_chunk("whitespace", input, strlen(input), 12, 3, &sequence), YAP_V2_OK);
+  assert_true(sequence.chunk_count >= 2);
+  for (i = 0; i < sequence.chunk_count; i++) {
+    int has_non_whitespace = 0;
+    assert_int_equal(sequence.chunks[i].ordinal, i);
+    for (j = 0; j < sequence.chunks[i].text_bytes; j++) {
+      if (!isspace((unsigned char)sequence.chunks[i].text[j])) {
+        has_non_whitespace = 1;
+        break;
+      }
+    }
+    assert_true(has_non_whitespace);
+    if (strstr(sequence.chunks[i].text, "first") != NULL) found_first = 1;
+    if (strstr(sequence.chunks[i].text, "second") != NULL) found_second = 1;
+  }
+  assert_true(found_first);
+  assert_true(found_second);
+  YAP_V2_chunk_sequence_free(&sequence);
+}
+
 int main(void) {
-  const struct CMUnitTest tests[]={cmocka_unit_test(test_nfkc_casefold_word_boundaries),cmocka_unit_test(test_invalid_utf8_is_rejected),cmocka_unit_test(test_sentence_chunks_are_deterministic),cmocka_unit_test(test_grapheme_fallback_does_not_split_emoji)};
+  const struct CMUnitTest tests[]={cmocka_unit_test(test_nfkc_casefold_word_boundaries),cmocka_unit_test(test_invalid_utf8_is_rejected),cmocka_unit_test(test_sentence_chunks_are_deterministic),cmocka_unit_test(test_grapheme_fallback_does_not_split_emoji),cmocka_unit_test(test_chunker_does_not_emit_whitespace_only_passages)};
   return cmocka_run_group_tests(tests,NULL,NULL);
 }
