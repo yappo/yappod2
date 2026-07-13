@@ -35,11 +35,16 @@ static void test_policy_defaults_and_strict_environment(void **state) {
 
 static void test_limiter_fails_closed_on_count_and_bytes(void **state) {
   YAP_V2_RUNTIME_POLICY policy; YAP_V2_RUNTIME_LIMITER limiter = {0};
+  size_t inflight, inflight_bytes, max_inflight, max_inflight_bytes;
   (void)state; YAP_V2_runtime_policy_init(&policy); policy.max_inflight = 2U; policy.max_inflight_bytes = 10U;
   assert_int_equal(YAP_V2_runtime_limiter_init(&limiter, &policy), YAP_V2_OK);
   assert_int_equal(YAP_V2_runtime_limiter_acquire(&limiter, 6U), YAP_V2_OK);
   assert_int_equal(YAP_V2_runtime_limiter_acquire(&limiter, 5U), YAP_V2_OUT_OF_RANGE);
   assert_int_equal(YAP_V2_runtime_limiter_acquire(&limiter, 4U), YAP_V2_OK);
+  assert_int_equal(YAP_V2_runtime_limiter_snapshot(&limiter, &inflight, &inflight_bytes,
+    &max_inflight, &max_inflight_bytes), YAP_V2_OK);
+  assert_int_equal(inflight, 2U); assert_int_equal(inflight_bytes, 10U);
+  assert_int_equal(max_inflight, 2U); assert_int_equal(max_inflight_bytes, 10U);
   assert_int_equal(YAP_V2_runtime_limiter_acquire(&limiter, 1U), YAP_V2_OUT_OF_RANGE);
   YAP_V2_runtime_limiter_release(&limiter, 6U);
   assert_int_equal(YAP_V2_runtime_limiter_acquire(&limiter, 1U), YAP_V2_OK);

@@ -5,6 +5,7 @@
 #include "yappo_lexical_v2.h"
 #include "yappo_manifest_v2.h"
 #include "yappo_metadata_v2.h"
+#include "yappo_observability_v2.h"
 #include "yappo_snapshot_v2.h"
 #include "yappo_vector_v2.h"
 #include "yappo_writer_lock_v2.h"
@@ -220,7 +221,7 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   char config_path[4096], manifest_path[4096], segments_path[4096], segment_path[4096];
   char config_error[256]; const char *segment_id = NULL; size_t documents_count = 0U, passages_count = 0U;
   size_t removed_before = 0U, removed_after = 0U, segment_id_length = 0U;
-  uint64_t next_generation; int status = YAP_V2_OK, published = 0;
+  uint64_t next_generation; int status = YAP_V2_OK, published = 0, status_started = 0;
   YAP_V2_WRITER_LOCK writer_lock;
   YAP_V2_manifest_init(&manifest); YAP_V2_manifest_init(&candidate); YAP_V2_snapshot_manager_init(&manager);
   YAP_V2_writer_lock_init(&writer_lock);
@@ -231,6 +232,8 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0) return YAP_V2_OUT_OF_RANGE;
   status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
   if (status != YAP_V2_OK) { set_error(error, error_size, "cannot acquire index writer lock"); goto done; }
+  status_started = 1;
+  (void)YAP_V2_compaction_status_write(index_dir, YAP_V2_COMPACTION_RUNNING, 0U);
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }
   status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
@@ -273,6 +276,10 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   result->passages = passages_count; result->removed_segments = removed_before + removed_after;
   memcpy(result->segment_id, segment_id, segment_id_length + 1U);
 done:
+  if (status_started)
+    (void)YAP_V2_compaction_status_write(index_dir,
+      status == YAP_V2_OK ? YAP_V2_COMPACTION_SUCCEEDED : YAP_V2_COMPACTION_FAILED,
+      status == YAP_V2_OK ? result->generation : manifest.generation);
   if (!published && segment_id != NULL) (void)remove_segment_directory(segment_path);
   free(documents); free(passages); free(vectors); YAP_V2_snapshot_release(snapshot);
   YAP_V2_snapshot_manager_close(&manager); YAP_V2_manifest_free(&candidate); YAP_V2_manifest_free(&manifest);

@@ -122,7 +122,7 @@ static void test_front_json_search_api(void **state) {
                    0);
   assert_non_null(response);
   assert_non_null(strstr(response, "200 OK"));
-  assert_non_null(strstr(response, "\"status\":\"ok\""));
+  assert_non_null(strstr(response, "\"status\":\"live\""));
   free(response);
   response = NULL;
 

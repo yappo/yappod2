@@ -20,6 +20,7 @@
 #include "yappo_lexical_v2.h"
 #include "yappo_manifest_v2.h"
 #include "yappo_metadata_v2.h"
+#include "yappo_observability_v2.h"
 #include "yappo_update_v2.h"
 #include "yappo_vector_v2.h"
 
@@ -202,6 +203,7 @@ static void apply_live_changes(ytest_env_t *env) {
 
 static void test_compaction_live_only_preserves_all_search_modes(void **state) {
   ytest_env_t env;
+  YAP_V2_OPERATIONAL_STATE operational;
   char executable[PATH_MAX]; char *argv[4]; ytest_cmd_result_t command;
   (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env); apply_live_changes(&env);
   assert_int_equal(ytest_path_join(executable, sizeof(executable), env.build_dir, "yappo_compact"), 0);
@@ -209,6 +211,9 @@ static void test_compaction_live_only_preserves_all_search_modes(void **state) {
   ytest_cmd_result_init(&command); assert_int_equal(ytest_cmd_run(argv, NULL, NULL, 0U, &command), 0);
   assert_true(command.exited); assert_int_equal(command.exit_code, 0);
   assert_non_null(strstr(command.output, "\"generation\":3")); ytest_cmd_result_free(&command);
+  assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
+  assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_SUCCEEDED);
+  assert_int_equal(operational.compaction_generation, 3U);
   assert_manifest_shape(&env, 3U, 1U, 0U);
   assert_int_equal(search_count(&env, "old", NULL), 0U); assert_int_equal(search_count(&env, "gone", NULL), 0U);
   assert_int_equal(search_count(&env, "fresh", "doc-a"), 1U);
@@ -232,12 +237,16 @@ static void run_crashing_compaction(ytest_env_t *env, const char *point) {
 }
 
 static void test_compaction_crash_recovery_and_orphan_gc(void **state) {
-  ytest_env_t env; YAP_V2_COMPACTION_RESULT result; char error[256] = {0};
+  ytest_env_t env; YAP_V2_COMPACTION_RESULT result; YAP_V2_OPERATIONAL_STATE operational; char error[256] = {0};
   (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
   run_crashing_compaction(&env, "before_publish");
+  assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
+  assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_INTERRUPTED);
   assert_manifest_shape(&env, 1U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
   assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
   assert_int_equal(result.generation, 2U); assert_true(result.removed_segments >= 2U);
+  assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
+  assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_SUCCEEDED);
   run_crashing_compaction(&env, "after_publish");
   assert_manifest_shape(&env, 3U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
   memset(&result, 0, sizeof(result)); memset(error, 0, sizeof(error));

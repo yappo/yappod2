@@ -31,6 +31,7 @@
 #include "yappo_search_api.h"
 #include "yappo_core_protocol_v2.h"
 #include "yappo_http_v2.h"
+#include "yappo_observability_v2.h"
 #include "yappo_runtime_policy_v2.h"
 
 #define BUF_SIZE 1024
@@ -62,6 +63,7 @@ static volatile sig_atomic_t g_shutdown_signal = 0;
 static const char *g_front_pidfile = "./front.pid";
 static YAP_V2_RUNTIME_POLICY g_runtime_policy;
 static YAP_V2_RUNTIME_LIMITER g_runtime_limiter;
+static YAP_V2_METRICS g_v2_metrics;
 static void YAP_request_shutdown(int sig);
 static int YAP_readline_alloc(FILE *socket, char **line_out);
 
@@ -141,14 +143,15 @@ static int YAP_send_bad_request(int fd, int thread_id) {
   return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
 }
 
-static int YAP_send_health_response(int fd, int thread_id) {
-  const char *msg = "HTTP/1.0 200 OK\r\n"
-                    "Server: Yappo Search/2.0\r\n"
-                    "Content-Type: application/json; charset=utf-8\r\n"
-                    "Cache-Control: no-store\r\n"
-                    "\r\n"
-                    "{\"status\":\"ok\",\"service\":\"yappod_front\"}\n";
-  return YAP_Net_write_all(fd, msg, strlen(msg), "front", thread_id);
+static int YAP_send_http_payload(int fd, int thread_id, int status, const char *reason,
+                                 const char *content_type, const char *body, size_t body_bytes) {
+  char headers[768]; int header_bytes = snprintf(headers, sizeof(headers),
+    "HTTP/1.1 %d %s\r\nServer: Yappo Search/2.0\r\nContent-Type: %s\r\n"
+    "Content-Length: %zu\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+    status, reason, content_type, body_bytes);
+  if (header_bytes < 0 || (size_t)header_bytes >= sizeof(headers) ||
+      YAP_Net_write_all(fd, headers, (size_t)header_bytes, "front", thread_id) != 0) return -1;
+  return YAP_Net_write_all(fd, body, body_bytes, "front", thread_id);
 }
 
 static int YAP_send_json_error(int fd, int thread_id, int status, const char *reason,
@@ -324,10 +327,13 @@ static int YAP_read_v2_headers(FILE *socket, size_t *content_length,
 }
 
 static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION operation,
-                            const unsigned char *body, size_t body_bytes, uint64_t request_id) {
+                            const unsigned char *body, size_t body_bytes, uint64_t request_id,
+                            int *http_status_out) {
   YAP_V2_CORE_FRAME request, response; uint16_t expected; int status, http_status;
   const char *reason; size_t json_bytes, request_bytes = body_bytes; unsigned char *envelope = NULL;
   YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
+  if (http_status_out == NULL) return -1;
+  *http_status_out = 503;
   request.type = operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_REQUEST :
                  operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_REQUEST :
                  YAP_V2_CORE_INGEST_REQUEST;
@@ -345,6 +351,7 @@ static int YAP_send_v2_http(FILE *client, FILE *core, YAP_V2_HTTP_OPERATION oper
              YAP_V2_CORE_INGEST_RESPONSE;
   if (response.type != expected && response.type != YAP_V2_CORE_ERROR_RESPONSE) { status = -1; goto done; }
   http_status = ((int)response.payload[0] << 8) | response.payload[1];
+  *http_status_out = http_status;
   if ((response.type == expected && http_status != 200) ||
       (response.type == YAP_V2_CORE_ERROR_RESPONSE && http_status < 400)) { status = -1; goto done; }
   reason = http_status == 200 ? "OK" : http_status == 400 ? "Bad Request" :
@@ -732,19 +739,28 @@ static int YAP_parse_request_line(const char *line, char *dict, int *max_size, c
   return -1;
 }
 
-static int YAP_parse_health_request_line(const char *line) {
+typedef enum {
+  YAP_OPERATIONAL_NONE = 0,
+  YAP_OPERATIONAL_LIVE = 1,
+  YAP_OPERATIONAL_READY = 2,
+  YAP_OPERATIONAL_METRICS = 3
+} YAP_OPERATIONAL_ENDPOINT;
+
+static YAP_OPERATIONAL_ENDPOINT YAP_parse_operational_request_line(const char *line) {
   char method[16];
   char target[BUF_SIZE];
   char version[32];
 
   if (line == NULL || sscanf(line, "%15s %1023s %31s", method, target, version) != 3) {
-    return -1;
+    return YAP_OPERATIONAL_NONE;
   }
-  if (strcmp(method, "GET") != 0 || strcmp(target, "/healthz") != 0 ||
-      strncmp(version, "HTTP/", 5) != 0) {
-    return -1;
-  }
-  return 0;
+  if (strcmp(method, "GET") != 0 || strncmp(version, "HTTP/", 5) != 0)
+    return YAP_OPERATIONAL_NONE;
+  if (strcmp(target, "/health/live") == 0 || strcmp(target, "/healthz") == 0)
+    return YAP_OPERATIONAL_LIVE;
+  if (strcmp(target, "/health/ready") == 0) return YAP_OPERATIONAL_READY;
+  if (strcmp(target, "/metrics") == 0) return YAP_OPERATIONAL_METRICS;
+  return YAP_OPERATIONAL_NONE;
 }
 
 static int YAP_drain_http_headers(FILE *socket) {
@@ -760,6 +776,61 @@ static int YAP_drain_http_headers(FILE *socket) {
     }
     free(line);
   }
+}
+
+static int YAP_cores_ready(YAP_THREAD_DATA *thread) {
+  int i;
+  for (i = 0; i < thread->server_num; i++) {
+    YAP_V2_CORE_FRAME request, response; int http_status;
+    YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
+    request.type = YAP_V2_CORE_HEALTH_REQUEST; request.request_id = thread->next_request_id++;
+    if (YAP_V2_core_frame_write(thread->server_socket[i], &request, YAP_V2_CORE_MAX_PAYLOAD_BYTES) != YAP_V2_CORE_FRAME_OK ||
+        fflush(thread->server_socket[i]) != 0 ||
+        YAP_V2_core_frame_read(thread->server_socket[i], YAP_V2_CORE_MAX_PAYLOAD_BYTES, &response) != YAP_V2_CORE_FRAME_OK ||
+        response.request_id != request.request_id || response.payload_bytes < 2U) {
+      YAP_V2_core_frame_free(&response); return 0;
+    }
+    http_status = ((int)response.payload[0] << 8) | response.payload[1];
+    if (http_status != 200 || response.type != YAP_V2_CORE_HEALTH_RESPONSE) {
+      YAP_V2_core_frame_free(&response); return 0;
+    }
+    YAP_V2_core_frame_free(&response);
+  }
+  return thread->server_num > 0;
+}
+
+static int YAP_send_operational_response(YAP_THREAD_DATA *thread, int client_fd,
+                                         YAP_OPERATIONAL_ENDPOINT endpoint) {
+  static const char live[] = "{\"status\":\"live\",\"service\":\"yappod_front\"}";
+  YAP_V2_OPERATIONAL_STATE state; char probe_error[256] = {0}; char *body = NULL;
+  size_t body_bytes = 0U, inflight = 0U, inflight_bytes = 0U, max_inflight = 0U, max_bytes = 0U;
+  int ready, status;
+  if (endpoint == YAP_OPERATIONAL_LIVE)
+    return YAP_send_http_payload(client_fd, thread->id, 200, "OK",
+      "application/json; charset=utf-8", live, sizeof(live) - 1U);
+  ready = YAP_V2_operational_probe_index(thread->base_dir, &state, probe_error, sizeof(probe_error)) == YAP_V2_OK &&
+          state.ready && YAP_cores_ready(thread);
+  state.ready = ready;
+  if (endpoint == YAP_OPERATIONAL_READY) {
+    status = YAP_V2_operational_state_json(&state, "yappod_front", &body, &body_bytes);
+    if (status != YAP_V2_OK) return -1;
+    status = YAP_send_http_payload(client_fd, thread->id, ready ? 200 : 503,
+      ready ? "OK" : "Service Unavailable", "application/json; charset=utf-8", body, body_bytes);
+  } else {
+    if (YAP_V2_runtime_limiter_snapshot(&g_runtime_limiter, &inflight, &inflight_bytes,
+                                        &max_inflight, &max_bytes) != YAP_V2_OK) return -1;
+    status = YAP_V2_metrics_render(&g_v2_metrics, &state, inflight, inflight_bytes,
+                                   max_inflight, max_bytes, &body, &body_bytes);
+    if (status != YAP_V2_OK) return -1;
+    status = YAP_send_http_payload(client_fd, thread->id, 200, "OK",
+      "text/plain; version=0.0.4; charset=utf-8", body, body_bytes);
+  }
+  free(body); return status;
+}
+
+static YAP_V2_OBSERVE_OPERATION YAP_observe_operation(YAP_V2_HTTP_OPERATION operation) {
+  return operation == YAP_V2_HTTP_SEARCH ? YAP_V2_OBSERVE_SEARCH :
+         operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_OBSERVE_RETRIEVE : YAP_V2_OBSERVE_INGEST;
 }
 
 /*
@@ -811,6 +882,7 @@ void *thread_server(void *ip) {
     int start, end;
     size_t api_limit = YAP_SEARCH_API_DEFAULT_LIMIT;
     YAP_V2_HTTP_OPERATION v2_operation;
+    YAP_OPERATIONAL_ENDPOINT operational_endpoint;
 
     if (g_shutdown_requested) {
       break;
@@ -837,10 +909,12 @@ void *thread_server(void *ip) {
       continue;
     }
 
-    if (YAP_parse_health_request_line(line) == 0) {
+    operational_endpoint = YAP_parse_operational_request_line(line);
+    if (operational_endpoint != YAP_OPERATIONAL_NONE) {
       header_rc = YAP_drain_http_headers(socket);
       if (header_rc > 0) {
-        YAP_send_health_response(accept_socket, p->id);
+        if (YAP_send_operational_response(p, accept_socket, operational_endpoint) != 0)
+          YAP_log_thread_error(p->id, "write operational response failed");
       } else if (header_rc == -2) {
         YAP_send_bad_request(accept_socket, p->id);
       } else if (header_rc < 0) {
@@ -858,27 +932,33 @@ void *thread_server(void *ip) {
 
     if (YAP_parse_v2_post_line(line, &v2_operation) == 0) {
       unsigned char *body = NULL; size_t body_bytes = 0U; int headers, admitted = 0;
+      int response_status = 503; uint64_t request_started = YAP_V2_monotonic_microseconds();
       char authorization[YAP_V2_AUTHORIZATION_MAX_BYTES + 1U];
       headers = YAP_read_v2_headers(socket, &body_bytes, authorization);
       if (headers != 0) {
-        if (headers == -2) YAP_send_json_error(accept_socket, p->id, 415, "Unsupported Media Type", "unsupported_media_type");
-        else if (headers == -3) YAP_send_json_error(accept_socket, p->id, 413, "Payload Too Large", "payload_too_large");
-        else YAP_send_json_error(accept_socket, p->id, 400, "Bad Request", "invalid_http_request");
+        if (headers == -2) { response_status = 415; YAP_send_json_error(accept_socket, p->id, 415, "Unsupported Media Type", "unsupported_media_type"); }
+        else if (headers == -3) { response_status = 413; YAP_send_json_error(accept_socket, p->id, 413, "Payload Too Large", "payload_too_large"); }
+        else { response_status = 400; YAP_send_json_error(accept_socket, p->id, 400, "Bad Request", "invalid_http_request"); }
       } else if (v2_operation == YAP_V2_HTTP_INGEST &&
                  YAP_V2_authorize_write(&g_runtime_policy,
                    authorization[0] == '\0' ? NULL : authorization) != YAP_V2_OK) {
-        YAP_send_json_error(accept_socket, p->id, 401, "Unauthorized", "unauthorized");
+        response_status = 401; YAP_send_json_error(accept_socket, p->id, 401, "Unauthorized", "unauthorized");
       } else if (YAP_V2_runtime_limiter_acquire(&g_runtime_limiter, body_bytes) != YAP_V2_OK) {
-        YAP_send_json_error(accept_socket, p->id, 503, "Service Unavailable", "overloaded");
+        response_status = 503; YAP_send_json_error(accept_socket, p->id, 503, "Service Unavailable", "overloaded");
       } else {
         admitted = 1;
         body = malloc(body_bytes);
         if (body == NULL || fread(body, 1U, body_bytes, socket) != body_bytes ||
             YAP_send_v2_http(socket, p->server_socket[0], v2_operation, body, body_bytes,
-                             p->next_request_id++) != 0)
+                             p->next_request_id++, &response_status) != 0)
           YAP_send_json_error(accept_socket, p->id, 503, "Service Unavailable", "core_unavailable");
       }
       if (admitted) YAP_V2_runtime_limiter_release(&g_runtime_limiter, body_bytes);
+      {
+        uint64_t request_finished = YAP_V2_monotonic_microseconds();
+        YAP_V2_metrics_record(&g_v2_metrics, YAP_observe_operation(v2_operation), response_status,
+          request_finished >= request_started ? request_finished - request_started : 0U);
+      }
       free(body); free(line); YAP_Net_close_stream(&socket, &accept_socket); continue;
     }
 
@@ -1047,7 +1127,8 @@ void start_deamon_thread(char *indextexts_dirpath, int server_num, int *server_s
     char policy_error[256] = {0};
     memset(&g_runtime_limiter, 0, sizeof(g_runtime_limiter));
     if (YAP_V2_runtime_policy_load_env(&g_runtime_policy, policy_error, sizeof(policy_error)) != YAP_V2_OK ||
-        YAP_V2_runtime_limiter_init(&g_runtime_limiter, &g_runtime_policy) != YAP_V2_OK) {
+        YAP_V2_runtime_limiter_init(&g_runtime_limiter, &g_runtime_policy) != YAP_V2_OK ||
+        YAP_V2_metrics_init(&g_v2_metrics) != YAP_V2_OK) {
       fprintf(stderr, "ERROR: runtime policy: %s\n", policy_error); exit(EXIT_FAILURE);
     }
   }

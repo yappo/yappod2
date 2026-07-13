@@ -26,6 +26,7 @@
 #include "yappo_proto.h"
 #include "yappo_core_protocol_v2.h"
 #include "yappo_http_v2.h"
+#include "yappo_observability_v2.h"
 #include "yappo_runtime_policy_v2.h"
 
 #define BUF_SIZE 1024
@@ -128,11 +129,22 @@ static int YAP_is_v2_connection(int fd) {
 static int YAP_handle_v2_request(FILE *socket, const char *index_dir) {
   YAP_V2_CORE_FRAME request, response; YAP_V2_HTTP_OPERATION operation;
   char *json = NULL; size_t json_bytes = 0U; unsigned char *payload = NULL;
-  const unsigned char *request_json; size_t request_json_bytes; int admitted = 0;
+  const unsigned char *request_json; size_t request_json_bytes; int admitted = 0, is_health = 0;
   int http_status = 500, status;
   YAP_V2_core_frame_init(&request); YAP_V2_core_frame_init(&response);
   status = YAP_V2_core_frame_read(socket, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
   if (status != YAP_V2_CORE_FRAME_OK) goto done;
+  if (request.type == YAP_V2_CORE_HEALTH_REQUEST) {
+    YAP_V2_OPERATIONAL_STATE operational; char probe_error[256] = {0};
+    if (request.payload_bytes != 0U) { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
+    is_health = 1;
+    status = YAP_V2_operational_probe_index(index_dir, &operational, probe_error, sizeof(probe_error));
+    http_status = status == YAP_V2_OK && operational.ready ? 200 : 503;
+    if (YAP_V2_operational_state_json(&operational, "yappod_core", &json, &json_bytes) != YAP_V2_OK) {
+      status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done;
+    }
+    goto respond;
+  }
   if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
   else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
   else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
@@ -163,7 +175,8 @@ respond:
   payload[0] = (unsigned char)((unsigned int)http_status >> 8);
   payload[1] = (unsigned char)http_status; memcpy(payload + 2U, json, json_bytes);
   response.type = http_status == 200 ?
-    (operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
+    (is_health ? YAP_V2_CORE_HEALTH_RESPONSE :
+     operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
      operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE : YAP_V2_CORE_INGEST_RESPONSE) :
     YAP_V2_CORE_ERROR_RESPONSE;
   response.request_id = request.request_id; response.payload = payload;

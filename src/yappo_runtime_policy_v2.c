@@ -106,6 +106,17 @@ void YAP_V2_runtime_limiter_release(YAP_V2_RUNTIME_LIMITER *limiter, size_t requ
   pthread_mutex_unlock(&limiter->lock);
 }
 
+int YAP_V2_runtime_limiter_snapshot(YAP_V2_RUNTIME_LIMITER *limiter, size_t *inflight,
+                                    size_t *inflight_bytes, size_t *max_inflight,
+                                    size_t *max_inflight_bytes) {
+  if (limiter == NULL || !limiter->initialized || inflight == NULL || inflight_bytes == NULL ||
+      max_inflight == NULL || max_inflight_bytes == NULL) return YAP_V2_INVALID_ARGUMENT;
+  pthread_mutex_lock(&limiter->lock);
+  *inflight = limiter->inflight; *inflight_bytes = limiter->inflight_bytes;
+  *max_inflight = limiter->max_inflight; *max_inflight_bytes = limiter->max_inflight_bytes;
+  pthread_mutex_unlock(&limiter->lock); return YAP_V2_OK;
+}
+
 static int constant_time_equal(const char *left, size_t left_bytes,
                                const char *right, size_t right_bytes) {
   size_t i, maximum = left_bytes > right_bytes ? left_bytes : right_bytes;

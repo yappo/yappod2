@@ -32,6 +32,9 @@ int YAP_V2_runtime_limiter_init(YAP_V2_RUNTIME_LIMITER *limiter,
 void YAP_V2_runtime_limiter_close(YAP_V2_RUNTIME_LIMITER *limiter);
 int YAP_V2_runtime_limiter_acquire(YAP_V2_RUNTIME_LIMITER *limiter, size_t request_bytes);
 void YAP_V2_runtime_limiter_release(YAP_V2_RUNTIME_LIMITER *limiter, size_t request_bytes);
+int YAP_V2_runtime_limiter_snapshot(YAP_V2_RUNTIME_LIMITER *limiter, size_t *inflight,
+                                    size_t *inflight_bytes, size_t *max_inflight,
+                                    size_t *max_inflight_bytes);
 int YAP_V2_authorize_write(const YAP_V2_RUNTIME_POLICY *policy, const char *authorization);
 int YAP_V2_ingest_envelope_wrap(const YAP_V2_RUNTIME_POLICY *policy,
                                 const unsigned char *json, size_t json_bytes,
