@@ -4,6 +4,20 @@ set -eu
 example_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 run_dir=${YAPPOD_RUN_DIR:-"$example_dir/run"}
 
+pid_running() {
+  pid=$1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  if [ -r "/proc/$pid/stat" ]; then
+    state=$(sed -n 's/^.*) \([A-Z]\) .*$/\1/p' "/proc/$pid/stat")
+    if [ "$state" = "Z" ]; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
 stop_pid_file() {
   name=$1
   file="$run_dir/$name.pid"
@@ -16,12 +30,12 @@ stop_pid_file() {
   esac
   if kill "$pid" 2>/dev/null; then
     i=0
-    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 50 ]; do
+    while pid_running "$pid" && [ "$i" -lt 50 ]; do
       sleep 0.1
       i=$((i + 1))
     done
   fi
-  if kill -0 "$pid" 2>/dev/null; then
+  if pid_running "$pid"; then
     echo "$name did not stop: PID $pid" >&2
     return 1
   fi
