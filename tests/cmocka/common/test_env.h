@@ -10,8 +10,6 @@
 typedef struct {
   char root_dir[PATH_MAX];
   char build_dir[PATH_MAX];
-  char fixture_path[PATH_MAX];
-  char fixture_malformed_path[PATH_MAX];
   char tmp_root[PATH_MAX];
 } ytest_env_t;
 

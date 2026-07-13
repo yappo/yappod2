@@ -22,16 +22,13 @@ static void fill_segment(YAP_V2_SEGMENT_DESCRIPTOR *segment, const char *id, uns
   strcpy(segment->id, id);
   segment->document_count = 10U;
   segment->passage_count = 20U;
-  segment->file_bytes = 1234U;
-  for (i = 0; i < sizeof(segment->checksum); i++) {
-    segment->checksum[i] = (unsigned char)(seed + i);
-  }
   memset(&component, 0, sizeof(component));
   strcpy(component.name, "documents.yap2");
   component.file_type = YAP_V2_FILE_DOCUMENTS;
   component.record_count = 30U;
-  component.file_bytes = segment->file_bytes;
-  memcpy(component.checksum, segment->checksum, sizeof(component.checksum));
+  component.file_bytes = 1234U;
+  for (i = 0; i < sizeof(component.checksum); i++)
+    component.checksum[i] = (unsigned char)(seed + i);
   assert_int_equal(YAP_V2_segment_descriptor_add_component(segment, &component), YAP_V2_OK);
 }
 
@@ -73,7 +70,9 @@ static void test_manifest_roundtrip_and_atomic_publish(void **state) {
   assert_int_equal(loaded.generation, 1U);
   assert_int_equal(loaded.segment_count, 1U);
   assert_string_equal(loaded.segments[0].id, "seg-000001");
-  assert_memory_equal(loaded.segments[0].checksum, segment.checksum, sizeof(segment.checksum));
+  assert_memory_equal(loaded.segments[0].components[0].checksum,
+                      segment.components[0].checksum,
+                      sizeof(segment.components[0].checksum));
   assert_int_equal(loaded.segments[0].component_count, 1U);
   assert_string_equal(loaded.segments[0].components[0].name, "documents.yap2");
   assert_memory_equal(loaded.config_fingerprint, manifest.config_fingerprint,

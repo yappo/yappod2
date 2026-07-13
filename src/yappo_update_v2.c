@@ -60,12 +60,28 @@ static int add_component(YAP_V2_SEGMENT_DESCRIPTOR *segment,
   return YAP_V2_segment_descriptor_add_component(segment, component);
 }
 
+static int compare_ids(const void *left, const void *right) {
+  const char *const *a = left;
+  const char *const *b = right;
+  return strcmp(*a, *b);
+}
+
 static int validate_unique_ids(const YAP_V2_INGEST_OPERATION *operations, size_t count) {
-  size_t i, j;
-  for (i = 0U; i < count; i++)
-    for (j = 0U; j < i; j++)
-      if (strcmp(operations[i].id, operations[j].id) == 0) return YAP_V2_DUPLICATE;
-  return YAP_V2_OK;
+  const char **ids;
+  size_t i;
+  int status = YAP_V2_OK;
+  if (count > SIZE_MAX / sizeof(*ids)) return YAP_V2_OUT_OF_RANGE;
+  ids = malloc(count * sizeof(*ids));
+  if (ids == NULL) return YAP_V2_ALLOCATION_FAILED;
+  for (i = 0U; i < count; i++) ids[i] = operations[i].id;
+  qsort(ids, count, sizeof(*ids), compare_ids);
+  for (i = 1U; i < count; i++)
+    if (strcmp(ids[i - 1U], ids[i]) == 0) {
+      status = YAP_V2_DUPLICATE;
+      break;
+    }
+  free(ids);
+  return status;
 }
 
 static void free_chunks(OPERATION_CHUNKS *chunks, size_t count) {
@@ -75,9 +91,11 @@ static void free_chunks(OPERATION_CHUNKS *chunks, size_t count) {
   free(chunks);
 }
 
-int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
-                        size_t operation_count, YAP_V2_UPDATE_RESULT *result,
-                        char *error, size_t error_size) {
+static int apply_operations(const char *index_dir,
+                            const YAP_V2_INGEST_OPERATION *operations,
+                            size_t operation_count, size_t operation_limit,
+                            YAP_V2_UPDATE_RESULT *result,
+                            char *error, size_t error_size) {
   YAP_V2_CONFIG config; YAP_V2_MANIFEST manifest; YAP_V2_SEGMENT_DESCRIPTOR descriptor;
   YAP_V2_DOCUMENT_VIEW *documents = NULL; YAP_V2_PASSAGE_VIEW *passages = NULL;
   YAP_V2_BYTES_VIEW *tombstones = NULL; OPERATION_CHUNKS *chunks = NULL;
@@ -91,7 +109,7 @@ int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *op
   YAP_V2_manifest_init(&manifest); YAP_Embedding_result_init(&embeddings);
   YAP_V2_writer_lock_init(&writer_lock);
   if (index_dir == NULL || operations == NULL || result == NULL || operation_count == 0U ||
-      operation_count > YAP_V2_UPDATE_MAX_OPERATIONS) return YAP_V2_INVALID_ARGUMENT;
+      operation_count > operation_limit) return YAP_V2_INVALID_ARGUMENT;
   memset(result, 0, sizeof(*result));
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
       join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0 ||
@@ -227,6 +245,20 @@ done:
   free_chunks(chunks, operation_count); YAP_V2_manifest_free(&manifest);
   YAP_V2_writer_lock_release(&writer_lock);
   return status;
+}
+
+int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
+                        size_t operation_count, YAP_V2_UPDATE_RESULT *result,
+                        char *error, size_t error_size) {
+  return apply_operations(index_dir, operations, operation_count,
+                          YAP_V2_UPDATE_MAX_OPERATIONS, result, error, error_size);
+}
+
+int YAP_V2_build_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
+                       size_t operation_count, YAP_V2_UPDATE_RESULT *result,
+                       char *error, size_t error_size) {
+  return apply_operations(index_dir, operations, operation_count,
+                          YAP_V2_BUILD_BATCH_OPERATIONS, result, error, error_size);
 }
 
 static void free_operations(YAP_V2_INGEST_OPERATION *operations, size_t count) {

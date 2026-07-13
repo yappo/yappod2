@@ -45,7 +45,10 @@ static void test_precomputed_passage_vectors(void **state) {
   YAP_V2_INGEST_OPERATION operation; char error[128]; (void)state;
   assert_int_equal(YAP_V2_ingest_parse_ndjson(good,strlen(good),&operation,error,sizeof(error)),YAP_V2_OK);
   assert_int_equal(operation.vector_count,2U);assert_int_equal(operation.vector_dimensions,2U);
-  assert_float_equal(operation.vectors[2],0.5f,0.0001f);YAP_V2_ingest_operation_free(&operation);
+  assert_float_equal(operation.vectors[0],1.0f,0.0001f);
+  assert_float_equal(operation.vectors[1],0.0f,0.0001f);
+  assert_float_equal(operation.vectors[2],0.5f,0.0001f);
+  assert_float_equal(operation.vectors[3],-0.25f,0.0001f);YAP_V2_ingest_operation_free(&operation);
   assert_int_equal(YAP_V2_ingest_parse_ndjson(ragged,strlen(ragged),&operation,error,sizeof(error)),YAP_V2_INVALID_FORMAT);
 }
 

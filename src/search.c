@@ -1,155 +1,146 @@
-/*
- *
- *コマンドラインからキーワード検索を行なう
- *
- */
+#include "yappo_http_v2.h"
+
+#include <errno.h>
+#include <float.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <time.h>
 #include <string.h>
 
-#include "yappo_db.h"
-#include "yappo_index.h"
-#include "yappo_index_filedata.h"
-#include "yappo_alloc.h"
-#include "yappo_stat.h"
-#include "yappo_ngram.h"
-#include "yappo_search.h"
-#include "yappo_linklist.h"
+#include <yyjson.h>
 
-YAPPO_CACHE yappod_core_cache;
+typedef struct {
+  const char *index_dir;
+  const char *mode;
+  const char *query;
+  const char *scope;
+  const char *vector_text;
+  size_t limit;
+} options_t;
 
-/*
- *検索結果を標示
- */
-void search_result_print(YAPPO_DB_FILES *ydfp, SEARCH_RESULT *p) {
-  int i;
-  FILEDATA filedata;
-
-  if (p == 0) {
-    printf("not found\n");
-  } else {
-    printf("Hit num: %d\n\n", p->keyword_docs_num);
-    for (i = 0; i < p->keyword_docs_num; i++) {
-      if (YAP_Index_Filedata_get(ydfp, p->docs_list[i].fileindex, &filedata) == 0) {
-        const char *url;
-        const char *title;
-        struct tm *last_tm = localtime(&(filedata.lastmod));
-
-        url = (filedata.url != NULL) ? filedata.url : "";
-        title = filedata.title;
-        if (title == NULL || title[0] == '\0') {
-          title = url;
-        }
-
-        printf("----------------------------------------\n");
-        printf("List: %d/%d\t[%d]\t(domainid:%d)\n", i, p->keyword_docs_num,
-               p->docs_list[i].fileindex, filedata.domainid);
-        printf("%s(SCORE:%.1f)\n", title, p->docs_list[i].score);
-        printf("URL:%s\n", url);
-        if (last_tm != NULL) {
-          printf("(size:%d)(date:%d/%d/%d)\n", filedata.size, last_tm->tm_year + 1900,
-                 last_tm->tm_mon + 1, last_tm->tm_mday);
-        } else {
-          printf("(size:%d)(date:0/0/0)\n", filedata.size);
-        }
-        printf("\n");
-
-        YAP_Index_Filedata_free(&filedata);
-      } else {
-        printf("\nError: %d\n", p->docs_list[i].fileindex);
-      }
-    }
-  }
+static void usage(FILE *output) {
+  fputs("Usage: search --index INDEX_DIR --mode lexical|vector|hybrid "
+        "[--query TEXT] [--vector N,N,...] [--scope documents|passages] "
+        "[--limit 1..100]\n",
+        output);
 }
 
-/*メイン*/
-int main(int argc, char *argv[]) {
-  YAPPO_DB_FILES yappo_db_files;
+static int parse_size(const char *text, size_t *value) {
+  char *end = NULL;
+  unsigned long long parsed;
+  errno = 0;
+  parsed = strtoull(text, &end, 10);
+  if (errno != 0 || end == text || *end != '\0' || parsed == 0U || parsed > 100U)
+    return -1;
+  *value = (size_t)parsed;
+  return 0;
+}
+
+static int parse_options(int argc, char **argv, options_t *options) {
   int i;
-  char **keyword_list = NULL;
-  int op = 0; /*0=AND 1=OR*/
-  int keyword_list_num = 0;
-
-  memset(&yappo_db_files, 0, sizeof(YAPPO_DB_FILES));
-
-  /*
-   *オプションを取得
-   */
-  if (argc > 1) {
-    i = 1;
-    while (1) {
-      if (argc == i)
-        break;
-
-      if (!strcmp(argv[i], "-l")) {
-        /*インデックスディレクトリを取得*/
-        i++;
-        if (argc == i)
-          break;
-        yappo_db_files.base_dir = argv[i];
-      } else if (!strcmp(argv[i], "-a")) {
-        /*AND*/
-        op = 0;
-      } else if (!strcmp(argv[i], "-o")) {
-        /*OR*/
-        op = 1;
-      } else {
-        /*キーワードを取得*/
-        keyword_list = (char **)YAP_realloc(keyword_list, sizeof(char *) * (keyword_list_num + 1));
-        keyword_list[keyword_list_num] = (char *)YAP_malloc(strlen(argv[i]) + 1);
-        memcpy(keyword_list[keyword_list_num], argv[i], strlen(argv[i]) + 1);
-        keyword_list_num++;
-      }
-
-      i++;
-    }
+  memset(options, 0, sizeof(*options));
+  options->scope = "documents";
+  options->limit = 10U;
+  for (i = 1; i < argc; i++) {
+    const char *name = argv[i];
+    const char **target = NULL;
+    if (strcmp(name, "--help") == 0 || strcmp(name, "-h") == 0) return 1;
+    if (strcmp(name, "--index") == 0) target = &options->index_dir;
+    else if (strcmp(name, "--mode") == 0) target = &options->mode;
+    else if (strcmp(name, "--query") == 0) target = &options->query;
+    else if (strcmp(name, "--scope") == 0) target = &options->scope;
+    else if (strcmp(name, "--vector") == 0) target = &options->vector_text;
+    else if (strcmp(name, "--limit") == 0) {
+      if (++i >= argc || parse_size(argv[i], &options->limit) != 0) return -1;
+      continue;
+    } else return -1;
+    if (++i >= argc) return -1;
+    *target = argv[i];
   }
+  if (options->index_dir == NULL || options->mode == NULL ||
+      (strcmp(options->mode, "lexical") != 0 && strcmp(options->mode, "vector") != 0 &&
+       strcmp(options->mode, "hybrid") != 0) ||
+      (strcmp(options->scope, "documents") != 0 && strcmp(options->scope, "passages") != 0) ||
+      (strcmp(options->mode, "vector") != 0 &&
+       (options->query == NULL || options->query[0] == '\0')) ||
+      (strcmp(options->mode, "lexical") != 0 && options->vector_text == NULL)) return -1;
+  return 0;
+}
 
-  if (!YAP_is_dir(yappo_db_files.base_dir)) {
-    printf("Please specify an existing index directory: %s\n", yappo_db_files.base_dir);
-    exit(EXIT_FAILURE);
+static int add_vector(yyjson_mut_doc *document, yyjson_mut_val *root, const char *text) {
+  yyjson_mut_val *array = yyjson_mut_arr(document);
+  const char *cursor = text;
+  size_t count = 0U;
+  if (array == NULL || cursor == NULL || *cursor == '\0') return -1;
+  for (;;) {
+    char *end = NULL;
+    double value;
+    errno = 0;
+    value = strtod(cursor, &end);
+    if (errno != 0 || end == cursor || !isfinite(value) || value > FLT_MAX || value < -FLT_MAX ||
+        !yyjson_mut_arr_add_real(document, array, value)) return -1;
+    count++;
+    if (*end == '\0') break;
+    if (*end != ',') return -1;
+    cursor = end + 1;
+    if (*cursor == '\0') return -1;
   }
+  return count == 0U || !yyjson_mut_obj_add_val(document, root, "vector", array) ? -1 : 0;
+}
 
-  /*
-   *データベースの準備
-   */
-  YAP_Db_cache_init(&yappod_core_cache);
-  yappo_db_files.mode = YAPPO_DB_READ;
-  yappo_db_files.cache = &yappod_core_cache;
-  YAP_Db_filename_set(&yappo_db_files);
-  YAP_Db_base_open(&yappo_db_files);
-  YAP_Db_cache_load(&yappo_db_files, &yappod_core_cache);
-  YAP_Db_linklist_open(&yappo_db_files);
-
-  if (0) {
-    int *list, list_len;
-    /*    YAP_Index_get_keyword2( keyword_list[0], &list, &list_len);*/
-    printf("address %p = %d = %d\n", (void *)list, list_len, list[0]);
-    exit(EXIT_FAILURE);
+static char *make_request(const options_t *options, size_t *request_bytes) {
+  yyjson_mut_doc *document = yyjson_mut_doc_new(NULL);
+  yyjson_mut_val *root;
+  char *request;
+  if (document == NULL) return NULL;
+  root = yyjson_mut_obj(document);
+  if (root == NULL) { yyjson_mut_doc_free(document); return NULL; }
+  yyjson_mut_doc_set_root(document, root);
+  if (!yyjson_mut_obj_add_str(document, root, "mode", options->mode) ||
+      !yyjson_mut_obj_add_str(document, root, "scope", options->scope) ||
+      !yyjson_mut_obj_add_uint(document, root, "limit", options->limit) ||
+      (options->query != NULL &&
+       !yyjson_mut_obj_add_str(document, root, "query", options->query)) ||
+      (options->vector_text != NULL && add_vector(document, root, options->vector_text) != 0)) {
+    yyjson_mut_doc_free(document);
+    return NULL;
   }
+  request = yyjson_mut_write_opts(document, YYJSON_WRITE_NOFLAG, NULL, request_bytes, NULL);
+  yyjson_mut_doc_free(document);
+  return request;
+}
 
-  {
-    SEARCH_RESULT *result;
-    result = YAP_Search(&yappo_db_files, keyword_list, keyword_list_num, 100000000, op);
-    /*検索結果内のページ同士のリンク関係によりスコアを可変する*/
-    printf("go link\n");
-    YAP_Linklist_Score(&yappo_db_files, result);
-
-    /*スコア順ソート*/
-    printf("go sort\n");
-    YAP_Search_result_sort_score(result);
-    search_result_print(&yappo_db_files, result);
-    YAP_Search_result_free(result);
-    free(result);
+int main(int argc, char **argv) {
+  options_t options;
+  char *request, *response = NULL;
+  size_t request_bytes = 0U, response_bytes = 0U;
+  int parsed, http_status = 0;
+  parsed = parse_options(argc, argv, &options);
+  if (parsed == 1) { usage(stdout); return EXIT_SUCCESS; }
+  if (parsed != 0) { usage(stderr); return EXIT_FAILURE; }
+  request = make_request(&options, &request_bytes);
+  if (request == NULL) {
+    fputs("Invalid query vector\n", stderr);
+    return EXIT_FAILURE;
   }
-
-  YAP_Db_linklist_close(&yappo_db_files);
-  YAP_Db_base_close(&yappo_db_files);
-
-  YAP_Db_cache_destroy(&yappod_core_cache);
+  if (YAP_V2_http_execute(options.index_dir, YAP_V2_HTTP_SEARCH,
+                          (const unsigned char *)request, request_bytes,
+                          &http_status, &response, &response_bytes) != 0 || response == NULL) {
+    free(request);
+    fputs("Search failed: index is not a valid v2 snapshot\n", stderr);
+    return EXIT_FAILURE;
+  }
+  free(request);
+  if (http_status != 200) {
+    (void)fwrite(response, 1U, response_bytes, stderr);
+    (void)fputc('\n', stderr);
+    free(response);
+    return EXIT_FAILURE;
+  }
+  if (fwrite(response, 1U, response_bytes, stdout) != response_bytes || fputc('\n', stdout) == EOF) {
+    free(response);
+    return EXIT_FAILURE;
+  }
+  free(response);
   return EXIT_SUCCESS;
 }

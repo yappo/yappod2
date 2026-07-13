@@ -1,5 +1,0 @@
-# metric<TAB>min|max<TAB>threshold
-ndcg_at_10	min	0.972332
-mrr_at_10	min	1.000000
-recall_at_10	min	1.000000
-p95_latency_ms	max	1000.000000

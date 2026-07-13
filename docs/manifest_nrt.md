@@ -1,8 +1,8 @@
 # v2 manifest と NRT publish
 
-> **現在の状態:** Task 19でcanonical batch writer、CLI/HTTP ingest、generation publish、
-> 検索readerへの反映まで接続し、Task 20でlive-only compaction、orphan GC、公開前後の
-> crash recoveryを接続しました。deadlineやwriter queue/tokenはTask 21の範囲です。
+> **実装状態:** canonical batch writer、CLI/HTTP ingest、generation publish、reader refresh、
+> live-only compaction、orphan GC、crash recovery、deadline、writer lock、write token を
+> 正式な v2 経路へ接続しています。
 
 `manifest.json` は公開済み immutable segment のスナップショットです。検索側は一つの generation を読み続け、writer は新しい manifest を完成させてから atomic rename します。そのため検索中に未完成の segment 一覧を観測しません。
 

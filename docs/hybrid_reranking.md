@@ -9,4 +9,4 @@ lexical_weight / (60 + lexical_rank)
 
 片方のリストにしかない候補は存在する側の寄与だけを持ち、両方に出た候補は寄与を加算します。結果は fused score 降順、同点時は最初に見つかった入力順で deterministic です。
 
-`YAP_Hybrid_fuse_rrf` は入力リストを順位順（index 0 が rank 1）として扱い、ID view をコピーしません。weights は非負で、少なくとも一方を正にします。このモジュールは候補生成を行わないため、単体では hybrid 検索を提供しません。[現代検索基盤の完成契約](modern_search_completion_contract.md) に従って lexical/vector candidate、filter、document/passage 集約、検索 API へ接続します。
+`YAP_Hybrid_fuse_rrf` は入力リストを順位順（index 0 が rank 1）として扱い、ID view をコピーしません。weights は非負で、少なくとも一方を正にします。query orchestrator が lexical/vector candidate、filter、document/passage 集約とこの融合処理を接続し、CLI と `/v2/search` の hybrid mode から利用します。

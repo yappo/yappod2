@@ -107,9 +107,6 @@ typedef struct {
   uint64_t tombstone_count;
   YAP_V2_COMPONENT_DESCRIPTOR components[YAP_V2_MAX_COMPONENTS];
   size_t component_count;
-  /* Deprecated compatibility mirror for the documents component. */
-  uint64_t file_bytes;
-  unsigned char checksum[32];
 } YAP_V2_SEGMENT_DESCRIPTOR;
 
 typedef struct {

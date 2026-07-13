@@ -151,7 +151,9 @@ int ytest_http_send_text(int port, const char *request, char **response_text) {
   *response_text = NULL;
   rc = ytest_http_send_bytes(port, (const unsigned char *)request, strlen(request), 1, &response,
                              &response_len);
-  if (rc != 0) {
+  if (rc != 0 || response == NULL || response_len == 0U) {
+    free(response);
+    errno = ECONNRESET;
     return -1;
   }
 
