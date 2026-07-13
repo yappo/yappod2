@@ -46,7 +46,7 @@ static int json_keys_unique(yyjson_val *value) {
     yyjson_obj_iter iterator=yyjson_obj_iter_with(value);yyjson_val *key;int unique=1;
     if(count>0U&&pairs==NULL)return 0;
     while((key=yyjson_obj_iter_next(&iterator))!=NULL){pairs[index].key=yyjson_get_str(key);pairs[index].key_len=yyjson_get_len(key);pairs[index].value=yyjson_obj_iter_get_val(key);index++;}
-    qsort(pairs,count,sizeof(*pairs),pair_compare);
+    if (count > 1U) qsort(pairs,count,sizeof(*pairs),pair_compare);
     for(index=0U;index<count;index++){
       if(index>0U&&pairs[index-1U].key_len==pairs[index].key_len&&memcmp(pairs[index-1U].key,pairs[index].key,pairs[index].key_len)==0){unique=0;break;}
       if(!json_keys_unique(pairs[index].value)){unique=0;break;}
@@ -69,7 +69,7 @@ static yyjson_mut_val *canonical_copy(yyjson_mut_doc *target, yyjson_val *value)
       pairs[index].key = yyjson_get_str(key); pairs[index].key_len = yyjson_get_len(key);
       pairs[index].value = yyjson_obj_iter_get_val(key); index++;
     }
-    qsort(pairs, count, sizeof(*pairs), pair_compare);
+    if (count > 1U) qsort(pairs, count, sizeof(*pairs), pair_compare);
     for (index = 0U; index < count; index++) {
       yyjson_mut_val *child = canonical_copy(target, pairs[index].value);
       if (child == NULL || !yyjson_mut_obj_add_val(target, object, pairs[index].key, child)) {
