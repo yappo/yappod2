@@ -32,7 +32,7 @@ static int descriptor(const char *path, size_t records, YAP_V2_COMPONENT_DESCRIP
   if (component == NULL) return YAP_ANN_OK;
   memset(component, 0, sizeof(*component));
   strcpy(component->name, "vectors.usearch");
-  component->file_type = YAP_V2_FILE_VECTORS;
+  component->file_type = YAP_V2_FILE_ANN;
   component->record_count = records;
   if (YAP_V2_file_sha256(path, component->checksum, &bytes) != YAP_V2_OK)
     return YAP_ANN_IO_ERROR;

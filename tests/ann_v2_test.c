@@ -68,6 +68,7 @@ static void test_build_save_view_search_and_fallback(void **state) {
   assert_int_equal(YAP_V2_ann_build_save(ann_path, &vectors, 8U, 32U, 24U, &component),
                    YAP_ANN_OK);
   assert_string_equal(component.name, "vectors.usearch");
+  assert_int_equal(component.file_type, YAP_V2_FILE_ANN);
   assert_int_equal(component.record_count, 2U);
   YAP_V2_ann_segment_init(&ann);
   assert_int_equal(YAP_V2_ann_view(ann_path, &vectors, 24U, &ann, NULL), YAP_ANN_OK);

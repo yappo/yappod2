@@ -131,10 +131,12 @@ static void test_tombstone_component_verification(void **state) {
   ytest_env_t env;
   YAP_V2_BYTES_VIEW id;
   YAP_V2_COMPONENT_DESCRIPTOR component;
+  YAP_V2_COMPONENT_DESCRIPTOR ann_component;
   YAP_V2_TOMBSTONES tombstones;
   YAP_V2_SEGMENT_DESCRIPTOR segment;
   YAP_V2_MANIFEST manifest;
-  char segments_dir[PATH_MAX], segment_dir[PATH_MAX], tombstone_path[PATH_MAX];
+  char segments_dir[PATH_MAX], segment_dir[PATH_MAX], tombstone_path[PATH_MAX], ann_path[PATH_MAX];
+  uint64_t ann_bytes;
   FILE *file;
 
   (void)state;
@@ -161,6 +163,14 @@ static void test_tombstone_component_verification(void **state) {
   strcpy(segment.id, "seg-000001");
   segment.tombstone_count = 1U;
   assert_int_equal(YAP_V2_segment_descriptor_add_component(&segment, &component), YAP_V2_OK);
+  assert_int_equal(ytest_path_join(ann_path, sizeof(ann_path), segment_dir, "vectors.usearch"), 0);
+  assert_int_equal(ytest_write_file(ann_path, "USearch", 7U), 0);
+  memset(&ann_component, 0, sizeof(ann_component));
+  strcpy(ann_component.name, "vectors.usearch"); ann_component.file_type = YAP_V2_FILE_ANN;
+  ann_component.record_count = 1U;
+  assert_int_equal(YAP_V2_file_sha256(ann_path, ann_component.checksum, &ann_bytes), YAP_V2_OK);
+  ann_component.file_bytes = ann_bytes;
+  assert_int_equal(YAP_V2_segment_descriptor_add_component(&segment, &ann_component), YAP_V2_OK);
   YAP_V2_manifest_init(&manifest);
   fill_fingerprint(&manifest, 70U);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);

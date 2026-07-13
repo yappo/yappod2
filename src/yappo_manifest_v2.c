@@ -418,7 +418,7 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
           (bytes != component->file_bytes || memcmp(checksum, component->checksum, 32U) != 0)) {
         status = YAP_V2_CHECKSUM_MISMATCH;
       }
-      if (status == YAP_V2_OK) {
+      if (status == YAP_V2_OK && component->file_type != YAP_V2_FILE_ANN) {
         file = fopen(path, "rb");
         if (file == NULL ||
             fread(header_data, 1U, sizeof(header_data), file) != sizeof(header_data)) {
@@ -429,10 +429,10 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
         }
       }
       free(path);
-      if (status == YAP_V2_OK) {
+      if (status == YAP_V2_OK && component->file_type != YAP_V2_FILE_ANN) {
         status = YAP_V2_file_header_decode(header_data, &header);
       }
-      if (status == YAP_V2_OK &&
+      if (status == YAP_V2_OK && component->file_type != YAP_V2_FILE_ANN &&
           (header.generation != manifest->generation || header.file_type != component->file_type ||
            header.payload_bytes + YAP_V2_FILE_HEADER_BYTES != bytes)) {
         status = YAP_V2_INVALID_FORMAT;
