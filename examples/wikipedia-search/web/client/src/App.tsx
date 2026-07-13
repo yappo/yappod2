@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { webApi, type WebApi } from "./api";
+import { RagView } from "./RagView";
 import type { RegisterInput, RegisterResponse, SearchResult, StatusResponse } from "./types";
 
-type View = "search" | "register";
+type View = "search" | "ask" | "register";
 type RequestState = "idle" | "loading" | "success" | "error";
 
 function visibleUrl(url: string): string {
@@ -277,14 +278,15 @@ export function App({ api = webApi }: { api?: WebApi }) {
           </button>
           <nav aria-label="主要な画面">
             <button type="button" aria-current={view === "search" ? "page" : undefined} onClick={() => setView("search")}>検索</button>
+            <button type="button" aria-current={view === "ask" ? "page" : undefined} onClick={() => setView("ask")}>質問</button>
             <button type="button" aria-current={view === "register" ? "page" : undefined} onClick={() => setView("register")}>文書登録</button>
           </nav>
           <DaemonStatus status={status} checking={checking} onRetry={() => void refreshStatus()} />
         </div>
       </header>
-      {view === "search"
-        ? <SearchView api={api} initialQuery={searchSeed} />
-        : <RegisterView api={api} onSearch={searchRegisteredDocument} />}
+      {view === "search" && <SearchView api={api} initialQuery={searchSeed} />}
+      {view === "ask" && <RagView api={api} />}
+      {view === "register" && <RegisterView api={api} onSearch={searchRegisteredDocument} />}
       <footer className="site-footer">
         <span>yappod Wikipedia search example</span>
         <span>原典のライセンスと帰属は各記事で確認してください。</span>

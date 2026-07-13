@@ -327,6 +327,16 @@ button:disabled {
   background: var(--accent-soft);
 }
 
+.warning-message {
+  border-color: #9a6a24;
+  background: #faf4e8;
+}
+
+.neutral-message {
+  border-color: #7f8986;
+  background: #f1f3f2;
+}
+
 .empty-guidance {
   margin-top: 40px;
   padding: 32px 0;
@@ -489,6 +499,222 @@ summary {
   padding: 9px 18px;
 }
 
+.question-form {
+  border-top: 1px solid #9ba5a2;
+  padding-top: 28px;
+}
+
+.question-form > label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 650;
+}
+
+.question-form textarea {
+  min-height: 112px;
+}
+
+.question-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 12px;
+}
+
+.question-actions p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.question-actions .primary-button {
+  min-width: 152px;
+  padding: 9px 18px;
+}
+
+.rag-result {
+  margin-top: 48px;
+}
+
+.answer-section {
+  padding: 30px 0 34px;
+  border-top: 1px solid #9ba5a2;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-heading {
+  margin-bottom: 22px;
+}
+
+.section-kicker {
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.question-text {
+  max-width: 72ch;
+  margin: 3px 0 24px;
+  color: #48514e;
+}
+
+.section-heading h2,
+.citations-title h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.4;
+}
+
+.answer-text {
+  max-width: 72ch;
+  margin: 0;
+  color: #252c2a;
+  font-size: 18px;
+  line-height: 1.95;
+  white-space: pre-wrap;
+}
+
+.citation-reference {
+  margin: 0 2px;
+  color: var(--accent-dark);
+  font-weight: 700;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.context-details {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.context-details summary {
+  color: var(--accent-dark);
+  font-size: 14px;
+}
+
+.context-details pre {
+  max-height: 360px;
+  margin: 8px 0 4px;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--soft-line);
+  border-radius: 3px;
+  background: #f1f3f2;
+  color: #38403e;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.citations-section {
+  padding-top: 44px;
+}
+
+.citations-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #9ba5a2;
+}
+
+.citations-title p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.citation-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 16px;
+  padding: 26px 0;
+  border-bottom: 1px solid var(--soft-line);
+  scroll-margin-top: 20px;
+}
+
+.citation-number {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #8fa09d;
+  border-radius: 3px;
+  color: var(--accent-dark);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.citation-body {
+  min-width: 0;
+}
+
+.citation-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.citation-heading h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+.citation-heading h3 a {
+  color: var(--accent-dark);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.source-use {
+  flex: none;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.citation-body > p {
+  max-width: 74ch;
+  margin: 12px 0 8px;
+  line-height: 1.85;
+}
+
+.citation-metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 3px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--soft-line);
+}
+
+.citation-metadata dt {
+  color: #77807d;
+}
+
+.citation-metadata dd {
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.no-citations {
+  margin: 0;
+  padding: 28px 0;
+  color: var(--muted);
+  border-bottom: 1px solid var(--soft-line);
+}
+
 .site-footer {
   display: flex;
   justify-content: space-between;
@@ -559,6 +785,22 @@ summary {
   }
 
   .result-metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .question-actions,
+  .citations-title,
+  .citation-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .question-actions .primary-button {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .citation-metadata {
     grid-template-columns: 1fr;
   }
 

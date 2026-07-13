@@ -1,4 +1,4 @@
-import type { RegisterInput, RegisterResponse, SearchResponse, StatusResponse } from "./types";
+import type { RagResponse, RegisterInput, RegisterResponse, SearchResponse, StatusResponse } from "./types";
 
 export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status: number) {
@@ -35,6 +35,7 @@ export interface WebApi {
   status(): Promise<StatusResponse>;
   search(query: string, limit: number, cursor?: string): Promise<SearchResponse>;
   registerDocument(input: RegisterInput): Promise<RegisterResponse>;
+  ask(question: string): Promise<RagResponse>;
 }
 
 export const webApi: WebApi = {
@@ -48,5 +49,10 @@ export const webApi: WebApi = {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
+  }),
+  ask: (question) => request<RagResponse>("/api/rag", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ question }),
   }),
 };
