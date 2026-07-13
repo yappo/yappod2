@@ -3,7 +3,7 @@
 日本語 Wikipedia の記事を yappod2 の canonical NDJSON に変換し、lexical index、HTTP検索、
 RAG向けpassage取得まで確認するローカル実行用サンプルです。
 
-すぐに試す場合はWikimedia Action APIから既定1,000記事の冒頭を取得します。全記事を対象にする
+すぐに試す場合はWikimedia Action APIから既定1,000記事の全文を取得します。全記事を対象にする
 場合は公式XML dumpをダウンロードし、WikiExtractorで平文へ変換します。どちらも最終的には
 同じNDJSON schemaと`config.toml`を使用します。
 
@@ -71,8 +71,8 @@ cmake --build build -j
 ## 小規模データを取得する
 
 以下は日本の歴史、自然科学、情報技術、芸術など20トピックを順に検索し、重複を除いた記事の
-冒頭を最大1,000件保存します。API requestは逐次実行し、Wikimediaの要求に従った識別可能な
-User-Agentを送信します。
+本文全体を最大1,000件保存します。検索結果はまとめて取得しますが、全文plain textはAction APIの
+制約により1記事ずつ逐次取得します。Wikimediaの要求に従った識別可能なUser-Agentを送信します。
 
 ```sh
 cd examples/wikipedia-search

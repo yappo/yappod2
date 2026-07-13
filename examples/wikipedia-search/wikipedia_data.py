@@ -25,7 +25,7 @@ DEFAULT_DUMP_BASE_URL = "https://dumps.wikimedia.org/jawiki/latest"
 DUMP_FILENAME = "jawiki-latest-pages-articles-multistream.xml.bz2"
 CHECKSUM_FILENAME = "jawiki-latest-sha1sums.txt"
 DUMP_CHECKSUM_PATTERN = re.compile(r"^jawiki-\d{8}-pages-articles-multistream\.xml\.bz2$")
-API_EXTRACT_LIMIT = 20
+API_SEARCH_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
 DEFAULT_TOPICS = (
     "日本の歴史",
@@ -290,6 +290,38 @@ def _write_document(output: TextIO, document: Dict[str, object]) -> None:
     output.write("\n")
 
 
+def _fetch_api_article(
+    api_url: str,
+    page_id: object,
+    user_agent: str,
+) -> Optional[Dict[str, object]]:
+    parameters = {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "pageids": str(page_id),
+        "prop": "extracts|info",
+        "explaintext": "1",
+        "exsectionformat": "plain",
+        "inprop": "url",
+        "redirects": "1",
+    }
+    separator = "&" if "?" in api_url else "?"
+    response = _request_json(api_url + separator + urlencode(parameters), user_agent)
+    query = response.get("query", {})
+    pages = query.get("pages", []) if isinstance(query, dict) else []
+    if not isinstance(pages, list) or len(pages) != 1 or not isinstance(pages[0], dict):
+        raise WikipediaDataError("Wikimedia API article response must contain one page")
+    page = pages[0]
+    return _canonical_document(
+        page.get("pageid"),
+        page.get("title"),
+        page.get("extract"),
+        page.get("fullurl"),
+        page.get("lastrevid"),
+    )
+
+
 def fetch_api_documents(
     api_url: str,
     topics: Iterable[str],
@@ -309,7 +341,7 @@ def fetch_api_documents(
             topic_target = written + (limit - written + remaining_topics - 1) // remaining_topics
             continuation: Dict[str, object] = {}
             while written < topic_target:
-                batch_limit = min(API_EXTRACT_LIMIT, topic_target - written)
+                batch_limit = min(API_SEARCH_LIMIT, topic_target - written)
                 parameters: Dict[str, object] = {
                     "action": "query",
                     "format": "json",
@@ -318,12 +350,6 @@ def fetch_api_documents(
                     "gsrsearch": topic,
                     "gsrnamespace": "0",
                     "gsrlimit": str(batch_limit),
-                    "prop": "extracts|info",
-                    "exlimit": str(batch_limit),
-                    "exintro": "1",
-                    "explaintext": "1",
-                    "exsectionformat": "plain",
-                    "inprop": "url",
                     "redirects": "1",
                 }
                 parameters.update(continuation)
@@ -343,13 +369,7 @@ def fetch_api_documents(
                     if key in seen:
                         skipped += 1
                         continue
-                    document = _canonical_document(
-                        page_id,
-                        page.get("title"),
-                        page.get("extract"),
-                        page.get("fullurl"),
-                        page.get("lastrevid"),
-                    )
+                    document = _fetch_api_article(api_url, page_id, user_agent)
                     seen.add(key)
                     if document is None:
                         skipped += 1

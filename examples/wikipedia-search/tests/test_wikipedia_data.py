@@ -32,7 +32,12 @@ class WikipediaDataTest(unittest.TestCase):
 
         def fake_request(url, user_agent):
             requests.append((url, user_agent))
-            return response
+            query = parse_qs(urlparse(url).query)
+            if "generator" in query:
+                return response
+            page_id = int(query["pageids"][0])
+            page = next(page for page in response["query"]["pages"] if page["pageid"] == page_id)
+            return {"batchcomplete": True, "query": {"pages": [page]}}
 
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             wikipedia_data, "_request_json", side_effect=fake_request
@@ -44,6 +49,10 @@ class WikipediaDataTest(unittest.TestCase):
             self.assertEqual((written, skipped), (1, 1))
             self.assertEqual(requests[0][1], "fixture-agent/1.0")
             self.assertIn("gsrsearch=%E6%97%A5%E6%9C%AC%E8%AA%9E", requests[0][0])
+            article_query = parse_qs(urlparse(requests[1][0]).query)
+            self.assertEqual(article_query["pageids"], ["123"])
+            self.assertEqual(article_query["explaintext"], ["1"])
+            self.assertNotIn("exintro", article_query)
             documents = read_ndjson(output)
             self.assertEqual(documents[0]["id"], "jawiki:123")
             self.assertEqual(documents[0]["metadata"]["language"], "ja")
@@ -58,22 +67,24 @@ class WikipediaDataTest(unittest.TestCase):
                 "fullurl": "https://example.test/wiki/{}".format(page_id),
             }
 
-        responses = [
+        search_responses = [
             {
-                "continue": {"gsroffset": 20, "continue": "gsroffset||"},
-                "query": {"pages": [page(page_id) for page_id in range(1, 21)]},
+                "continue": {"gsroffset": 50, "continue": "gsroffset||"},
+                "query": {"pages": [page(page_id) for page_id in range(1, 51)]},
             },
-            {
-                "continue": {"gsroffset": 40, "continue": "gsroffset||"},
-                "query": {"pages": [page(page_id) for page_id in range(21, 41)]},
-            },
-            {"batchcomplete": True, "query": {"pages": [page(page_id) for page_id in range(41, 56)]}},
+            {"batchcomplete": True, "query": {"pages": [page(page_id) for page_id in range(51, 56)]}},
         ]
-        requests = []
+        search_requests = []
+        article_requests = []
 
         def fake_request(url, user_agent):
-            requests.append((url, user_agent))
-            return responses[len(requests) - 1]
+            query = parse_qs(urlparse(url).query)
+            if "generator" in query:
+                search_requests.append(url)
+                return search_responses[len(search_requests) - 1]
+            article_requests.append(url)
+            page_id = int(query["pageids"][0])
+            return {"batchcomplete": True, "query": {"pages": [page(page_id)]}}
 
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             wikipedia_data, "_request_json", side_effect=fake_request
@@ -85,19 +96,16 @@ class WikipediaDataTest(unittest.TestCase):
             documents = read_ndjson(output)
 
         self.assertEqual((written, skipped), (55, 0))
-        self.assertEqual(len(requests), 3)
-        first_query = parse_qs(urlparse(requests[0][0]).query)
-        second_query = parse_qs(urlparse(requests[1][0]).query)
-        third_query = parse_qs(urlparse(requests[2][0]).query)
-        self.assertEqual(first_query["gsrlimit"], ["20"])
-        self.assertEqual(first_query["exlimit"], ["20"])
-        self.assertEqual(second_query["gsroffset"], ["20"])
+        self.assertEqual(len(search_requests), 2)
+        self.assertEqual(len(article_requests), 55)
+        first_query = parse_qs(urlparse(search_requests[0]).query)
+        second_query = parse_qs(urlparse(search_requests[1]).query)
+        self.assertEqual(first_query["gsrlimit"], ["50"])
+        self.assertEqual(second_query["gsroffset"], ["50"])
         self.assertEqual(second_query["continue"], ["gsroffset||"])
-        self.assertEqual(second_query["gsrlimit"], ["20"])
-        self.assertEqual(second_query["exlimit"], ["20"])
-        self.assertEqual(third_query["gsroffset"], ["40"])
-        self.assertEqual(third_query["gsrlimit"], ["15"])
-        self.assertEqual(third_query["exlimit"], ["15"])
+        self.assertEqual(second_query["gsrlimit"], ["5"])
+        article_query = parse_qs(urlparse(article_requests[0]).query)
+        self.assertNotIn("exintro", article_query)
         self.assertEqual(len(documents), 55)
 
     def test_convert_dump_deduplicates_and_honors_schema(self):
