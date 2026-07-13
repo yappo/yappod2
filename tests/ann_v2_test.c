@@ -23,7 +23,7 @@ static void config(YAP_V2_CONFIG *value) {
   value->vector_metric = YAP_V2_VECTOR_COSINE;
 }
 
-static void create_vectors(char path[32], YAP_V2_VECTOR_SEGMENT *segment,
+static void create_vectors(char *path, YAP_V2_VECTOR_SEGMENT *segment,
                            const char *first_id, const char *second_id,
                            const float values[6]) {
   YAP_V2_CONFIG cfg;
