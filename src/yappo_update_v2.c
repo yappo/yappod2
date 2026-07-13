@@ -272,7 +272,8 @@ int YAP_V2_update_json_batch(const char *index_dir, const unsigned char *input,
     json = yyjson_val_write(item, YYJSON_WRITE_NOFLAG, &bytes);
     if (json == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
     status = YAP_V2_ingest_parse_ndjson(json, bytes, &operations[count], error, error_size); free(json);
-    if (status != YAP_V2_OK) goto done; count++;
+    if (status != YAP_V2_OK) goto done;
+    count++;
   }
   status = YAP_V2_update_apply(index_dir, operations, count, result, error, error_size);
 done:
