@@ -63,7 +63,11 @@ class WikipediaDataTest(unittest.TestCase):
                 "continue": {"gsroffset": 20, "continue": "gsroffset||"},
                 "query": {"pages": [page(page_id) for page_id in range(1, 21)]},
             },
-            {"batchcomplete": True, "query": {"pages": [page(page_id) for page_id in range(21, 26)]}},
+            {
+                "continue": {"gsroffset": 40, "continue": "gsroffset||"},
+                "query": {"pages": [page(page_id) for page_id in range(21, 41)]},
+            },
+            {"batchcomplete": True, "query": {"pages": [page(page_id) for page_id in range(41, 56)]}},
         ]
         requests = []
 
@@ -76,21 +80,25 @@ class WikipediaDataTest(unittest.TestCase):
         ):
             output = Path(directory) / "documents.ndjson"
             written, skipped = wikipedia_data.fetch_api_documents(
-                "https://example.test/w/api.php", ["日本史"], 25, output, "fixture-agent/1.0"
+                "https://example.test/w/api.php", ["日本史"], 55, output, "fixture-agent/1.0"
             )
             documents = read_ndjson(output)
 
-        self.assertEqual((written, skipped), (25, 0))
-        self.assertEqual(len(requests), 2)
+        self.assertEqual((written, skipped), (55, 0))
+        self.assertEqual(len(requests), 3)
         first_query = parse_qs(urlparse(requests[0][0]).query)
         second_query = parse_qs(urlparse(requests[1][0]).query)
+        third_query = parse_qs(urlparse(requests[2][0]).query)
         self.assertEqual(first_query["gsrlimit"], ["20"])
         self.assertEqual(first_query["exlimit"], ["20"])
         self.assertEqual(second_query["gsroffset"], ["20"])
         self.assertEqual(second_query["continue"], ["gsroffset||"])
-        self.assertEqual(second_query["gsrlimit"], ["5"])
-        self.assertEqual(second_query["exlimit"], ["5"])
-        self.assertEqual(len(documents), 25)
+        self.assertEqual(second_query["gsrlimit"], ["20"])
+        self.assertEqual(second_query["exlimit"], ["20"])
+        self.assertEqual(third_query["gsroffset"], ["40"])
+        self.assertEqual(third_query["gsrlimit"], ["15"])
+        self.assertEqual(third_query["exlimit"], ["15"])
+        self.assertEqual(len(documents), 55)
 
     def test_convert_dump_deduplicates_and_honors_schema(self):
         with tempfile.TemporaryDirectory() as directory:

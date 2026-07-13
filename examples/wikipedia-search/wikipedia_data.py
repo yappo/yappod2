@@ -26,7 +26,6 @@ DUMP_FILENAME = "jawiki-latest-pages-articles-multistream.xml.bz2"
 CHECKSUM_FILENAME = "jawiki-latest-sha1sums.txt"
 DUMP_CHECKSUM_PATTERN = re.compile(r"^jawiki-\d{8}-pages-articles-multistream\.xml\.bz2$")
 API_EXTRACT_LIMIT = 20
-API_TOPIC_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
 DEFAULT_TOPICS = (
     "日本の歴史",
@@ -298,21 +297,19 @@ def fetch_api_documents(
     output_path: Path,
     user_agent: str,
 ) -> Tuple[int, int]:
+    topic_list = list(topics)
     seen = set()
     written = 0
     skipped = 0
     with _atomic_text_output(output_path) as output:
-        for topic in topics:
+        for topic_index, topic in enumerate(topic_list):
             if written >= limit:
                 break
-            topic_results = 0
+            remaining_topics = len(topic_list) - topic_index
+            topic_target = written + (limit - written + remaining_topics - 1) // remaining_topics
             continuation: Dict[str, object] = {}
-            while written < limit and topic_results < API_TOPIC_LIMIT:
-                batch_limit = min(
-                    API_EXTRACT_LIMIT,
-                    API_TOPIC_LIMIT - topic_results,
-                    limit - written,
-                )
+            while written < topic_target:
+                batch_limit = min(API_EXTRACT_LIMIT, topic_target - written)
                 parameters: Dict[str, object] = {
                     "action": "query",
                     "format": "json",
@@ -336,9 +333,8 @@ def fetch_api_documents(
                 pages = query.get("pages", []) if isinstance(query, dict) else []
                 if not isinstance(pages, list):
                     raise WikipediaDataError("Wikimedia API pages must be an array")
-                topic_results += len(pages)
                 for page in pages:
-                    if written >= limit:
+                    if written >= topic_target:
                         break
                     if not isinstance(page, dict):
                         raise WikipediaDataError("Wikimedia API page must be an object")
