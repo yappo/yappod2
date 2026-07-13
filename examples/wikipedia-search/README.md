@@ -294,7 +294,18 @@ Browserで`http://127.0.0.1:5173`を開きます。Viteは`/api`だけを`127.0.
 `web/config.toml`の`[llm]`が設定されている場合だけOpenAI-compatibleな`POST /chat/completions`へ
 質問と参照資料を送ります。
 
-`config.toml`はtokenを含む可能性があるためgitignore対象です。設定例をコピーして編集します。
+`web/config.toml`はWeb BFFが外部model serverへ接続するための設定ファイルです。index構造を定義する
+`examples/wikipedia-search/config.toml`や`config.vector.toml`とは別のファイルです。次の2セクションは独立しており、
+利用する機能のセクションだけを残せます。
+
+| セクション | 使用する機能 | 省略した場合 |
+|---|---|---|
+| `[llm]` | 取得した参照資料に基づく回答生成 | 質問画面に参照資料だけを表示 |
+| `[embedding]` | vector/hybrid検索、vector RAG、vector indexへの文書登録 | lexical検索だけを使用 |
+
+`web/config.toml`はtokenを含む可能性があるためgitignore対象です。設定例をコピーし、使わないセクションを
+削除してからmodel identifierなどを編集します。`start_demo.sh`とproductionの`npm start`はこのファイルを
+自動的に読み込みます。
 
 ```sh
 cd examples/wikipedia-search/web
@@ -343,6 +354,59 @@ LM Studioのmodel identifierと互換endpointは
 [LM Studio Chat Completions](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)を確認してください。
 別の互換serverでは、そのserverが`reasoning_effort`を受け付けるかを確認してください。
 
+### vector embedding
+
+意味検索、hybrid検索、vector indexへの文書登録には`web/config.toml`の`[embedding]`を使用します。
+vector index自体の作成方法とEmbeddingGemmaをLM Studio/Ollamaで動かす準備は、
+[1000記事向けvector index構築手順](docs/vector-search.md)を先に確認してください。`[embedding]`を省略した場合は
+lexical検索だけが有効で、embedding serverへの接続は行いません。
+
+LM Studioを利用する例です。`model`にはLM Studioがembedding endpointで受け付けるmodel identifierを指定します。
+
+```toml
+[embedding]
+provider = "lmstudio"
+base_url = "http://127.0.0.1:1234/v1"
+model = "LM Studioに表示されたEmbeddingGemmaのmodel identifier"
+index_model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+profile = "embeddinggemma"
+timeout_ms = 60000
+batch_size = 16
+# API token認証を有効にした場合だけ設定します。
+# authorization_token = "replace-with-embedding-api-token"
+```
+
+Ollamaを利用する場合は接続先とmodelを次のように変更します。
+
+```toml
+[embedding]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "embeddinggemma"
+index_model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+profile = "embeddinggemma"
+timeout_ms = 60000
+batch_size = 16
+```
+
+| `[embedding]`設定 | 必須 | 用途 |
+|---|---|---|
+| `provider` | はい | `lmstudio`または`ollama`。呼び出すembedding API形式を選択 |
+| `base_url` | はい | LM Studioでは`/v1`を含むURL、Ollamaではserverのbase URL |
+| `model` | はい | embedding APIへ渡すmodel identifier。index作成時と同じmodelを使用 |
+| `index_model_id` | いいえ | `config.vector.toml`の`vector.model_id`。指定時はindexのreadiness情報との一致を検証 |
+| `dimensions` | いいえ | vectorの次元数。既定は`768`で、indexの`vector.dimensions`と一致させる |
+| `profile` | いいえ | query/documentへ付けるprompt形式。既定は`embeddinggemma`、独自promptが不要なら`plain` |
+| `authorization_token` | いいえ | BFFがembedding serverへ`Authorization: Bearer ...`として送るtoken |
+| `timeout_ms` | いいえ | embedding応答timeout。既定は`60000`、範囲は`1000`–`600000` |
+| `batch_size` | いいえ | 文書登録時に一度にembeddingするpassage数。既定は`16`、範囲は`1`–`1024` |
+
+`authorization_token`には`Bearer `を付けずtoken本体だけを書きます。`[llm]`と`[embedding]`は独立しており、
+回答生成modelとembedding modelは別々に指定できます。BFFだけが設定を読み、tokenをBrowserへ返しません。
+設定変更後はWeb processを再起動してください。
+
 ### production build
 
 ```sh
@@ -358,15 +422,6 @@ productionではFastifyがbuild済みUIも配信します。標準URLは`http://
 | `YAPPOD_URL` | `http://127.0.0.1:18400` | BFFから接続するfront URL |
 | `YAPPOD_WRITE_TOKEN` | 未設定 | 文書登録時だけBFFがBearer headerへ設定 |
 | `YAPPOD_TIMEOUT_MS` | `5000` | BFFからdaemonへのtimeout |
-| `EMBEDDING_PROVIDER` | 未設定 | `lmstudio`または`ollama`。未設定時はlexicalのみ |
-| `EMBEDDING_BASE_URL` | 未設定 | LM Studioの`/v1`を含むURL、またはOllamaのbase URL |
-| `EMBEDDING_MODEL` | 未設定 | index作成時と同じembedding model ID |
-| `EMBEDDING_INDEX_MODEL_ID` | 未設定 | `config.vector.toml`のmodel ID。設定時はreadinessで一致を検証 |
-| `EMBEDDING_DIMENSIONS` | `768` | indexのvector次元数 |
-| `EMBEDDING_PROFILE` | `embeddinggemma` | prompt形式。別モデルでは`plain` |
-| `EMBEDDING_API_KEY` | 未設定 | 必要な場合だけembedding serverへ渡すBearer token |
-| `EMBEDDING_TIMEOUT_MS` | `60000` | embedding生成のtimeout |
-| `EMBEDDING_BATCH_SIZE` | `16` | 文書登録時のpassage batch数 |
 | `HOST` | `127.0.0.1` | BFFのlisten address |
 | `PORT` | `4173` | BFFのlisten port |
 

@@ -12,6 +12,7 @@ web_host=${YAPPOD_WEB_HOST:-127.0.0.1}
 web_port=${YAPPOD_WEB_PORT:-4173}
 mock_host=${YAPPOD_MOCK_LLM_HOST:-127.0.0.1}
 mock_port=${YAPPOD_MOCK_LLM_PORT:-1234}
+mock_embedding_dimensions=${MOCK_EMBEDDING_DIMENSIONS:-3}
 mock_enabled=${YAPPOD_DEMO_MOCK_LLM:-0}
 web_config="$web_dir/config.toml"
 cleanup_needed=0
@@ -114,6 +115,11 @@ if [ "$mock_enabled" -eq 1 ]; then
     printf '%s\n' '[llm]'
     printf 'base_url = "http://%s:%s/v1"\n' "$mock_host" "$mock_port"
     printf '%s\n' 'model = "yappod-demo-mock"' 'effort = "low"' 'timeout_ms = 30000'
+    printf '%s\n' '' '[embedding]' 'provider = "lmstudio"'
+    printf 'base_url = "http://%s:%s/v1"\n' "$mock_host" "$mock_port"
+    printf '%s\n' 'model = "yappod-demo-mock"'
+    printf 'dimensions = %s\n' "$mock_embedding_dimensions"
+    printf '%s\n' 'profile = "plain"' 'timeout_ms = 60000' 'batch_size = 16'
   } >"$web_config"
 fi
 

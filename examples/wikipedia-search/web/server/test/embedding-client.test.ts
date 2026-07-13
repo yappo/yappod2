@@ -79,7 +79,7 @@ describe("EmbeddingClient", () => {
       model: "embeddinggemma",
       dimensions: 3,
       timeoutMs: 1000,
-      apiKey: key,
+      authorizationToken: key,
       fetchImpl: fakeFetch(Response.json({ data: [{ index: 0, embedding: [1, 2] }] })),
     });
     try {

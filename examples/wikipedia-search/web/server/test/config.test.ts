@@ -19,9 +19,54 @@ afterEach(async () => {
 });
 
 describe("web config", () => {
-  it("treats a missing config file as an unconfigured LLM", async () => {
+  it("treats a missing config file as an unconfigured web application", async () => {
     const path = join(tmpdir(), `missing-yappod-config-${process.pid}.toml`);
     await expect(loadWebConfig(path)).resolves.toEqual({});
+  });
+
+  it("loads embedding settings separately from LLM settings", async () => {
+    const path = await configFile(`
+[embedding]
+provider = "lmstudio"
+base_url = "http://127.0.0.1:1234/v1"
+model = "embedding-model"
+index_model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+profile = "embeddinggemma"
+authorization_token = "embedding-secret"
+timeout_ms = 45000
+batch_size = 8
+`);
+    await expect(loadWebConfig(path)).resolves.toEqual({
+      embedding: {
+        provider: "lmstudio",
+        baseUrl: "http://127.0.0.1:1234/v1",
+        model: "embedding-model",
+        indexModelId: "embeddinggemma-300m-768-local-v1",
+        dimensions: 768,
+        profile: "embeddinggemma",
+        authorizationToken: "embedding-secret",
+        timeoutMs: 45000,
+        batchSize: 8,
+      },
+    });
+  });
+
+  it("applies embedding defaults and rejects invalid embedding settings", async () => {
+    const defaults = await configFile("[embedding]\nprovider='ollama'\nbase_url='http://localhost:11434'\nmodel='embeddinggemma'\n");
+    await expect(loadWebConfig(defaults)).resolves.toEqual({
+      embedding: {
+        provider: "ollama",
+        baseUrl: "http://localhost:11434",
+        model: "embeddinggemma",
+        dimensions: 768,
+        profile: "embeddinggemma",
+        timeoutMs: 60000,
+        batchSize: 16,
+      },
+    });
+    const invalid = await configFile("[embedding]\nprovider='other'\nbase_url='http://localhost:1'\nmodel='m'\n");
+    await expect(loadWebConfig(invalid)).rejects.toThrow("embedding.provider must be lmstudio or ollama");
   });
 
   it("loads model, effort, timeout and authorization token from TOML", async () => {
