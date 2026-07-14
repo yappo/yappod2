@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yappod2-sample-local-format"
+version = "0.1.0"
+description = "Sample MarkItDown plugin for the yappod2 local-files example"
+requires-python = ">=3.10"
+dependencies = ["markitdown==0.1.6"]
+
+[project.entry-points."markitdown.plugin"]
+yappod2_sample_local_format = "yappod2_sample_local_format"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yappod2_sample_local_format"]
