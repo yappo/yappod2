@@ -28,6 +28,26 @@ directory = "./data/yappod2-documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
+[prepare]
+directory = "./data/yappod2-passages"
+
+[embedding]
+directory = "./data/yappod2-vectors"
+provider = "lmstudio"
+base_url = "http://127.0.0.1:1234/v1"
+model = "replace-with-embedding-model"
+model_id = "local-files-embedding-768-v1"
+dimensions = 768
+batch_size = 16
+timeout_ms = 60000
+prompt_profile = "plain"
+
+[build]
+yappo_makeindex = "../../build/yappo_makeindex"
+index_config = "./config.lexical.toml"
+hybrid_index_config = "./config.hybrid.toml"
+index_directory = "./data/yappod2-index"
+
 [extract]
 max_extracted_bytes = 67108864
 enable_plugins = false

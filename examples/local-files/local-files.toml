@@ -17,6 +17,28 @@ directory = "./data/documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
+# このfileは設定項目のsampleです。copyして入力・出力pathを変更して使います。
+# `rag`/`hybrid`では[prepare]、`hybrid`では[embedding]も有効にします。
+# [prepare]
+# directory = "./data/passages"
+#
+# [embedding]
+# directory = "./data/vectors"
+# provider = "lmstudio" # lmstudio | ollama | openai
+# base_url = "http://127.0.0.1:1234/v1"
+# model = "replace-with-embedding-model"
+# model_id = "local-files-embedding-768-v1"
+# dimensions = 768
+# batch_size = 16
+# timeout_ms = 60000
+# prompt_profile = "plain" # plain | embeddinggemma
+#
+# [build]
+# yappo_makeindex = "../../build/yappo_makeindex"
+# index_config = "./config.lexical.toml"
+# hybrid_index_config = "./config.hybrid.toml"
+# index_directory = "./data/index"
+
 [extract]
 enable_plugins = false
 max_extracted_bytes = 67108864

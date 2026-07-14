@@ -1,10 +1,13 @@
 import dataclasses
 import importlib.util
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import types
 import unittest
 from unittest import mock
@@ -16,6 +19,37 @@ assert SPEC is not None and SPEC.loader is not None
 local_files = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = local_files
 SPEC.loader.exec_module(local_files)
+
+
+class EmbeddingHandler(BaseHTTPRequestHandler):
+    calls = 0
+    fail_on = None
+
+    def do_POST(self):
+        type(self).calls += 1
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if type(self).fail_on == type(self).calls:
+            self.send_response(500)
+            self.end_headers()
+            return
+        inputs = payload.get("input", [])
+        body = json.dumps(
+            {
+                "data": [
+                    {"index": index, "embedding": [1.0, float(index), 0.5]}
+                    for index, _ in enumerate(inputs)
+                ]
+            }
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        del format, args
 
 
 class LocalFilesTest(unittest.TestCase):
@@ -74,6 +108,114 @@ class LocalFilesTest(unittest.TestCase):
             path = self.output / descriptor["path"]
             records.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
         return records
+
+    def start_embedding_server(self):
+        EmbeddingHandler.calls = 0
+        EmbeddingHandler.fail_on = None
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), EmbeddingHandler)
+        except PermissionError:
+            self.skipTest("the test environment does not allow a loopback embedding server")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def write_index_configs(self, directory):
+        lexical = directory / "config.lexical.toml"
+        hybrid = directory / "config.hybrid.toml"
+        common = textwrap.dedent(
+            """
+            format_version = 2
+            [tokenizer]
+            id = "unicode_nfkc_casefold_v2"
+            [chunking]
+            max_chars = 32
+            overlap_chars = 4
+            """
+        )
+        lexical.write_text(
+            common
+            + textwrap.dedent(
+                """
+                [vector]
+                enabled = false
+                [metadata]
+                filterable_fields = ["collection_id", "source_path"]
+                """
+            ),
+            encoding="utf-8",
+        )
+        hybrid.write_text(
+            common
+            + textwrap.dedent(
+                """
+                [vector]
+                enabled = true
+                model_id = "fixture-3d-v1"
+                dimensions = 3
+                metric = "cosine"
+                [metadata]
+                filterable_fields = ["collection_id", "source_path"]
+                """
+            ),
+            encoding="utf-8",
+        )
+        return lexical, hybrid
+
+    def write_pipeline_config(self, directory, server, *, batch_size=2):
+        root = directory / "input"
+        root.mkdir()
+        (root / "alpha.txt").write_text("alpha searchable source", encoding="utf-8")
+        (root / "beta.txt").write_text("beta searchable source", encoding="utf-8")
+        lexical, hybrid = self.write_index_configs(directory)
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        config = directory / "local-files.toml"
+        config.write_text(
+            textwrap.dedent(
+                f"""
+                schema_version = 1
+                collection_id = "pipeline-fixture"
+                [input]
+                root = {json.dumps(str(root))}
+                include = ["*", "**/*"]
+                exclude = []
+                follow_symlinks = false
+                [output]
+                directory = {json.dumps(str(directory / "documents"))}
+                shard_max_bytes = 500
+                body_max_bytes = 1000000
+                [prepare]
+                directory = {json.dumps(str(directory / "passages"))}
+                [embedding]
+                directory = {json.dumps(str(directory / "vectors"))}
+                provider = "openai"
+                base_url = "http://127.0.0.1:{server.server_port}/v1"
+                model = "fixture-model"
+                model_id = "fixture-3d-v1"
+                dimensions = 3
+                batch_size = {batch_size}
+                timeout_ms = 5000
+                prompt_profile = "plain"
+                [build]
+                yappo_makeindex = {json.dumps(str(makeindex))}
+                index_config = {json.dumps(str(lexical))}
+                hybrid_index_config = {json.dumps(str(hybrid))}
+                index_directory = {json.dumps(str(directory / "index"))}
+                [extract]
+                max_extracted_bytes = 1048576
+                enable_plugins = false
+                tika_timeout_ms = 30000
+                [formatters]
+                enabled = false
+                content_match_enabled = false
+                content_scan_bytes = 1048576
+                """
+            ),
+            encoding="utf-8",
+        )
+        return config
 
     def test_document_id_is_path_based_stable_and_bounded(self):
         relative = local_files.normalize_relative_path(
@@ -342,6 +484,295 @@ class LocalFilesTest(unittest.TestCase):
 
         self.assertEqual(text.strip(), "keynote text")
         self.assertEqual(extractor, "tika")
+
+    def test_all_runs_only_the_stages_required_by_each_target(self):
+        self.write_config()
+        settings = local_files.load_settings(self.config)
+        documents = {
+            "total_records": 2,
+            "total_bytes": 200,
+            "failure_count": 0,
+            "shards": [{"path": "documents-000001.ndjson"}],
+        }
+        passages = {
+            "total_records": 3,
+            "total_bytes": 300,
+            "shards": [{"path": "passages-000001.ndjson"}],
+        }
+        vectors = {
+            "total_records": 2,
+            "total_bytes": 400,
+            "passage_count": 3,
+            "shards": [{"path": "documents-000001.ndjson"}],
+        }
+        expected = {
+            "documents": (1, 0, 0, []),
+            "lexical": (1, 0, 0, ["lexical"]),
+            "rag": (1, 1, 0, ["rag"]),
+            "hybrid": (1, 1, 1, ["hybrid"]),
+        }
+        for target, calls in expected.items():
+            with self.subTest(target=target), \
+                    mock.patch.object(local_files, "convert", return_value=documents) as convert, \
+                    mock.patch.object(
+                        local_files, "prepare_passages", return_value=passages
+                    ) as prepare, \
+                    mock.patch.object(
+                        local_files, "embed_documents", return_value=vectors
+                    ) as embed, \
+                    mock.patch.object(
+                        local_files,
+                        "build_index",
+                        side_effect=lambda _settings, selected: {
+                            "target": selected,
+                            "accepted": 2,
+                        },
+                    ) as build:
+                result = local_files.run_all(settings, target)
+
+            self.assertEqual(result["target"], target)
+            self.assertEqual(convert.call_count, calls[0])
+            self.assertEqual(prepare.call_count, calls[1])
+            self.assertEqual(embed.call_count, calls[2])
+            self.assertEqual([call.args[1] for call in build.call_args_list], calls[3])
+
+    def test_all_targets_run_end_to_end_and_hybrid_index_is_searchable(self):
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        search = MODULE_PATH.parents[2] / "build" / "search"
+        if not makeindex.is_file() or not search.is_file():
+            self.skipTest("build/yappo_makeindex and build/search are required")
+        server = self.start_embedding_server()
+        for target in ("documents", "lexical", "rag", "hybrid"):
+            with self.subTest(target=target):
+                directory = self.base / f"pipeline-{target}"
+                directory.mkdir()
+                config = self.write_pipeline_config(directory, server)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(MODULE_PATH),
+                        "all",
+                        "--config",
+                        str(config),
+                        "--target",
+                        target,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                summary = json.loads(completed.stdout)
+                self.assertEqual(summary["target"], target)
+                self.assertTrue((directory / "documents" / "manifest.json").is_file())
+                self.assertEqual(
+                    (directory / "passages").exists(), target in {"rag", "hybrid"}
+                )
+                self.assertEqual((directory / "vectors").exists(), target == "hybrid")
+                self.assertEqual((directory / "index").exists(), target != "documents")
+
+                if target == "hybrid":
+                    vector_manifest = json.loads(
+                        (directory / "vectors" / "manifest.json").read_text(encoding="utf-8")
+                    )
+                    vector_records = list(
+                        local_files._iter_ndjson(
+                            [directory / "vectors" / item["path"]
+                             for item in vector_manifest["shards"]],
+                            "vector document",
+                        )
+                    )
+                    self.assertEqual(len(vector_records), 2)
+                    self.assertTrue(all(record["vectors"] for record in vector_records))
+                    for mode, arguments in (
+                        ("lexical", ["--query", "alpha"]),
+                        ("vector", ["--vector", "1,0,0.5"]),
+                        (
+                            "hybrid",
+                            ["--query", "alpha", "--vector", "1,0,0.5"],
+                        ),
+                    ):
+                        searched = subprocess.run(
+                            [
+                                str(search),
+                                "--index",
+                                str(directory / "index"),
+                                "--mode",
+                                mode,
+                                "--scope",
+                                "documents",
+                                *arguments,
+                            ],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                        )
+                        self.assertEqual(searched.returncode, 0, searched.stderr)
+                        self.assertTrue(searched.stdout.strip())
+
+    def test_source_identifier_queries_record_actual_tokenizer_behavior(self):
+        search = MODULE_PATH.parents[2] / "build" / "search"
+        if not search.is_file():
+            self.skipTest("build/search is required")
+        directory = self.base / "identifier-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        (directory / "input" / "symbols.c").write_text(
+            "snake_case_identifier camelCaseIdentifier "
+            "Namespace::QualifiedName ++ ->\n",
+            encoding="utf-8",
+        )
+        settings = local_files.load_settings(config)
+        local_files.run_all(settings, "lexical")
+
+        expected_totals = {
+            "snake_case_identifier": 1,
+            "camelCaseIdentifier": 1,
+            "camel": 0,
+            "QualifiedName": 1,
+            "Namespace::QualifiedName": 1,
+            "++": 0,
+            "->": 0,
+        }
+        for query, expected_total in expected_totals.items():
+            with self.subTest(query=query):
+                completed = subprocess.run(
+                    [
+                        str(search),
+                        "--index",
+                        str(directory / "index"),
+                        "--mode",
+                        "lexical",
+                        "--scope",
+                        "documents",
+                        "--query",
+                        query,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(json.loads(completed.stdout)["total"], expected_total)
+
+    def test_embedding_checkpoint_resumes_and_rejects_configuration_mismatch(self):
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        if not makeindex.is_file():
+            self.skipTest("build/yappo_makeindex is required")
+        server = self.start_embedding_server()
+        directory = self.base / "checkpoint-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(directory, server, batch_size=1)
+        settings = local_files.load_settings(config)
+        local_files.convert(settings)
+        local_files.prepare_passages(settings)
+
+        EmbeddingHandler.fail_on = 2
+        with self.assertRaisesRegex(local_files.LocalFilesError, "HTTP 500"):
+            local_files.embed_documents(settings)
+        work = directory / ".vectors.work"
+        self.assertTrue((work / "input-000001" / "checkpoint.json").is_file())
+        self.assertFalse((directory / "vectors").exists())
+
+        assert settings.embedding is not None
+        mismatched = dataclasses.replace(
+            settings,
+            embedding=dataclasses.replace(settings.embedding, model="different-model"),
+        )
+        previous_calls = EmbeddingHandler.calls
+        with self.assertRaisesRegex(local_files.LocalFilesError, "configuration mismatch"):
+            local_files.embed_documents(mismatched)
+        self.assertEqual(EmbeddingHandler.calls, previous_calls)
+
+        EmbeddingHandler.fail_on = None
+        manifest = local_files.embed_documents(settings)
+        self.assertEqual(manifest["total_records"], 2)
+        self.assertEqual(EmbeddingHandler.calls, previous_calls + 1)
+        self.assertTrue((directory / "vectors" / "manifest.json").is_file())
+        self.assertFalse(work.exists())
+
+    def test_build_rejects_corrupt_shard_without_publishing_index(self):
+        directory = self.base / "corrupt-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        manifest = local_files.convert(settings)
+        shard = directory / "documents" / manifest["shards"][0]["path"]
+        with shard.open("ab") as output:
+            output.write(b"corrupt\n")
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "verification failed"):
+            local_files.build_index(settings, "lexical")
+
+        self.assertFalse((directory / "index").exists())
+        self.assertEqual(list(directory.glob(".index.tmp.*")), [])
+
+    def test_build_process_failure_does_not_publish_or_leave_staging(self):
+        directory = self.base / "failed-build-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        local_files.convert(settings)
+        invalid_config = directory / "invalid-index.toml"
+        invalid_config.write_text("not valid TOML =", encoding="utf-8")
+        settings = dataclasses.replace(settings, index_config=invalid_config)
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "exited with"):
+            local_files.build_index(settings, "lexical")
+
+        self.assertFalse((directory / "index").exists())
+        self.assertEqual(list(directory.glob(".index.tmp.*")), [])
+
+    def test_producer_failure_does_not_publish_or_leave_staging(self):
+        directory = self.base / "failed-producer-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        local_files.convert(settings)
+
+        def fail_before_fifo(_fifo, _shards, errors):
+            errors.append(RuntimeError("fixture producer failure"))
+
+        with mock.patch.object(
+            local_files, "_stream_document_shards", side_effect=fail_before_fifo
+        ), self.assertRaisesRegex(local_files.LocalFilesError, "fixture producer failure"):
+            local_files.build_index(settings, "lexical")
+
+        self.assertFalse((directory / "index").exists())
+        self.assertEqual(list(directory.glob(".index.tmp.*")), [])
+
+    def test_ollama_embedding_response_uses_configured_dimensions(self):
+        embedding = local_files.EmbeddingConfig(
+            provider="ollama",
+            base_url="http://127.0.0.1:11434",
+            model="fixture",
+            model_id="fixture-2d-v1",
+            dimensions=2,
+            batch_size=4,
+            timeout_ms=1000,
+            prompt_profile="plain",
+            authorization_token=None,
+        )
+        with mock.patch.object(
+            local_files,
+            "_post_embedding_json",
+            return_value={"embeddings": [[1, 2], [3.5, 4]]},
+        ) as posted:
+            vectors = local_files._embedding_batch(embedding, ["one", "two"])
+
+        self.assertEqual(vectors, [[1.0, 2.0], [3.5, 4.0]])
+        posted.assert_called_once_with(embedding, ["one", "two"])
 
     def test_existing_output_is_not_overwritten(self):
         (self.root / "good.txt").write_text("good", encoding="utf-8")
