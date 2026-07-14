@@ -240,7 +240,7 @@ adapterはproviderの違いを吸収し、次の処理を行います。
 ../../build/yappo_makeindex build \
   --config config.vector.toml \
   --input data/documents.vector.ndjson \
-  --index ./index-embeddinggemma
+  --index ./data/index-embeddinggemma
 ```
 
 `build`は既存directoryを上書きしません。config、モデルまたはvectorを変更して再作成する場合は、
@@ -249,7 +249,7 @@ adapterはproviderの違いを吸収し、次の処理を行います。
 daemonを起動します。
 
 ```sh
-./scripts/start_daemons.sh ./index-embeddinggemma
+./scripts/start_daemons.sh ./data/index-embeddinggemma
 ```
 
 ## vector検索とhybrid検索を確認する
@@ -344,7 +344,7 @@ profile = "embeddinggemma"
 ```
 
 ```sh
-./scripts/start_demo.sh data/documents.vector.ndjson ./index-embeddinggemma
+./scripts/start_demo.sh data/documents.vector.ndjson ./data/index-embeddinggemma
 ```
 
 Ollamaの場合:
@@ -360,7 +360,7 @@ profile = "embeddinggemma"
 ```
 
 ```sh
-./scripts/start_demo.sh data/documents.vector.ndjson ./index-embeddinggemma
+./scripts/start_demo.sh data/documents.vector.ndjson ./data/index-embeddinggemma
 ```
 
 BFFはquery promptを付けてembeddingを生成し、vector/hybrid検索とRAGへ渡します。vector indexへの
