@@ -18,6 +18,8 @@ exclude = [
   "**/__pycache__/**",
   "**/node_modules/**",
   "examples/local-files/data/**",
+  "examples/wikipedia-search/index/**",
+  "examples/wikipedia-search/data/**",
 ]
 follow_symlinks = false
 
