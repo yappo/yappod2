@@ -4,9 +4,9 @@
 yappod2が正式入力として扱うcanonical NDJSONへ変換するサンプルです。大量の文書を1個の巨大な
 JSONへ詰めず、`documents-000001.ndjson`のような複数shardへ分けて出力します。
 
-現在このdirectoryで実装済みなのは`convert` stageです。完成時には、同じmanifestを使って
-passage生成、任意のembedding、複数shardから単一indexを作るFIFO buildを追加します。未実装の
-commandを実装済みとして扱わないため、現時点の手順はdocuments shard生成までを説明します。
+このdirectoryのPython CLIで実装済みなのは`convert` stageです。生成したdocuments shardは、既存の
+`yappo_makeindex build`へFIFOで渡してlexical indexにできます。完成時には、同じmanifestを使った
+passage生成、任意のembedding、target別buildをPython CLIへ追加します。
 
 ## 何ができるか
 
@@ -20,7 +20,7 @@ commandを実装済みとして扱わないため、現時点の手順はdocumen
 
 OCR、archiveの再帰展開、symlink追跡、source codeのAST解析は既定では行いません。
 
-## まず試す: yappod2 repository自身をdocumentsにする
+## まず試す: yappod2 repository自身をdocumentsにして検索する
 
 このrepositoryをclone済みなら、入力fileを別directoryへコピーせずに試せます。専用の
 `local-files-yappod2.toml`はrepository rootを走査し、`.git/**`、`build/**`、`node_modules/**`、
@@ -68,8 +68,98 @@ head -n 1 examples/local-files/data/yappod2-documents/documents-000001.ndjson
 
 同じ出力directoryがすでに存在する場合、converterは上書きしません。もう一度試す場合は、必要な
 生成物を利用者自身で退避または削除するか、設定の`output.directory`を別名へ変更してください。
-現時点ではこの手順はcanonical documents shardの生成までです。検索indexへの登録は後続taskで追加する
-FIFO build stageを使用します。未実装のcommandを前提にした手順はここには記載していません。
+
+### lexical indexを作る
+
+repository rootで、生成済みdocuments shardを既存`yappo_makeindex build`へ渡します。専用の
+`config.lexical.toml`はvectorを無効にしているため、embeddingやvectorは不要です。
+
+build CLIが受け取る`--input`は1個なので、複数shardをmanifest順のfile名でFIFOへ流します。固定幅の
+shard番号を使っているため、shellの`documents-*.ndjson`は生成順になります。NDJSON shard境界はindex
+segment境界ではありません。
+
+```sh
+SHARD_DIR="examples/local-files/data/yappod2-documents"
+INDEX="${TMPDIR:-/tmp}/yappod2-local-files-index"
+FIFO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yappod2-local-files.XXXXXX")"
+FIFO="$FIFO_DIR/documents.ndjson"
+
+if [ -e "$INDEX" ]; then
+  echo "index already exists: $INDEX" >&2
+  exit 1
+fi
+if [ ! -x ./build/yappo_makeindex ] || [ ! -x ./build/search ]; then
+  echo "run cmake --build build -j first" >&2
+  exit 1
+fi
+if [ ! -f "$SHARD_DIR/documents-000001.ndjson" ]; then
+  echo "document shards do not exist: $SHARD_DIR" >&2
+  exit 1
+fi
+
+mkfifo "$FIFO"
+(
+  for shard in "$SHARD_DIR"/documents-*.ndjson; do
+    test -f "$shard" || exit 1
+    cat "$shard" || exit 1
+  done
+) >"$FIFO" &
+PRODUCER_PID=$!
+
+if ./build/yappo_makeindex build \
+    --config examples/local-files/config.lexical.toml \
+    --input "$FIFO" \
+    --index "$INDEX"; then
+  BUILD_STATUS=0
+else
+  BUILD_STATUS=$?
+  kill "$PRODUCER_PID" 2>/dev/null || true
+fi
+
+if wait "$PRODUCER_PID"; then
+  PRODUCER_STATUS=0
+else
+  PRODUCER_STATUS=$?
+fi
+rm -f "$FIFO"
+rmdir "$FIFO_DIR"
+
+if [ "$BUILD_STATUS" -ne 0 ] || [ "$PRODUCER_STATUS" -ne 0 ]; then
+  echo "index build failed" >&2
+  exit 1
+fi
+```
+
+成功するとbuild summaryが表示され、`$INDEX`に`config.toml`、`manifest.json`、`segments/`が
+作られます。`accepted`はFIFOから受理したdocument operation数です。
+
+```json
+{"generation":2,"accepted":231}
+```
+
+これは実行例です。`accepted`はその時点のrepository内容と本文分割数によって変わります。
+
+既存indexは上書きしないため、同じpathで作り直す場合は古いindexを退避するか、`INDEX`を別pathへ
+変更してください。この手順は複数shardを1 streamへ連結しますが、256 MiB component上限を回避する
+自動segment分割ではありません。
+
+### source codeを検索する
+
+作成したindexをdocument scopeのlexical modeで検索します。
+
+```sh
+./build/search \
+  --index "$INDEX" \
+  --mode lexical \
+  --scope documents \
+  --query yappo_makeindex \
+  --limit 10
+```
+
+結果にはscore、document ID、title、body snippetが含まれます。titleはroot相対pathなので、
+`src/yappo_makeindex.c`のようなfile名・pathも検索対象です。別の例として`segment_write`、`BM25`、
+READMEに含まれる語などをqueryへ指定できます。operator記号やAST検索など、source code検索の制約は
+[Source code検索の性質](#source-code検索の性質)を参照してください。
 
 ## 必要環境
 
