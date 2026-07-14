@@ -24,8 +24,16 @@ import xml.etree.ElementTree as ElementTree
 
 try:
     import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib  # type: ignore[no-redef]
+except ModuleNotFoundError:  # Python 3.9-3.10
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        print(
+            "local-files: TOML parser is unavailable; run "
+            "python3 -m pip install -r examples/local-files/requirements-core.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 SCHEMA_VERSION = 1
