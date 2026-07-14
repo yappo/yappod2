@@ -1,0 +1,47 @@
+schema_version = 1
+collection_id = "my-files"
+
+[input]
+root = "./input"
+include = ["*", "**/*"]
+exclude = [
+  ".git/**",
+  ".venv/**",
+  "__pycache__/**",
+  "data/**",
+]
+follow_symlinks = false
+
+[output]
+directory = "./data/documents"
+shard_max_bytes = 67108864
+body_max_bytes = 1000000
+
+[extract]
+enable_plugins = false
+max_extracted_bytes = 67108864
+tika_timeout_ms = 30000
+# Tikaは自動downloadしません。iWorkや旧Office形式が必要な場合だけ設定します。
+# tika_command = ["java", "-jar", "/absolute/path/to/tika-app-3.3.1.jar", "--text", "{path}"]
+
+[formatters]
+enabled = true
+content_match_enabled = false
+content_scan_bytes = 1048576
+
+# path条件だけで独自整形scriptを実行する例です。
+# [[formatters.rules]]
+# name = "dockerfile"
+# basename_glob = ["Dockerfile"]
+# command = ["python3", "./tools/format_dockerfile.py", "{path}"]
+# timeout_ms = 30000
+# max_stdout_bytes = 67108864
+
+# path条件を満たしたfileだけ、先頭1 MiBの内容も調べる例です。
+# [[formatters.rules]]
+# name = "special-c-source"
+# path_glob = ["src/**/*.c"]
+# content_regex = ["(?m)^SPECIAL_FORMAT="]
+# command = ["python3", "./tools/format_special.py", "{path}"]
+# timeout_ms = 30000
+# max_stdout_bytes = 67108864
