@@ -6,6 +6,7 @@
 #include "yappo_manifest_v2.h"
 #include "yappo_metadata_v2.h"
 #include "yappo_observability_v2.h"
+#include "yappo_segment_planner_v2.h"
 #include "yappo_snapshot_v2.h"
 #include "yappo_vector_v2.h"
 #include "yappo_writer_lock_v2.h"
@@ -97,52 +98,6 @@ static int sync_directory(const char *path) {
   return status;
 }
 
-static int write_segment(const char *directory, const char *segment_id, uint64_t generation,
-                         const YAP_V2_CONFIG *config, const YAP_V2_DOCUMENT_VIEW *documents,
-                         size_t document_count, const YAP_V2_PASSAGE_VIEW *passages,
-                         size_t passage_count, const float *vectors,
-                         YAP_V2_SEGMENT_DESCRIPTOR *descriptor) {
-  char path[4096]; size_t i; int status;
-  if (join_path(path, sizeof(path), directory, "documents.yap2") != 0) return YAP_V2_OUT_OF_RANGE;
-  status = YAP_V2_segment_write(path, segment_id, generation, documents, document_count,
-                                passages, passage_count, descriptor);
-  if (status == YAP_V2_OK && document_count != 0U) {
-    YAP_V2_COMPONENT_DESCRIPTOR lexical[3], metadata;
-    status = YAP_V2_lexical_write(directory, generation, documents, document_count,
-                                  passages, passage_count, lexical);
-    for (i = 0U; status == YAP_V2_OK && i < 3U; i++)
-      status = YAP_V2_segment_descriptor_add_component(descriptor, &lexical[i]);
-    if (status == YAP_V2_OK && join_path(path, sizeof(path), directory, "metadata.yap2") == 0)
-      status = YAP_V2_metadata_write(path, generation, config, documents, document_count, &metadata);
-    else if (status == YAP_V2_OK) status = YAP_V2_OUT_OF_RANGE;
-    if (status == YAP_V2_OK)
-      status = YAP_V2_segment_descriptor_add_component(descriptor, &metadata);
-  }
-  if (status == YAP_V2_OK && config->vector_metric != YAP_V2_VECTOR_DISABLED && passage_count != 0U) {
-    YAP_V2_COMPONENT_DESCRIPTOR vector_component, ann_component;
-    YAP_EMBEDDING_RESULT embeddings; YAP_V2_VECTOR_SEGMENT vector_segment;
-    embeddings.values = (float *)vectors; embeddings.input_count = passage_count;
-    embeddings.dimensions = config->vector_dimensions;
-    if (join_path(path, sizeof(path), directory, "vectors.yap2") != 0) status = YAP_V2_OUT_OF_RANGE;
-    else status = YAP_V2_vectors_write(path, generation, config, passages, passage_count,
-                                       &embeddings, &vector_component);
-    if (status == YAP_V2_OK)
-      status = YAP_V2_segment_descriptor_add_component(descriptor, &vector_component);
-    YAP_V2_vector_segment_init(&vector_segment);
-    if (status == YAP_V2_OK)
-      status = YAP_V2_vector_segment_open(path, generation, config, &vector_segment, NULL);
-    if (status == YAP_V2_OK && join_path(path, sizeof(path), directory, "vectors.usearch") == 0) {
-      if (YAP_V2_ann_build_save(path, &vector_segment, 16U, 128U, 64U, &ann_component) != YAP_ANN_OK)
-        status = YAP_V2_CONFLICT;
-    } else if (status == YAP_V2_OK) status = YAP_V2_OUT_OF_RANGE;
-    YAP_V2_vector_segment_close(&vector_segment);
-    if (status == YAP_V2_OK)
-      status = YAP_V2_segment_descriptor_add_component(descriptor, &ann_component);
-  }
-  if (status == YAP_V2_OK) status = sync_directory(directory);
-  return status;
-}
-
 static int collect_live(const char *index_dir, const YAP_V2_CONFIG *config,
                         const YAP_V2_MANIFEST *manifest, YAP_V2_SEARCH_SNAPSHOT *snapshot,
                         YAP_V2_DOCUMENT_VIEW **documents_out, size_t *document_count_out,
@@ -213,20 +168,35 @@ done:
   free(vectors); free(documents); free(passages); free(values); return status;
 }
 
+void YAP_V2_compaction_result_init(YAP_V2_COMPACTION_RESULT *result) {
+  if (result != NULL) memset(result, 0, sizeof(*result));
+}
+
+void YAP_V2_compaction_result_free(YAP_V2_COMPACTION_RESULT *result) {
+  if (result == NULL) return;
+  YAP_V2_segment_id_list_free(&result->segment_ids);
+  memset(result, 0, sizeof(*result));
+}
+
 int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
                    char *error, size_t error_size) {
   YAP_V2_CONFIG config; YAP_V2_MANIFEST manifest, candidate; YAP_V2_SNAPSHOT_MANAGER manager;
-  YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL; YAP_V2_SEGMENT_DESCRIPTOR descriptor;
+  YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL;
   YAP_V2_DOCUMENT_VIEW *documents = NULL; YAP_V2_PASSAGE_VIEW *passages = NULL; float *vectors = NULL;
-  char config_path[4096], manifest_path[4096], segments_path[4096], segment_path[4096];
-  char config_error[256]; const char *segment_id = NULL; size_t documents_count = 0U, passages_count = 0U;
-  size_t removed_before = 0U, removed_after = 0U, segment_id_length = 0U;
+  YAP_V2_SEGMENT_UNIT *units = NULL; YAP_V2_SEGMENT_DESCRIPTOR *descriptors = NULL;
+  YAP_V2_SEGMENT_PLAN plan; YAP_V2_SEGMENT_CAPACITY_ERROR capacity_error;
+  char (*segment_paths)[4096] = NULL;
+  char config_path[4096], manifest_path[4096], segments_path[4096];
+  char config_error[256]; size_t documents_count = 0U, passages_count = 0U;
+  size_t removed_before = 0U, removed_after = 0U, i, passage_index = 0U;
+  size_t failed_slice = SIZE_MAX;
   uint64_t next_generation; int status = YAP_V2_OK, published = 0, status_started = 0;
   YAP_V2_WRITER_LOCK writer_lock;
   YAP_V2_manifest_init(&manifest); YAP_V2_manifest_init(&candidate); YAP_V2_snapshot_manager_init(&manager);
+  YAP_V2_segment_plan_init(&plan);
   YAP_V2_writer_lock_init(&writer_lock);
   if (index_dir == NULL || result == NULL) return YAP_V2_INVALID_ARGUMENT;
-  memset(result, 0, sizeof(*result));
+  YAP_V2_compaction_result_init(result);
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
       join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0 ||
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0) return YAP_V2_OUT_OF_RANGE;
@@ -250,21 +220,66 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   status = collect_live(index_dir, &config, &manifest, snapshot, &documents, &documents_count,
                         &passages, &passages_count, &vectors);
   if (status != YAP_V2_OK) { set_error(error, error_size, "cannot collect live records"); goto done; }
-  if (snprintf(segment_path, sizeof(segment_path), "%s/compact-%020llu-XXXXXX", segments_path,
-               (unsigned long long)next_generation) < 0 || mkdtemp(segment_path) == NULL) {
-    status = YAP_V2_IO_ERROR; goto done;
+  units = documents_count == 0U ? NULL : calloc(documents_count, sizeof(*units));
+  if (documents_count > 0U && units == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
+  for (i = 0U; i < documents_count; i++) {
+    size_t start = passage_index;
+    while (passage_index < passages_count &&
+           bytes_equal(passages[passage_index].parent_document_id, documents[i].id))
+      passage_index++;
+    units[i].document = &documents[i];
+    units[i].passages = passages + start;
+    units[i].passage_count = passage_index - start;
+    units[i].vectors = vectors == NULL ? NULL : vectors + start * config.vector_dimensions;
   }
-  segment_id = strrchr(segment_path, '/'); segment_id = segment_id == NULL ? segment_path : segment_id + 1;
-  segment_id_length = strlen(segment_id);
-  if (segment_id_length >= sizeof(result->segment_id)) { status = YAP_V2_OUT_OF_RANGE; goto done; }
-  status = write_segment(segment_path, segment_id, next_generation, &config, documents, documents_count,
-                         passages, passages_count, vectors, &descriptor);
+  if (passage_index != passages_count) { status = YAP_V2_CONFLICT; set_error(error, error_size, "passages are not grouped with their parent documents"); goto done; }
+  status = YAP_V2_segment_plan(&config, units, documents_count, 35U,
+                               YAP_V2_segment_planner_payload_limit(), &plan, &capacity_error);
+  if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
+    (void)snprintf(error, error_size,
+      "document '%.*s' requires %zu bytes in %s (limit %zu)",
+      (int)capacity_error.document_id.len, capacity_error.document_id.data,
+      capacity_error.required_bytes, capacity_error.component, capacity_error.limit_bytes);
+    goto done;
+  }
+  if (status != YAP_V2_OK) { set_error(error, error_size, "segment planning failed"); goto done; }
+write_segments:
+  failed_slice = SIZE_MAX;
+  if (YAP_V2_segment_count_validate(0U, plan.count) != YAP_V2_OK) {
+    status = YAP_V2_OUT_OF_RANGE; set_error(error, error_size, "index segment limit reached"); goto done;
+  }
+  descriptors = calloc(plan.count, sizeof(*descriptors));
+  segment_paths = calloc(plan.count, sizeof(*segment_paths));
+  if (descriptors == NULL || segment_paths == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
+  for (i = 0U; status == YAP_V2_OK && i < plan.count; i++) {
+    const char *segment_id;
+    if (snprintf(segment_paths[i], sizeof(segment_paths[i]), "%s/compact-%020llu-XXXXXX",
+                 segments_path, (unsigned long long)next_generation) < 0 ||
+        mkdtemp(segment_paths[i]) == NULL) { status = YAP_V2_IO_ERROR; break; }
+    segment_id = strrchr(segment_paths[i], '/');
+    segment_id = segment_id == NULL ? segment_paths[i] : segment_id + 1;
+    status = YAP_V2_segment_slice_write(segment_paths[i], segment_id, next_generation, &config,
+                                        units, &plan, plan.slices[i], &descriptors[i]);
+    if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) failed_slice = i;
+    if (status == YAP_V2_OK) status = YAP_V2_segment_id_list_add(&result->segment_ids, segment_id);
+  }
+  if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED && failed_slice < plan.count &&
+      plan.slices[failed_slice].count > 1U) {
+    for (i = 0U; i < plan.count; i++)
+      if (segment_paths[i][0] != '\0') (void)remove_segment_directory(segment_paths[i]);
+    free(descriptors); free(segment_paths); descriptors = NULL; segment_paths = NULL;
+    YAP_V2_segment_id_list_free(&result->segment_ids);
+    YAP_V2_segment_id_list_init(&result->segment_ids);
+    status = YAP_V2_segment_plan_bisect(&plan, failed_slice);
+    if (status == YAP_V2_OK) goto write_segments;
+  }
   if (status == YAP_V2_OK) status = sync_directory(segments_path);
   if (status != YAP_V2_OK) { set_error(error, error_size, "compacted segment creation failed"); goto done; }
   (void)failpoint("before_publish");
   candidate.generation = next_generation; candidate.format_version = manifest.format_version;
   memcpy(candidate.config_fingerprint, manifest.config_fingerprint, sizeof(candidate.config_fingerprint));
-  status = YAP_V2_manifest_add_segment(&candidate, &descriptor);
+  for (i = 0U; status == YAP_V2_OK && i < plan.count; i++)
+    status = YAP_V2_manifest_add_segment(&candidate, &descriptors[i]);
   if (status == YAP_V2_OK) status = YAP_V2_manifest_verify_components(index_dir, &candidate);
   if (status == YAP_V2_OK)
     status = YAP_V2_manifest_publish_if_generation(manifest_path, next_generation - 1U, &candidate);
@@ -274,14 +289,17 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   if (status != YAP_V2_OK) { set_error(error, error_size, "obsolete segment cleanup failed"); goto done; }
   result->generation = next_generation; result->documents = documents_count;
   result->passages = passages_count; result->removed_segments = removed_before + removed_after;
-  memcpy(result->segment_id, segment_id, segment_id_length + 1U);
 done:
   if (status_started)
     (void)YAP_V2_compaction_status_write(index_dir,
       status == YAP_V2_OK ? YAP_V2_COMPACTION_SUCCEEDED : YAP_V2_COMPACTION_FAILED,
       status == YAP_V2_OK ? result->generation : manifest.generation);
-  if (!published && segment_id != NULL) (void)remove_segment_directory(segment_path);
+  if (!published && segment_paths != NULL)
+    for (i = 0U; i < plan.count; i++)
+      if (segment_paths[i][0] != '\0') (void)remove_segment_directory(segment_paths[i]);
+  if (status != YAP_V2_OK) YAP_V2_compaction_result_free(result);
   free(documents); free(passages); free(vectors); YAP_V2_snapshot_release(snapshot);
+  free(units); free(descriptors); free(segment_paths); YAP_V2_segment_plan_free(&plan);
   YAP_V2_snapshot_manager_close(&manager); YAP_V2_manifest_free(&candidate); YAP_V2_manifest_free(&manifest);
   YAP_V2_writer_lock_release(&writer_lock);
   return status;
@@ -295,13 +313,18 @@ int YAP_V2_compact_main(int argc, char **argv) {
     index_dir = argv[i];
   }
   if (index_dir == NULL) { fputs("Usage: yappo_compact --index INDEX_DIR\n", stderr); return EXIT_FAILURE; }
+  YAP_V2_compaction_result_init(&result);
   status = YAP_V2_compact(index_dir, &result, error, sizeof(error));
   if (status != YAP_V2_OK) {
     fprintf(stderr, "Compaction failed: %s (%s)\n", error, YAP_V2_status_string(status)); return EXIT_FAILURE;
   }
   printf("{\"generation\":%llu,\"documents\":%zu,\"passages\":%zu,"
-         "\"removed_segments\":%zu,\"segment_id\":\"%s\"}\n",
+         "\"removed_segments\":%zu,\"segment_ids\":[",
          (unsigned long long)result.generation, result.documents, result.passages,
-         result.removed_segments, result.segment_id);
+         result.removed_segments);
+  for (i = 0; i < (int)result.segment_ids.count; i++)
+    printf("%s\"%s\"", i == 0 ? "" : ",", result.segment_ids.items[i]);
+  puts("]}");
+  YAP_V2_compaction_result_free(&result);
   return EXIT_SUCCESS;
 }

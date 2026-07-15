@@ -49,7 +49,7 @@ export interface RegisterResponse {
   accepted: number;
   upserts: number;
   deletes: number;
-  segment_id?: string;
+  segment_ids: string[];
 }
 
 export interface Citation {

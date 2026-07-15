@@ -65,7 +65,7 @@ static int append(BUFFER *buffer, const void *data, size_t len) {
   size_t needed, capacity; unsigned char *next;
   if (len > SIZE_MAX - buffer->len) return YAP_V2_OUT_OF_RANGE;
   needed = buffer->len + len;
-  if (needed > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) return YAP_V2_OUT_OF_RANGE;
+  if (needed > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) return YAP_V2_SEGMENT_CAPACITY_EXCEEDED;
   if (needed > buffer->capacity) {
     capacity = buffer->capacity == 0U ? 256U : buffer->capacity;
     while (capacity < needed) {

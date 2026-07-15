@@ -74,13 +74,49 @@ const char *YAP_V2_status_string(YAP_V2_STATUS status) {
     return "I/O error";
   case YAP_V2_CHECKSUM_MISMATCH:
     return "checksum mismatch";
-    case YAP_V2_CONFLICT:
-      return "conflict";
-    case YAP_V2_NOT_FOUND:
-      return "not found";
+  case YAP_V2_CONFLICT:
+    return "conflict";
+  case YAP_V2_NOT_FOUND:
+    return "not found";
+  case YAP_V2_SEGMENT_CAPACITY_EXCEEDED:
+    return "segment capacity exceeded";
   default:
     return "unknown status";
   }
+}
+
+void YAP_V2_segment_id_list_init(YAP_V2_SEGMENT_ID_LIST *list) {
+  if (list != NULL) memset(list, 0, sizeof(*list));
+}
+
+void YAP_V2_segment_id_list_free(YAP_V2_SEGMENT_ID_LIST *list) {
+  if (list == NULL) return;
+  free(list->items);
+  memset(list, 0, sizeof(*list));
+}
+
+int YAP_V2_segment_id_list_add(YAP_V2_SEGMENT_ID_LIST *list, const char *segment_id) {
+  char (*next)[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
+  size_t length, capacity;
+  int status;
+  if (list == NULL || segment_id == NULL) return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_segment_id_validate(segment_id);
+  if (status != YAP_V2_OK) return status;
+  if (list->count >= YAP_V2_MAX_SEGMENTS) return YAP_V2_OUT_OF_RANGE;
+  if (list->count == list->capacity) {
+    capacity = list->capacity == 0U ? 4U : list->capacity * 2U;
+    if (capacity < list->capacity || capacity > YAP_V2_MAX_SEGMENTS)
+      capacity = YAP_V2_MAX_SEGMENTS;
+    if (capacity > SIZE_MAX / sizeof(*next)) return YAP_V2_OUT_OF_RANGE;
+    next = realloc(list->items, capacity * sizeof(*next));
+    if (next == NULL) return YAP_V2_ALLOCATION_FAILED;
+    list->items = next;
+    list->capacity = capacity;
+  }
+  length = strlen(segment_id);
+  memcpy(list->items[list->count], segment_id, length + 1U);
+  list->count++;
+  return YAP_V2_OK;
 }
 
 int YAP_V2_document_validate(const YAP_V2_DOCUMENT_VIEW *document) {

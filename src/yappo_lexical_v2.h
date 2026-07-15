@@ -18,6 +18,25 @@ typedef enum {
 } YAP_V2_LEXICAL_FIELD;
 
 typedef struct {
+  char *term;
+  size_t term_len;
+  uint32_t object_type;
+  uint64_t object_ordinal;
+  uint32_t field;
+  uint32_t position;
+  uint32_t field_length;
+} YAP_V2_LEXICAL_OCCURRENCE;
+
+typedef struct {
+  YAP_V2_LEXICAL_OCCURRENCE *items;
+  size_t count;
+  size_t capacity;
+  uint64_t field_token_count[3];
+  size_t document_count;
+  size_t passage_count;
+} YAP_V2_LEXICAL_PREPARED;
+
+typedef struct {
   YAP_V2_BYTES_VIEW term;
   uint64_t document_frequency;
   uint64_t postings_offset;
@@ -79,6 +98,16 @@ int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
                          const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
                          const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count,
                          YAP_V2_COMPONENT_DESCRIPTOR components[3]);
+void YAP_V2_lexical_prepared_init(YAP_V2_LEXICAL_PREPARED *prepared);
+void YAP_V2_lexical_prepared_free(YAP_V2_LEXICAL_PREPARED *prepared);
+int YAP_V2_lexical_prepare_unit(const YAP_V2_DOCUMENT_VIEW *document,
+                                const YAP_V2_PASSAGE_VIEW *passages,
+                                size_t passage_count,
+                                YAP_V2_LEXICAL_PREPARED *prepared);
+int YAP_V2_lexical_write_prepared(const char *segment_dir, uint64_t generation,
+                                  const YAP_V2_LEXICAL_PREPARED *const *prepared,
+                                  size_t prepared_count,
+                                  YAP_V2_COMPONENT_DESCRIPTOR components[3]);
 void YAP_V2_lexical_segment_init(YAP_V2_LEXICAL_SEGMENT *segment);
 void YAP_V2_lexical_segment_close(YAP_V2_LEXICAL_SEGMENT *segment);
 int YAP_V2_lexical_segment_open(const char *segment_dir, uint64_t expected_generation,

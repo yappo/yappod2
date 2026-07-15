@@ -70,7 +70,7 @@ static int buffer_reserve(YAP_V2_BUFFER *buffer, size_t additional) {
     return YAP_V2_INVALID_ARGUMENT;
   }
   if (additional > (size_t)YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES - buffer->len) {
-    return YAP_V2_OUT_OF_RANGE;
+    return YAP_V2_SEGMENT_CAPACITY_EXCEEDED;
   }
   required = buffer->len + additional;
   if (required <= buffer->capacity) {

@@ -36,7 +36,8 @@ typedef enum {
   YAP_V2_IO_ERROR = -6,
   YAP_V2_CHECKSUM_MISMATCH = -7,
   YAP_V2_CONFLICT = -8,
-  YAP_V2_NOT_FOUND = -9
+  YAP_V2_NOT_FOUND = -9,
+  YAP_V2_SEGMENT_CAPACITY_EXCEEDED = -10
 } YAP_V2_STATUS;
 
 typedef enum {
@@ -145,7 +146,17 @@ typedef struct {
   size_t storage_bytes;
 } YAP_V2_TOMBSTONES;
 
+typedef struct {
+  char (*items)[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
+  size_t count;
+  size_t capacity;
+} YAP_V2_SEGMENT_ID_LIST;
+
 const char *YAP_V2_status_string(YAP_V2_STATUS status);
+
+void YAP_V2_segment_id_list_init(YAP_V2_SEGMENT_ID_LIST *list);
+void YAP_V2_segment_id_list_free(YAP_V2_SEGMENT_ID_LIST *list);
+int YAP_V2_segment_id_list_add(YAP_V2_SEGMENT_ID_LIST *list, const char *segment_id);
 
 int YAP_V2_segment_id_validate(const char *value);
 

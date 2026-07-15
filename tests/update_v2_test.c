@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,7 @@
 #include "yappo_manifest_v2.h"
 #include "yappo_metadata_v2.h"
 #include "yappo_observability_v2.h"
+#include "yappo_segment_planner_v2.h"
 #include "yappo_update_v2.h"
 #include "yappo_vector_v2.h"
 
@@ -103,6 +105,19 @@ static uint64_t manifest_generation(ytest_env_t *env, size_t *segments) {
   YAP_V2_manifest_free(&manifest); return generation;
 }
 
+static size_t segment_directory_count(ytest_env_t *env) {
+  char path[PATH_MAX];
+  DIR *directory;
+  struct dirent *entry;
+  size_t count = 0U;
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "segments"), 0);
+  directory = opendir(path); assert_non_null(directory);
+  while ((entry = readdir(directory)) != NULL)
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) count++;
+  assert_int_equal(closedir(directory), 0);
+  return count;
+}
+
 static size_t search_count(ytest_env_t *env, const char *query, const char *expected_id) {
   char request[256]; yyjson_doc *document; yyjson_val *results, *item; size_t count;
   assert_true(snprintf(request, sizeof(request),
@@ -124,6 +139,8 @@ static void test_http_atomic_update_latest_wins_and_delete(void **state) {
   (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
   document = execute(&env, YAP_V2_HTTP_INGEST, upsert, 200);
   assert_int_equal(yyjson_get_uint(yyjson_obj_get(yyjson_doc_get_root(document), "generation")), 2U);
+  assert_null(yyjson_obj_get(yyjson_doc_get_root(document), "segment_id"));
+  assert_int_equal(yyjson_arr_size(yyjson_obj_get(yyjson_doc_get_root(document), "segment_ids")), 1U);
   yyjson_doc_free(document);
   assert_int_equal(manifest_generation(&env, &segments), 2U); assert_int_equal(segments, 2U);
   assert_int_equal(search_count(&env, "fresh", "doc-a"), 1U);
@@ -149,9 +166,94 @@ static void test_cli_update_and_strict_batch_schema(void **state) {
   argv[4] = "--index"; argv[5] = env.tmp_root; argv[6] = NULL;
   ytest_cmd_result_init(&command); assert_int_equal(ytest_cmd_run(argv, NULL, NULL, 0U, &command), 0);
   assert_true(command.exited); assert_int_equal(command.exit_code, 0); assert_non_null(strstr(command.output, "\"generation\":2"));
+  assert_non_null(strstr(command.output, "\"segment_ids\":["));
+  assert_null(strstr(command.output, "\"segment_id\":"));
   ytest_cmd_result_free(&command); assert_int_equal(search_count(&env, "hello", "doc-cli"), 1U);
   document = execute(&env, YAP_V2_HTTP_INGEST, "{\"operations\":[],\"extra\":true}", 400);
   yyjson_doc_free(document); ytest_env_destroy(&env);
+}
+
+static void test_update_split_is_atomic_and_cleans_failed_segments(void **state) {
+  ytest_env_t env;
+  yyjson_doc *document;
+  yyjson_val *root;
+  size_t segments;
+  const char *batch = "{\"operations\":["
+    "{\"operation\":\"upsert\",\"id\":\"doc-c\",\"title\":\"Alpha\","
+    "\"body\":\"alpha\",\"metadata\":{\"category\":\"new\"},\"vectors\":[[1,0]]},"
+    "{\"operation\":\"upsert\",\"id\":\"doc-d\",\"title\":\"Beta\","
+    "\"body\":\"beta\",\"metadata\":{\"category\":\"new\"},\"vectors\":[[0,1]]}]}";
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(300U);
+  assert_int_equal(setenv("YAPPOD_V2_UPDATE_FAILPOINT", "after_first_segment", 1), 0);
+  document = execute(&env, YAP_V2_HTTP_INGEST, batch, 503); yyjson_doc_free(document);
+  assert_int_equal(unsetenv("YAPPOD_V2_UPDATE_FAILPOINT"), 0);
+  assert_int_equal(manifest_generation(&env, &segments), 1U); assert_int_equal(segments, 1U);
+  assert_int_equal(segment_directory_count(&env), 1U);
+  document = execute(&env, YAP_V2_HTTP_INGEST, batch, 200);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(0U);
+  root = yyjson_doc_get_root(document);
+  assert_null(yyjson_obj_get(root, "segment_id"));
+  assert_int_equal(yyjson_arr_size(yyjson_obj_get(root, "segment_ids")), 2U);
+  yyjson_doc_free(document);
+  assert_int_equal(manifest_generation(&env, &segments), 2U); assert_int_equal(segments, 3U);
+  assert_int_equal(search_count(&env, "alpha", "doc-c"), 1U);
+  assert_int_equal(search_count(&env, "beta", "doc-d"), 1U);
+  ytest_env_destroy(&env);
+}
+
+static void test_single_document_capacity_error_is_detailed(void **state) {
+  ytest_env_t env;
+  yyjson_doc *document;
+  yyjson_val *message;
+  const char *text;
+  size_t segments;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(100U);
+  document = execute(&env, YAP_V2_HTTP_INGEST,
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-too-large\","
+    "\"title\":\"large\",\"body\":\"large\",\"metadata\":{\"category\":\"x\"},"
+    "\"vectors\":[[1,0]]}]}", 400);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(0U);
+  message = yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(document), "error"), "message");
+  text = yyjson_get_str(message); assert_non_null(text);
+  assert_non_null(strstr(text, "doc-too-large")); assert_non_null(strstr(text, ".yap2"));
+  assert_non_null(strstr(text, "requires")); assert_non_null(strstr(text, "limit 100"));
+  yyjson_doc_free(document);
+  assert_int_equal(manifest_generation(&env, &segments), 1U); assert_int_equal(segments, 1U);
+  ytest_env_destroy(&env);
+}
+
+static void test_build_batch_uses_the_same_split_planner(void **state) {
+  ytest_env_t env;
+  YAP_V2_INGEST_OPERATION operations[2];
+  YAP_V2_UPDATE_RESULT result;
+  char error[256] = {0};
+  const char *lines[] = {
+    "{\"operation\":\"upsert\",\"id\":\"build-a\",\"title\":\"Alpha\","
+    "\"body\":\"alpha\",\"metadata\":{\"category\":\"new\"},\"vectors\":[[1,0]]}",
+    "{\"operation\":\"upsert\",\"id\":\"build-b\",\"title\":\"Beta\","
+    "\"body\":\"beta\",\"metadata\":{\"category\":\"new\"},\"vectors\":[[0,1]]}"
+  };
+  size_t i, segments;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  memset(operations, 0, sizeof(operations));
+  for (i = 0U; i < 2U; i++)
+    assert_int_equal(YAP_V2_ingest_parse_ndjson(lines[i], strlen(lines[i]), &operations[i],
+                                                error, sizeof(error)), YAP_V2_OK);
+  YAP_V2_update_result_init(&result);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(300U);
+  assert_int_equal(YAP_V2_build_apply(env.tmp_root, operations, 2U, &result,
+                                      error, sizeof(error)), YAP_V2_OK);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(0U);
+  assert_int_equal(result.accepted, 2U); assert_int_equal(result.segment_ids.count, 2U);
+  assert_int_equal(manifest_generation(&env, &segments), 2U); assert_int_equal(segments, 3U);
+  YAP_V2_update_result_free(&result);
+  for (i = 0U; i < 2U; i++) YAP_V2_ingest_operation_free(&operations[i]);
+  ytest_env_destroy(&env);
 }
 
 static void assert_manifest_shape(ytest_env_t *env, uint64_t generation, size_t segment_count,
@@ -166,12 +268,12 @@ static void assert_manifest_shape(ytest_env_t *env, uint64_t generation, size_t 
   YAP_V2_manifest_free(&manifest);
 }
 
-static void assert_search_mode(ytest_env_t *env, const char *mode, const char *scope,
-                               const char *expected_id) {
+static void assert_search_mode(ytest_env_t *env, const char *query, const char *vector,
+                               const char *mode, const char *scope, const char *expected_id) {
   char request[512]; yyjson_doc *document; yyjson_val *results, *first;
   assert_true(snprintf(request, sizeof(request),
-    "{\"query\":\"fresh\",\"vector\":[1,0],\"mode\":\"%s\","
-    "\"scope\":\"%s\",\"limit\":10}", mode, scope) > 0);
+    "{\"query\":\"%s\",\"vector\":[%s],\"mode\":\"%s\","
+    "\"scope\":\"%s\",\"limit\":10}", query, vector, mode, scope) > 0);
   document = execute(env, YAP_V2_HTTP_SEARCH, request, 200);
   results = yyjson_obj_get(yyjson_doc_get_root(document), "results");
   assert_true(yyjson_arr_size(results) > 0U); first = yyjson_arr_get_first(results);
@@ -180,15 +282,22 @@ static void assert_search_mode(ytest_env_t *env, const char *mode, const char *s
   yyjson_doc_free(document);
 }
 
-static void assert_retrieval(ytest_env_t *env) {
-  yyjson_doc *document = execute(env, YAP_V2_HTTP_RETRIEVE,
-    "{\"query\":\"fresh\",\"vector\":[1,0],\"mode\":\"hybrid\","
-    "\"limit\":10,\"max_passages_per_document\":2,\"max_context_bytes\":1024}", 200);
-  yyjson_val *root = yyjson_doc_get_root(document);
-  yyjson_val *citation = yyjson_arr_get_first(yyjson_obj_get(root, "citations"));
-  assert_non_null(strstr(yyjson_get_str(yyjson_obj_get(root, "context")), "fresh"));
+static void assert_retrieval(ytest_env_t *env, const char *query, const char *vector,
+                             const char *expected_id) {
+  char request[512];
+  yyjson_doc *document;
+  yyjson_val *root;
+  yyjson_val *citation;
+  assert_true(snprintf(request, sizeof(request),
+    "{\"query\":\"%s\",\"vector\":[%s],\"mode\":\"hybrid\","
+    "\"limit\":10,\"max_passages_per_document\":2,\"max_context_bytes\":1024}",
+    query, vector) > 0);
+  document = execute(env, YAP_V2_HTTP_RETRIEVE, request, 200);
+  root = yyjson_doc_get_root(document);
+  citation = yyjson_arr_get_first(yyjson_obj_get(root, "citations"));
+  assert_non_null(strstr(yyjson_get_str(yyjson_obj_get(root, "context")), query));
   assert_non_null(citation);
-  assert_string_equal(yyjson_get_str(yyjson_obj_get(citation, "document_id")), "doc-a");
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(citation, "document_id")), expected_id);
   yyjson_doc_free(document);
 }
 
@@ -210,17 +319,59 @@ static void test_compaction_live_only_preserves_all_search_modes(void **state) {
   argv[0] = executable; argv[1] = "--index"; argv[2] = env.tmp_root; argv[3] = NULL;
   ytest_cmd_result_init(&command); assert_int_equal(ytest_cmd_run(argv, NULL, NULL, 0U, &command), 0);
   assert_true(command.exited); assert_int_equal(command.exit_code, 0);
-  assert_non_null(strstr(command.output, "\"generation\":3")); ytest_cmd_result_free(&command);
+  assert_non_null(strstr(command.output, "\"generation\":3"));
+  assert_non_null(strstr(command.output, "\"segment_ids\":["));
+  assert_null(strstr(command.output, "\"segment_id\":"));
+  ytest_cmd_result_free(&command);
   assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
   assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_SUCCEEDED);
   assert_int_equal(operational.compaction_generation, 3U);
   assert_manifest_shape(&env, 3U, 1U, 0U);
   assert_int_equal(search_count(&env, "old", NULL), 0U); assert_int_equal(search_count(&env, "gone", NULL), 0U);
   assert_int_equal(search_count(&env, "fresh", "doc-a"), 1U);
-  assert_search_mode(&env, "vector", "documents", "doc-a");
-  assert_search_mode(&env, "hybrid", "documents", "doc-a");
-  assert_search_mode(&env, "hybrid", "passages", "doc-a");
-  assert_retrieval(&env);
+  assert_search_mode(&env, "fresh", "1,0", "vector", "documents", "doc-a");
+  assert_search_mode(&env, "fresh", "1,0", "hybrid", "documents", "doc-a");
+  assert_search_mode(&env, "fresh", "1,0", "hybrid", "passages", "doc-a");
+  assert_retrieval(&env, "fresh", "1,0", "doc-a");
+  ytest_env_destroy(&env);
+}
+
+static void test_compaction_splits_output_and_builds_segment_local_bm25_stats(void **state) {
+  ytest_env_t env;
+  YAP_V2_COMPACTION_RESULT result;
+  YAP_V2_MANIFEST manifest;
+  char manifest_path[PATH_MAX], segment_path[PATH_MAX];
+  char error[256] = {0};
+  size_t i;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  YAP_V2_compaction_result_init(&result);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(300U);
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(0U);
+  assert_int_equal(result.segment_ids.count, 2U);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), env.tmp_root,
+                                   "manifest.json"), 0);
+  assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.segment_count, 2U);
+  for (i = 0U; i < manifest.segment_count; i++) {
+    YAP_V2_LEXICAL_SEGMENT lexical;
+    assert_int_equal(manifest.segments[i].document_count, 1U);
+    assert_true(snprintf(segment_path, sizeof(segment_path), "%s/segments/%s",
+                         env.tmp_root, manifest.segments[i].id) > 0);
+    YAP_V2_lexical_segment_init(&lexical);
+    assert_int_equal(YAP_V2_lexical_segment_open(segment_path, 2U, &lexical), YAP_V2_OK);
+    assert_int_equal(lexical.document_count, 1U);
+    YAP_V2_lexical_segment_close(&lexical);
+  }
+  assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
+  assert_int_equal(search_count(&env, "gone", "doc-b"), 1U);
+  assert_search_mode(&env, "old", "1,0", "vector", "documents", "doc-a");
+  assert_search_mode(&env, "old", "1,0", "hybrid", "documents", "doc-a");
+  assert_search_mode(&env, "old", "1,0", "hybrid", "passages", "doc-a");
+  assert_retrieval(&env, "old", "1,0", "doc-a");
+  YAP_V2_manifest_free(&manifest); YAP_V2_compaction_result_free(&result);
   ytest_env_destroy(&env);
 }
 
@@ -239,27 +390,38 @@ static void run_crashing_compaction(ytest_env_t *env, const char *point) {
 static void test_compaction_crash_recovery_and_orphan_gc(void **state) {
   ytest_env_t env; YAP_V2_COMPACTION_RESULT result; YAP_V2_OPERATIONAL_STATE operational; char error[256] = {0};
   (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(300U);
   run_crashing_compaction(&env, "before_publish");
   assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
   assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_INTERRUPTED);
   assert_manifest_shape(&env, 1U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
+  YAP_V2_compaction_result_init(&result);
   assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
   assert_int_equal(result.generation, 2U); assert_true(result.removed_segments >= 2U);
+  assert_int_equal(result.segment_ids.count, 2U);
+  YAP_V2_compaction_result_free(&result);
   assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, NULL, 0U), YAP_V2_OK);
   assert_int_equal(operational.compaction_state, YAP_V2_COMPACTION_SUCCEEDED);
   run_crashing_compaction(&env, "after_publish");
-  assert_manifest_shape(&env, 3U, 1U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
-  memset(&result, 0, sizeof(result)); memset(error, 0, sizeof(error));
+  assert_manifest_shape(&env, 3U, 2U, 0U); assert_int_equal(search_count(&env, "old", "doc-a"), 1U);
+  YAP_V2_compaction_result_init(&result); memset(error, 0, sizeof(error));
   assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error, sizeof(error)), YAP_V2_OK);
   assert_int_equal(result.generation, 4U); assert_true(result.removed_segments >= 2U);
-  assert_manifest_shape(&env, 4U, 1U, 0U); ytest_env_destroy(&env);
+  assert_int_equal(result.segment_ids.count, 2U);
+  assert_manifest_shape(&env, 4U, 2U, 0U); YAP_V2_compaction_result_free(&result);
+  YAP_V2_segment_planner_set_payload_limit_for_testing(0U);
+  ytest_env_destroy(&env);
 }
 
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_http_atomic_update_latest_wins_and_delete),
     cmocka_unit_test(test_cli_update_and_strict_batch_schema),
+    cmocka_unit_test(test_update_split_is_atomic_and_cleans_failed_segments),
+    cmocka_unit_test(test_single_document_capacity_error_is_detailed),
+    cmocka_unit_test(test_build_batch_uses_the_same_split_planner),
     cmocka_unit_test(test_compaction_live_only_preserves_all_search_modes),
+    cmocka_unit_test(test_compaction_splits_output_and_builds_segment_local_bm25_stats),
     cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);

@@ -8,8 +8,11 @@ typedef struct {
   size_t documents;
   size_t passages;
   size_t removed_segments;
-  char segment_id[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
+  YAP_V2_SEGMENT_ID_LIST segment_ids;
 } YAP_V2_COMPACTION_RESULT;
+
+void YAP_V2_compaction_result_init(YAP_V2_COMPACTION_RESULT *result);
+void YAP_V2_compaction_result_free(YAP_V2_COMPACTION_RESULT *result);
 
 int YAP_V2_compact_gc(const char *index_dir, const YAP_V2_MANIFEST *manifest,
                       size_t *removed_segments);
