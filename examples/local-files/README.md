@@ -71,6 +71,19 @@ examples/local-files/data/
 出力directoryやindexが既にある場合は上書きしません。再実行する場合は既存の生成物を利用者自身で
 退避・削除するか、設定内の出力pathを変更してください。
 
+`local-files-yappod2.toml`を使ったpipelineを全て再生成する場合は、documentsだけでなくpassages、
+vectors、indexも前回の生成物として残るため、`data` directory全体を削除してから再実行します。
+個別のdirectoryだけを削除すると、後続stageが既存directoryを検出して停止します。
+
+```sh
+rm -rf examples/local-files/data
+
+examples/local-files/.venv/bin/python \
+  examples/local-files/local_files.py all \
+  --config examples/local-files/local-files-yappod2.toml \
+  --target hybrid
+```
+
 ## targetと生成物
 
 `all --target TARGET`は、選択した最終成果に必要なstageだけを順番に実行します。
