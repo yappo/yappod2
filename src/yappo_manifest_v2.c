@@ -414,23 +414,19 @@ int YAP_V2_manifest_publish_if_generation(const char *path, uint64_t expected_ge
   return status;
 }
 
-int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFEST *manifest) {
-  size_t i;
+int YAP_V2_manifest_verify_segment_components(
+  const char *index_dir, uint64_t manifest_generation,
+  const YAP_V2_SEGMENT_DESCRIPTOR *segment) {
   size_t j;
   int status;
 
-  if (index_dir == NULL || manifest == NULL) {
+  if (index_dir == NULL || segment == NULL || manifest_generation == 0U) {
     return YAP_V2_INVALID_ARGUMENT;
   }
-  status = YAP_V2_manifest_validate(manifest);
-  if (status != YAP_V2_OK) {
-    return status;
-  }
-  for (i = 0U; i < manifest->segment_count; i++) {
-    for (j = 0U; j < manifest->segments[i].component_count; j++) {
-      const YAP_V2_COMPONENT_DESCRIPTOR *component = &manifest->segments[i].components[j];
+  for (j = 0U; j < segment->component_count; j++) {
+      const YAP_V2_COMPONENT_DESCRIPTOR *component = &segment->components[j];
       size_t length =
-        strlen(index_dir) + strlen(manifest->segments[i].id) + strlen(component->name) + 12U;
+        strlen(index_dir) + strlen(segment->id) + strlen(component->name) + 12U;
       char *path = (char *)malloc(length);
       unsigned char checksum[32];
       unsigned char header_data[YAP_V2_FILE_HEADER_BYTES];
@@ -441,7 +437,7 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
       if (path == NULL) {
         return YAP_V2_ALLOCATION_FAILED;
       }
-      (void)snprintf(path, length, "%s/segments/%s/%s", index_dir, manifest->segments[i].id,
+      (void)snprintf(path, length, "%s/segments/%s/%s", index_dir, segment->id,
                      component->name);
       status = YAP_V2_file_sha256(path, checksum, &bytes);
       if (status == YAP_V2_OK &&
@@ -463,7 +459,7 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
         status = YAP_V2_file_header_decode(header_data, &header);
       }
       if (status == YAP_V2_OK && component->file_type != YAP_V2_FILE_ANN &&
-          (header.generation == 0U || header.generation > manifest->generation ||
+          (header.generation == 0U || header.generation > manifest_generation ||
            header.file_type != component->file_type ||
            header.payload_bytes + YAP_V2_FILE_HEADER_BYTES != bytes)) {
         status = YAP_V2_INVALID_FORMAT;
@@ -471,7 +467,20 @@ int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFE
       if (status != YAP_V2_OK) {
         return status;
       }
-    }
+  }
+  return YAP_V2_OK;
+}
+
+int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFEST *manifest) {
+  size_t i;
+  int status;
+  if (index_dir == NULL || manifest == NULL) return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_manifest_validate(manifest);
+  if (status != YAP_V2_OK) return status;
+  for (i = 0U; i < manifest->segment_count; i++) {
+    status = YAP_V2_manifest_verify_segment_components(
+      index_dir, manifest->generation, &manifest->segments[i]);
+    if (status != YAP_V2_OK) return status;
   }
   return YAP_V2_OK;
 }

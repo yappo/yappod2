@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #define DEFAULT_CORE_PORT 18401
@@ -23,6 +24,7 @@ typedef struct {
   size_t id;
   int listen_socket;
   const char *index_dir;
+  YAP_V2_HTTP_RUNTIME *http_runtime;
 } worker_t;
 
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -125,7 +127,8 @@ static int make_error_json(const char *code, const char *message,
   return 0;
 }
 
-static int handle_request(FILE *stream, const char *index_dir) {
+static int handle_request(FILE *stream, const char *index_dir,
+                          YAP_V2_HTTP_RUNTIME *http_runtime) {
   YAP_V2_CORE_FRAME request, response;
   YAP_V2_HTTP_OPERATION operation = YAP_V2_HTTP_SEARCH;
   char *json = NULL;
@@ -140,12 +143,18 @@ static int handle_request(FILE *stream, const char *index_dir) {
   status = YAP_V2_core_frame_read(stream, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
   if (status != YAP_V2_CORE_FRAME_OK) goto done;
   if (request.type == YAP_V2_CORE_HEALTH_REQUEST) {
-    YAP_V2_OPERATIONAL_STATE state;
+    YAP_V2_OPERATIONAL_STATE state, disk_state;
     char probe_error[256] = {0};
     if (request.payload_bytes != 0U) { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
     health = 1;
-    status = YAP_V2_operational_probe_index(index_dir, &state, probe_error,
-                                            sizeof(probe_error));
+    status = YAP_V2_http_runtime_state(http_runtime, &state);
+    if (status == YAP_V2_OK &&
+        YAP_V2_operational_probe_index(index_dir, &disk_state, probe_error,
+                                       sizeof(probe_error)) == YAP_V2_OK) {
+      state.compaction_state = disk_state.compaction_state;
+      state.compaction_generation = disk_state.compaction_generation;
+      state.compaction_updated_at_unix = disk_state.compaction_updated_at_unix;
+    }
     http_status = status == YAP_V2_OK && state.ready ? 200 : 503;
     if (YAP_V2_operational_state_json(&state, "yappod_core", &json, &json_bytes) !=
         YAP_V2_OK) {
@@ -177,8 +186,9 @@ static int handle_request(FILE *stream, const char *index_dir) {
           goto done;
         }
       } else if (request_json_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
-                 YAP_V2_http_execute(index_dir, operation, request_json, request_json_bytes,
-                                     &http_status, &json, &json_bytes) != 0) {
+                 YAP_V2_http_runtime_execute(http_runtime, operation, request_json,
+                                             request_json_bytes, &http_status,
+                                             &json, &json_bytes) != 0) {
         status = YAP_V2_CORE_FRAME_IO_ERROR;
         goto done;
       }
@@ -224,8 +234,20 @@ static void *run_worker(void *opaque) {
     }
     if (YAP_V2_socket_set_deadline(descriptor, runtime_policy.request_timeout_ms) == YAP_V2_OK)
       while (!shutdown_requested &&
-             handle_request(stream, worker->index_dir) == YAP_V2_CORE_FRAME_OK) {}
+             handle_request(stream, worker->index_dir,
+                            worker->http_runtime) == YAP_V2_CORE_FRAME_OK) {}
     YAP_Net_close_stream(&stream, &descriptor);
+  }
+  return NULL;
+}
+
+static void *run_reloader(void *opaque) {
+  YAP_V2_HTTP_RUNTIME *http_runtime = opaque;
+  struct timespec interval = {1, 0};
+  while (!shutdown_requested) {
+    while (nanosleep(&interval, &interval) != 0 && errno == EINTR && !shutdown_requested) {}
+    interval.tv_sec = 1; interval.tv_nsec = 0;
+    if (!shutdown_requested) (void)YAP_V2_http_runtime_reload(http_runtime);
   }
   return NULL;
 }
@@ -233,11 +255,13 @@ static void *run_worker(void *opaque) {
 int main(int argc, char **argv) {
   const char *index_dir = NULL;
   int port = DEFAULT_CORE_PORT, i, daemon_status;
-  char policy_error[256] = {0}, probe_error[256] = {0};
-  YAP_V2_OPERATIONAL_STATE state;
-  pthread_t threads[CORE_WORKERS];
+  char policy_error[256] = {0};
+  YAP_V2_HTTP_RUNTIME http_runtime;
+  pthread_t threads[CORE_WORKERS], reloader_thread;
   worker_t workers[CORE_WORKERS];
   size_t started = 0U;
+  int reloader_started = 0;
+  YAP_V2_http_runtime_init(&http_runtime);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
@@ -257,10 +281,8 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   }
-  if (index_dir == NULL ||
-      YAP_V2_operational_probe_index(index_dir, &state, probe_error, sizeof(probe_error)) !=
-        YAP_V2_OK || !state.ready || state.segment_count == 0U) {
-    fprintf(stderr, "Invalid v2 index: %s\n", probe_error);
+  if (index_dir == NULL || YAP_V2_http_runtime_open(&http_runtime, index_dir) != YAP_V2_OK) {
+    fprintf(stderr, "Invalid v2 index\n");
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
@@ -268,29 +290,44 @@ int main(int argc, char **argv) {
         YAP_V2_OK ||
       YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
+    YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
   listen_socket = create_listener(port);
   if (listen_socket < 0) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_runtime_limiter_close(&runtime_limiter);
+    YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
   daemon_status = daemonize_process();
   if (daemon_status != 0) {
     (void)close(listen_socket);
+    YAP_V2_http_runtime_close(&http_runtime);
     return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
-  if (install_signal_handlers() != 0) return EXIT_FAILURE;
+  if (install_signal_handlers() != 0) {
+    (void)close(listen_socket); listen_socket = -1;
+    YAP_V2_runtime_limiter_close(&runtime_limiter);
+    YAP_V2_http_runtime_close(&http_runtime);
+    return EXIT_FAILURE;
+  }
+  if (pthread_create(&reloader_thread, NULL, run_reloader, &http_runtime) == 0)
+    reloader_started = 1;
+  else
+    request_shutdown(SIGTERM);
   for (started = 0U; started < CORE_WORKERS; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
     workers[started].index_dir = index_dir;
+    workers[started].http_runtime = &http_runtime;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
   if (started != CORE_WORKERS) request_shutdown(SIGTERM);
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
+  if (reloader_started) (void)pthread_join(reloader_thread, NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
-  return started == CORE_WORKERS ? EXIT_SUCCESS : EXIT_FAILURE;
+  YAP_V2_http_runtime_close(&http_runtime);
+  return started == CORE_WORKERS && reloader_started ? EXIT_SUCCESS : EXIT_FAILURE;
 }

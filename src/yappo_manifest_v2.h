@@ -11,5 +11,8 @@ int YAP_V2_manifest_publish_next(const char *path, YAP_V2_MANIFEST *manifest);
 int YAP_V2_manifest_publish_if_generation(const char *path, uint64_t expected_generation,
                                           YAP_V2_MANIFEST *manifest);
 int YAP_V2_manifest_verify_components(const char *index_dir, const YAP_V2_MANIFEST *manifest);
+int YAP_V2_manifest_verify_segment_components(
+  const char *index_dir, uint64_t manifest_generation,
+  const YAP_V2_SEGMENT_DESCRIPTOR *segment);
 
 #endif

@@ -19,7 +19,8 @@ message typeはsearch、retrieve、ingest、healthそれぞれのrequest/respons
 UTF-8 JSONで、frame層はopaque bytesとして転送します。
 
 search・retrieve・ingest request payloadはJSON本体です。health requestのpayloadは空です。
-health responseはcoreがconfig、manifest、全componentを検証したoperational state JSONを返します。
+health responseはcoreが保持している読込済みsnapshotのoperational state JSONを返します。
+health requestごとにcomponent checksumを再計算しません。
 対応するresponseとerror responseは先頭2 byteを
 network byte orderのHTTP status、その後をUTF-8 JSON本体とします。frontはmessage type、
 request ID、statusの組み合わせを検証してからHTTP responseへ変換します。

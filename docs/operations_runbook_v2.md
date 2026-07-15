@@ -27,9 +27,11 @@ yappod_front --index /srv/yappod/index --core-host 127.0.0.1 \
 | Endpoint | 成功条件 | 用途 |
 |---|---|---|
 | `GET /health/live` | front processがHTTP応答可能 | process再起動判定 |
-| `GET /health/ready` | frontが全coreへhealth frameを送受信でき、config、manifest、全component checksumが有効 | traffic投入判定 |
+| `GET /health/ready` | frontが全coreへhealth frameを送受信でき、起動時に読込済みのsnapshotが利用可能 | traffic投入判定 |
 
 ready responseにはmanifest `generation`、segment数、embedding状態、compaction状態を含みます。
+probeごとに全component checksumを再計算しません。全検証は
+`yappo_makeindex verify --index /srv/yappod/index`を監視またはcronから実行します。
 index破損やcore不通時もlivenessは`200`のまま、readinessだけが`503`になります。ロードバランサは
 `/health/ready`、process supervisorは`/health/live`を使用してください。
 

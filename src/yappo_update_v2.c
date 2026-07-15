@@ -133,7 +133,6 @@ static int apply_operations(const char *index_dir,
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }
   status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
-  if (status == YAP_V2_OK) status = YAP_V2_manifest_verify_components(index_dir, &manifest);
   if (status != YAP_V2_OK) { set_error(error, error_size, "current index snapshot is invalid"); goto done; }
   if (manifest.generation == UINT64_MAX ||
       YAP_V2_segment_count_validate(manifest.segment_count, 1U) != YAP_V2_OK) {
@@ -259,11 +258,14 @@ write_segments:
     goto done;
   }
   if (status == YAP_V2_OK) status = sync_directory(segments_path);
+  for (i = 0U; status == YAP_V2_OK && i < plan.count; i++) {
+    status = YAP_V2_manifest_verify_segment_components(
+      index_dir, next_generation, &descriptors[i]);
+  }
   for (i = 0U; status == YAP_V2_OK && i < plan.count; i++)
     status = YAP_V2_manifest_add_segment(&manifest, &descriptors[i]);
   if (status == YAP_V2_OK) {
     manifest.generation = next_generation;
-    status = YAP_V2_manifest_verify_components(index_dir, &manifest);
   }
   if (status == YAP_V2_OK)
     status = YAP_V2_manifest_publish_if_generation(manifest_path, next_generation - 1U, &manifest);
