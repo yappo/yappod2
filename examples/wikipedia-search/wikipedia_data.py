@@ -4,8 +4,10 @@
 import argparse
 import bz2
 import contextlib
+from datetime import datetime, timezone
 import gzip
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -65,13 +67,15 @@ class WikipediaDataError(Exception):
 
 class EmbeddingSettings(NamedTuple):
     provider: str
-    base_url: str
+    base_url: Optional[str]
+    endpoint_url: str
     model: str
     dimensions: int
     batch_size: int
     timeout: float
     profile: str
     authorization_token: Optional[str]
+    usage_log_path: Optional[Path]
 
 
 def _strip_toml_comment(line: str) -> str:
@@ -131,7 +135,7 @@ def _fallback_toml_table(source: str, path: Path, table_name: str) -> Dict[str, 
     return result
 
 
-def _read_toml_table(path: Path, table_name: str) -> Dict[str, object]:
+def _read_toml_table(path: Path, table_name: str, required: bool = True) -> Dict[str, object]:
     try:
         if tomllib is not None:
             with path.open("rb") as source:
@@ -145,6 +149,8 @@ def _read_toml_table(path: Path, table_name: str) -> Dict[str, object]:
         if tomllib is not None and isinstance(error, tomllib.TOMLDecodeError):
             raise WikipediaDataError("invalid TOML config {}: {}".format(path, error)) from error
         raise
+    if not required and (value is None or value == {}):
+        return {}
     if not isinstance(value, dict) or not value:
         raise WikipediaDataError("{} must contain a [{}] table".format(path, table_name))
     return value
@@ -174,13 +180,93 @@ def _only_config_keys(table: Dict[str, object], allowed: Tuple[str, ...], name: 
         raise WikipediaDataError("{} contains unknown key: {}".format(name, unknown))
 
 
+_HTTP_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in (
+        "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+        "::1/128", "fc00::/7",
+    )
+)
+
+
+def _service_url(value: object, name: str, base: bool = False) -> str:
+    result = _config_string({"value": value}, "value", name)
+    assert result is not None
+    parsed = urlsplit(result)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.hostname is None:
+        raise WikipediaDataError("{} must be an http or https URL".format(name))
+    if parsed.scheme == "http":
+        host = parsed.hostname.rstrip(".").lower()
+        allowed = host == "localhost"
+        if not allowed:
+            try:
+                address = ipaddress.ip_address(host)
+                allowed = any(address.version == network.version and address in network for network in _HTTP_NETWORKS)
+            except ValueError:
+                allowed = False
+        if not allowed:
+            raise WikipediaDataError(
+                "{} must use https outside localhost, loopback, or private networks".format(name)
+            )
+    if base and (parsed.query or parsed.fragment):
+        raise WikipediaDataError("{} must not contain a query or fragment".format(name))
+    return result.rstrip("/") if base else result
+
+
+def _authorization_token_from_env(table: Dict[str, object], name: str) -> Optional[str]:
+    environment_name = _config_string(
+        table, "authorization_token_env", "{}.authorization_token_env".format(name), required=False
+    )
+    if environment_name is None:
+        return None
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", environment_name) is None:
+        raise WikipediaDataError("{}.authorization_token_env must be an environment variable name".format(name))
+    token = os.environ.get(environment_name)
+    if token is None or not token.strip():
+        raise WikipediaDataError("environment variable {} is not set or empty".format(environment_name))
+    return token.strip()
+
+
+def _usage_log_path(web_config: Path) -> Optional[Path]:
+    usage_log = _read_toml_table(web_config, "usage_log", required=False)
+    if not usage_log:
+        return None
+    _only_config_keys(usage_log, ("path",), "usage_log")
+    value = _config_string(usage_log, "path", "usage_log.path")
+    assert value is not None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = web_config.resolve().parent / path
+    return path.resolve(strict=False)
+
+
+def _append_usage_log(path: Optional[Path], provider: str, model: str, usage: object) -> None:
+    if path is None:
+        return
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "source": "wikipedia-data",
+        "service": "embedding",
+        "operation": "batch_embed",
+        "provider": provider,
+        "model": model,
+        "usage": usage if isinstance(usage, dict) else None,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as output:
+            output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except OSError as error:
+        print("warning: cannot append usage log {}: {}".format(path, error), file=sys.stderr)
+
+
 def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSettings:
     vector = _read_toml_table(index_config, "vector")
     embedding = _read_toml_table(web_config, "embedding")
     _only_config_keys(vector, ("enabled", "model_id", "dimensions", "metric"), "vector")
     _only_config_keys(embedding, (
-        "provider", "base_url", "model", "index_model_id", "dimensions", "profile",
-        "authorization_token", "timeout_ms", "batch_size",
+        "provider", "base_url", "endpoint_url", "model", "index_model_id", "dimensions", "profile",
+        "authorization_token_env", "timeout_ms", "batch_size",
     ), "embedding")
     if vector.get("enabled") is not True:
         raise WikipediaDataError("vector.enabled must be true in {}".format(index_config))
@@ -195,28 +281,34 @@ def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSe
     if configured_model_id is not None and configured_model_id != index_model_id:
         raise WikipediaDataError("embedding.index_model_id must match vector.model_id")
     provider = _config_string(embedding, "provider", "embedding.provider")
-    if provider not in ("lmstudio", "ollama"):
-        raise WikipediaDataError("embedding.provider must be lmstudio or ollama")
-    base_url = _config_string(embedding, "base_url", "embedding.base_url")
-    parsed_url = urlsplit(base_url)
-    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
-        raise WikipediaDataError("embedding.base_url must be an http or https URL")
+    if provider not in ("lmstudio", "ollama", "openai"):
+        raise WikipediaDataError("embedding.provider must be lmstudio, ollama, or openai")
+    base_value = embedding.get("base_url")
+    endpoint_value = embedding.get("endpoint_url")
+    if (base_value is None) == (endpoint_value is None):
+        raise WikipediaDataError("embedding must specify exactly one of base_url or endpoint_url")
+    base_url = _service_url(base_value, "embedding.base_url", base=True) if base_value is not None else None
+    if endpoint_value is not None:
+        endpoint_url = _service_url(endpoint_value, "embedding.endpoint_url")
+    else:
+        assert base_url is not None
+        endpoint_url = base_url + ("/api/embed" if provider == "ollama" else "/embeddings")
     profile = _config_string(embedding, "profile", "embedding.profile", required=False) or "embeddinggemma"
     if profile not in ("embeddinggemma", "plain"):
         raise WikipediaDataError("embedding.profile must be embeddinggemma or plain")
-    authorization_token = _config_string(
-        embedding, "authorization_token", "embedding.authorization_token", required=False
-    )
+    authorization_token = _authorization_token_from_env(embedding, "embedding")
     timeout_ms = _config_integer(embedding, "timeout_ms", "embedding.timeout_ms", 60000, 1000, 600000)
     return EmbeddingSettings(
         provider,
         base_url,
+        endpoint_url,
         _config_string(embedding, "model", "embedding.model"),
         dimensions,
         _config_integer(embedding, "batch_size", "embedding.batch_size", 16, 1, 1024),
         timeout_ms / 1000.0,
         profile,
         authorization_token,
+        _usage_log_path(web_config),
     )
 
 
@@ -289,15 +381,19 @@ def _validated_vector(value: object, dimensions: int) -> List[float]:
 
 def _embedding_batch(
     provider: str,
-    base_url: str,
+    endpoint_url: str,
     model: str,
     inputs: List[str],
     dimensions: int,
     timeout: float,
     api_key: Optional[str],
+    usage_log_path: Optional[Path] = None,
 ) -> List[List[float]]:
-    endpoint = base_url.rstrip("/") + ("/embeddings" if provider == "lmstudio" else "/api/embed")
-    response = _post_json(endpoint, {"model": model, "input": inputs}, timeout, api_key)
+    payload: Dict[str, object] = {"model": model, "input": inputs}
+    if provider == "openai":
+        payload["dimensions"] = dimensions
+    response = _post_json(endpoint_url, payload, timeout, api_key)
+    _append_usage_log(usage_log_path, provider, model, response.get("usage"))
     if provider == "ollama":
         embeddings = response.get("embeddings")
         if not isinstance(embeddings, list) or len(embeddings) != len(inputs):
@@ -305,17 +401,17 @@ def _embedding_batch(
         return [_validated_vector(item, dimensions) for item in embeddings]
     data = response.get("data")
     if not isinstance(data, list) or len(data) != len(inputs):
-        raise WikipediaDataError("LM Studio embedding count does not match the input count")
+        raise WikipediaDataError("OpenAI-compatible embedding count does not match the input count")
     ordered: List[Optional[List[float]]] = [None] * len(inputs)
     for item in data:
         if not isinstance(item, dict):
-            raise WikipediaDataError("LM Studio embedding item must be an object")
+            raise WikipediaDataError("OpenAI-compatible embedding item must be an object")
         index = item.get("index")
         if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index >= len(inputs) or ordered[index] is not None:
-            raise WikipediaDataError("LM Studio embedding indexes are invalid")
+            raise WikipediaDataError("OpenAI-compatible embedding indexes are invalid")
         ordered[index] = _validated_vector(item.get("embedding"), dimensions)
     if any(item is None for item in ordered):
-        raise WikipediaDataError("LM Studio embedding response has missing indexes")
+        raise WikipediaDataError("OpenAI-compatible embedding response has missing indexes")
     return [item for item in ordered if item is not None]
 
 
@@ -343,13 +439,14 @@ def embed_documents(
     passages_path: Path,
     output_path: Path,
     provider: str,
-    base_url: str,
+    endpoint_url: str,
     model: str,
     dimensions: int,
     batch_size: int,
     timeout: float,
     profile: str,
     api_key: Optional[str] = None,
+    usage_log_path: Optional[Path] = None,
 ) -> Tuple[int, int]:
     documents = _read_ndjson(documents_path, "document")
     passages = _read_ndjson(passages_path, "passage")
@@ -386,7 +483,8 @@ def embed_documents(
     vectors: List[List[float]] = []
     for offset in range(0, len(texts), batch_size):
         vectors.extend(_embedding_batch(
-            provider, base_url, model, texts[offset:offset + batch_size], dimensions, timeout, api_key
+            provider, endpoint_url, model, texts[offset:offset + batch_size], dimensions, timeout,
+            api_key, usage_log_path,
         ))
     if len(vectors) != len(texts):
         raise WikipediaDataError("embedding count does not match the passage count")
@@ -739,7 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--output", type=Path, required=True)
     convert.add_argument("--limit", type=_positive_int)
 
-    embed = subparsers.add_parser("embed", help="attach LM Studio or Ollama embeddings to canonical documents")
+    embed = subparsers.add_parser("embed", help="attach LM Studio, Ollama, or OpenAI embeddings to canonical documents")
     embed.add_argument("--documents", type=Path, required=True)
     embed.add_argument("--passages", type=Path, required=True)
     embed.add_argument("--output", type=Path, required=True)
@@ -765,9 +863,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             settings = load_embedding_settings(args.index_config, args.web_config)
             documents, passages = embed_documents(
-                args.documents, args.passages, args.output, settings.provider, settings.base_url,
+                args.documents, args.passages, args.output, settings.provider, settings.endpoint_url,
                 settings.model, settings.dimensions, settings.batch_size, settings.timeout,
-                settings.profile, settings.authorization_token,
+                settings.profile, settings.authorization_token, settings.usage_log_path,
             )
             result = {"output": str(args.output), "documents": documents, "passages": passages}
     except WikipediaDataError as error:

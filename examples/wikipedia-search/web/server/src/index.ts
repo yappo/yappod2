@@ -11,6 +11,7 @@ const app = await buildApp({
   staticDir: process.env.NODE_ENV === "development" ? undefined : defaultStaticDir(),
   llm: config.llm,
   embedding: config.embedding,
+  usageLogPath: config.usageLogPath,
 });
 
 try {

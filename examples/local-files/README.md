@@ -68,12 +68,14 @@ examples/local-files/data/
 絶対pathが書かれていれば、その文字列はbodyへ入ります。検索対象にすべきでないfileは
 `local-files-yappod2.toml`の`input.exclude`へ追加してください。
 
-出力directoryやindexが既にある場合は上書きしません。再実行する場合は既存の生成物を利用者自身で
-退避・削除するか、設定内の出力pathを変更してください。
+個別stageのcommandは、出力directoryやindexが既にある場合に上書きしません。一方、`all`は既存の
+documents、passages、vectors、indexについてmanifest、checksum、設定fingerprint、入力manifestを
+検証し、一致する完了stageを再利用します。同じ設定で完了済みの`all`を再実行しても成功します。
+検証できない成果物や設定・入力と一致しない成果物は上書きせずerrorにします。
 
-`local-files-yappod2.toml`を使ったpipelineを全て再生成する場合は、documentsだけでなくpassages、
+入力や設定の変更を反映してpipelineを強制的に全再生成する場合は、documentsだけでなくpassages、
 vectors、indexも前回の生成物として残るため、`data` directory全体を削除してから再実行します。
-個別のdirectoryだけを削除すると、後続stageが既存directoryを検出して停止します。
+個別のdirectoryだけを削除すると、stage間の対応を検証できず停止することがあります。
 
 ```sh
 rm -rf examples/local-files/data
@@ -205,24 +207,61 @@ index_directory = "./data/index"
 directory = "./data/vectors"
 provider = "lmstudio" # lmstudio | ollama | openai
 base_url = "http://127.0.0.1:1234/v1"
+# endpoint_url = "https://api.openai.com/v1/embeddings" # base_urlとは排他的
 model = "実際にendpointへ渡すmodel名"
 model_id = "my-embedding-768-v1"
 dimensions = 768
 batch_size = 16
 timeout_ms = 60000
 prompt_profile = "plain" # plain | embeddinggemma
+# authorization_token_env = "OPENAI_API_KEY"
+
+[usage_log]
+path = "./data/api-usage.jsonl"
 ```
 
-- LM StudioとOpenAI互換APIでは`base_url`へ`/embeddings`を追加して呼び出します。
+- `base_url`と完全URLの`endpoint_url`はどちらか一方だけを指定します。`endpoint_url`はpathを追加せず
+  そのまま使用します。
+- LM StudioとOpenAIでは`base_url`へ`/embeddings`を追加して呼び出します。
 - Ollamaでは通常`base_url = "http://127.0.0.1:11434"`とし、`/api/embed`を追加して呼び出します。
-- bearer tokenが必要なら`authorization_token`を指定できます。設定fileの権限とversion管理に注意して
-  ください。
+- bearer tokenが必要なら、tokenを保持する環境変数名を`authorization_token_env`へ指定します。
+  環境変数が未定義または空ならAPIを呼ぶ前に停止します。平文の`authorization_token`は拒否します。
 - `embedding.model_id`と`dimensions`は`config.hybrid.toml`の`[vector]`と一致させます。
 - lexical configとhybrid configの`[tokenizer]`、`[chunking]`も一致させます。異なる場合、CLIは
   passage/vector ordinalの不整合を避けるため失敗します。
 
 yappod2自身をhybrid化する場合は、`local-files-yappod2.toml`のplaceholder `model`、`model_id`、
 `dimensions`と、`config.hybrid.toml`の対応値を実際のembedding modelへ合わせてから実行します。
+
+OpenAIの`text-embedding-3-small`を使う例です。OpenAI providerでは`dimensions`をAPI requestにも
+含めます。
+
+```toml
+[embedding]
+directory = "./data/vectors"
+provider = "openai"
+endpoint_url = "https://api.openai.com/v1/embeddings"
+model = "text-embedding-3-small"
+model_id = "text-embedding-3-small-768-v1"
+dimensions = 768
+batch_size = 16
+timeout_ms = 60000
+prompt_profile = "plain"
+authorization_token_env = "OPENAI_API_KEY"
+
+[usage_log]
+path = "./data/api-usage.jsonl"
+```
+
+`usage_log.path`は設定file基準のpathです。成功したAPI requestごとにUTC日時、source、service、
+operation、provider、model、API応答の`usage`（未返却時は`null`）をJSONLへappendします。prompt、
+vector、応答本文、認証情報、endpointは記録しません。ログ書き込みに失敗してもwarningをstderrへ出して
+処理を続けるため、ログ障害を理由に課金済みrequestを再送しません。
+
+HTTPSは常に許可します。HTTPを使えるのは`localhost`、IPv4 loopback `127.0.0.0/8`、RFC 1918、
+IPv6 loopback `::1`、RFC 4193 ULAだけです。その他のhostnameとliteral IPはHTTPSが必須で、DNS解決で
+private addressかどうかは判定しません。OpenAI互換Bearer認証が対象であり、Azure固有の`api-key`認証は
+対象外です。
 
 ```sh
 examples/local-files/.venv/bin/python \
@@ -356,6 +395,7 @@ lf:v1:<collection_id>:<sha256(collection_id + NUL + normalized_relative_path)>:p
 
 ```text
 schema_version, stage, target, config_fingerprint, source_manifest_sha256
+input_snapshot_sha256, input_file_count
 total_records, total_bytes
 shards[].path, shards[].record_count, shards[].file_bytes, shards[].sha256
 failure_count, failure_shards[]
@@ -363,10 +403,22 @@ failure_count, failure_shards[]
 
 全shardは一時directoryで作り、件数、byte数、SHA-256を確定してからdirectory単位で公開します。
 `prepare`、`embed`、`build`は入力manifestの順序、size、件数、checksumを再検証します。
+`all`でdocumentsを再利用する場合は、現在の入力relative path、内容SHA-256、更新時刻から同じsnapshotを再計算します。
+入力が変わっていれば既存成果物を上書きせず停止し、前述の完全再生成を要求します。
 
-embeddingは入力document shardごとにcheckpointを作ります。入力shard SHA、passage manifest SHA、
-chunk config SHA、provider、endpoint、model、model ID、dimensions、prompt profileが全て一致する完了shard
-だけを再利用します。不一致のcheckpointがある場合は、自動で混在させず明示errorにします。
+embeddingは`.vectors.work`配下へ入力document shardごとのprogress metadataとappend-only vector journalを
+作ります。成功batchはdocument ID、passage ordinal、入力text SHA-256、vectorをまとめて追記し、flushと
+fsyncが完了してから次のAPI requestへ進みます。`embed`または`all`が途中終了した場合は、同じcommandを
+再実行するとjournalを入力passageと順番に照合し、最後に永続化できたbatchの次から再開します。
+
+journal末尾の未完了行だけは切り捨てて再開します。途中の破損、順序・hash・次元・有限値の不一致、設定変更は
+再課金せず明示errorにします。全batch完了後にvector付きdocument shardを再構成してatomic publishし、公開成功後
+だけprogressを削除します。入力shard SHA、passage manifest SHA、chunk config SHA、provider、endpoint、model、
+model ID、dimensions、prompt profileが一致する完了shardも再利用します。API成功からjournalのfsyncまでの極短い
+区間で強制終了したbatchだけは、provider側に冪等性保証がないため再送される可能性があります。
+
+`all`で作るindexにはtarget、入力manifest SHA、index設定SHA、generation、accepted件数を記録したsidecarを
+含めます。これをindex manifestとあわせて検証することで、完成済みindexも安全に再利用します。
 
 ## FIFO buildとatomic公開
 

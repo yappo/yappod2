@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from datetime import datetime, timezone
 import fnmatch
 import hashlib
 from html.parser import HTMLParser
+import ipaddress
 import json
 import math
 import mimetypes
@@ -50,6 +51,7 @@ DEFAULT_SCAN_BYTES = 1024 * 1024
 DEFAULT_EXTRACTED_BYTES = 64 * 1024 * 1024
 COLLECTION_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 PART_ORDINAL_DIGITS = 10
+BUILD_STATE_FILENAME = "local-files-build.json"
 
 TEXT_SUFFIXES = {
     ".asm", ".bash", ".c", ".cc", ".cfg", ".clj", ".cmake", ".conf",
@@ -97,7 +99,8 @@ class FormatterRule:
 @dataclass(frozen=True)
 class EmbeddingConfig:
     provider: str
-    base_url: str
+    base_url: Optional[str]
+    endpoint_url: str
     model: str
     model_id: str
     dimensions: int
@@ -105,6 +108,7 @@ class EmbeddingConfig:
     timeout_ms: int
     prompt_profile: str
     authorization_token: Optional[str]
+    usage_log_path: Optional[Path]
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,7 @@ class Settings:
     index_config: Optional[Path]
     hybrid_index_config: Optional[Path]
     index_dir: Optional[Path]
+    usage_log_path: Optional[Path]
     config_fingerprint: str
 
 
@@ -249,6 +254,91 @@ def _optional_resolve(config_dir: Path, value: Any, name: str) -> Optional[Path]
     return _resolve(config_dir, value, name)
 
 
+_HTTP_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+_HTTP_IPV6_NETWORKS = tuple(
+    ipaddress.ip_network(value) for value in ("::1/128", "fc00::/7")
+)
+
+
+def _http_host_allowed(host: Optional[str]) -> bool:
+    if host is None:
+        return False
+    normalized = host.rstrip(".").lower()
+    if normalized == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    networks = _HTTP_IPV4_NETWORKS if address.version == 4 else _HTTP_IPV6_NETWORKS
+    return any(address in network for network in networks)
+
+
+def _service_url(value: Any, name: str, *, base: bool = False) -> str:
+    result = _nonempty_string(value, name)
+    assert result is not None
+    parsed = urlsplit(result)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.hostname is None:
+        raise LocalFilesError(f"{name} must be an http or https URL")
+    if parsed.scheme == "http" and not _http_host_allowed(parsed.hostname):
+        raise LocalFilesError(f"{name} must use https outside localhost, loopback, or private networks")
+    if base and (parsed.query or parsed.fragment):
+        raise LocalFilesError(f"{name} must not contain a query or fragment")
+    return result.rstrip("/") if base else result
+
+
+def _authorization_token_from_env(table: Mapping[str, Any], name: str) -> Optional[str]:
+    if "authorization_token" in table:
+        raise LocalFilesError(
+            f"{name}.authorization_token is not supported; use {name}.authorization_token_env"
+        )
+    environment_name = _nonempty_string(
+        table.get("authorization_token_env"),
+        f"{name}.authorization_token_env",
+        required=False,
+    )
+    if environment_name is None:
+        return None
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", environment_name) is None:
+        raise LocalFilesError(f"{name}.authorization_token_env must be an environment variable name")
+    token = os.environ.get(environment_name)
+    if token is None or not token.strip():
+        raise LocalFilesError(f"environment variable {environment_name} is not set or empty")
+    return token.strip()
+
+
+def _append_usage_log(
+    path: Optional[Path],
+    *,
+    source: str,
+    service: str,
+    operation: str,
+    provider: str,
+    model: str,
+    usage: Any,
+) -> None:
+    if path is None:
+        return
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "source": source,
+        "service": service,
+        "operation": operation,
+        "provider": provider,
+        "model": model,
+        "usage": usage if isinstance(usage, dict) else None,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as output:
+            output.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except OSError as error:
+        print(f"local-files: warning: cannot append usage log {path}: {error}", file=sys.stderr)
+
+
 def _compile_regex_list(value: Any, name: str) -> Tuple[re.Pattern[str], ...]:
     patterns = _string_list(value, name)
     compiled: List[re.Pattern[str]] = []
@@ -283,6 +373,7 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
     prepare_table = _expect_table(data.get("prepare"), "prepare")
     embedding_table = _expect_table(data.get("embedding"), "embedding")
     build_table = _expect_table(data.get("build"), "build")
+    usage_log_table = _expect_table(data.get("usage_log"), "usage_log")
     root = _resolve(config_dir, input_table.get("root"), "input.root")
     output_dir = _resolve(config_dir, output_table.get("directory"), "output.directory")
     shard_max_bytes = _positive_int(
@@ -334,15 +425,25 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
         content_match_enabled = content_match_override
 
     embedding: Optional[EmbeddingConfig] = None
+    usage_log_path = _optional_resolve(
+        config_dir, usage_log_table.get("path"), "usage_log.path"
+    )
+    if usage_log_table and usage_log_path is None:
+        raise LocalFilesError("usage_log.path is required")
     if embedding_table:
         provider = _nonempty_string(embedding_table.get("provider"), "embedding.provider")
         if provider not in {"lmstudio", "ollama", "openai"}:
             raise LocalFilesError("embedding.provider must be lmstudio, ollama, or openai")
-        base_url = _nonempty_string(embedding_table.get("base_url"), "embedding.base_url")
-        assert base_url is not None
-        parsed_url = urlsplit(base_url)
-        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise LocalFilesError("embedding.base_url must be an http or https URL")
+        base_value = embedding_table.get("base_url")
+        endpoint_value = embedding_table.get("endpoint_url")
+        if (base_value is None) == (endpoint_value is None):
+            raise LocalFilesError("embedding must specify exactly one of base_url or endpoint_url")
+        base_url = _service_url(base_value, "embedding.base_url", base=True) if base_value is not None else None
+        if endpoint_value is not None:
+            endpoint_url = _service_url(endpoint_value, "embedding.endpoint_url")
+        else:
+            assert base_url is not None
+            endpoint_url = base_url + ("/api/embed" if provider == "ollama" else "/embeddings")
         prompt_profile = _nonempty_string(
             embedding_table.get("prompt_profile", "plain"), "embedding.prompt_profile"
         )
@@ -350,7 +451,8 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
             raise LocalFilesError("embedding.prompt_profile must be plain or embeddinggemma")
         embedding = EmbeddingConfig(
             provider=provider,
-            base_url=base_url.rstrip("/"),
+            base_url=base_url,
+            endpoint_url=endpoint_url,
             model=_nonempty_string(embedding_table.get("model"), "embedding.model") or "",
             model_id=_nonempty_string(embedding_table.get("model_id"), "embedding.model_id") or "",
             dimensions=_required_positive_int(
@@ -363,11 +465,8 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
                 embedding_table.get("timeout_ms"), "embedding.timeout_ms", 60_000
             ),
             prompt_profile=prompt_profile,
-            authorization_token=_nonempty_string(
-                embedding_table.get("authorization_token"),
-                "embedding.authorization_token",
-                required=False,
-            ),
+            authorization_token=_authorization_token_from_env(embedding_table, "embedding"),
+            usage_log_path=usage_log_path,
         )
         if embedding.dimensions > 65536:
             raise LocalFilesError("embedding.dimensions cannot exceed 65536")
@@ -451,6 +550,7 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
             config_dir, build_table.get("hybrid_index_config"), "build.hybrid_index_config"
         ),
         index_dir=index_dir,
+        usage_log_path=usage_log_path,
         config_fingerprint=hashlib.sha256(fingerprint_input).hexdigest(),
     )
 
@@ -917,6 +1017,54 @@ def _failure(relative_path: str, error: FileFailure) -> Dict[str, Any]:
     return result
 
 
+def _source_snapshot_update(
+    digest: Any, relative_path: str, source_hash: str, updated_at_unix_ms: int
+) -> None:
+    digest.update(relative_path.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(source_hash.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(str(updated_at_unix_ms).encode("ascii"))
+    digest.update(b"\n")
+
+
+def _current_source_snapshot(settings: Settings) -> Tuple[str, int]:
+    digest = hashlib.sha256()
+    count = 0
+    excluded = [settings.output_dir]
+    for optional in (settings.passage_dir, settings.vector_dir, settings.index_dir):
+        if optional is not None:
+            excluded.append(optional)
+    if settings.vector_dir is not None:
+        excluded.append(settings.vector_dir.parent / f".{settings.vector_dir.name}.work")
+    if settings.usage_log_path is not None:
+        excluded.append(settings.usage_log_path)
+    for path in _walk_sorted(
+        settings.root,
+        tuple(excluded),
+        settings.exclude,
+        settings.follow_symlinks,
+    ):
+        try:
+            relative_path = normalize_relative_path(path, settings.root)
+        except (ValueError, OSError) as error:
+            raise LocalFilesError(f"cannot fingerprint input path {path.name}: {error}") from error
+        if not _selected(relative_path, settings):
+            continue
+        try:
+            updated_at_unix_ms = max(0, path.stat().st_mtime_ns // 1_000_000)
+            source_hash = sha256_file(path)
+        except FileFailure as error:
+            source_hash = f"error-{error.code}"
+            updated_at_unix_ms = -1
+        except OSError:
+            source_hash = "error-io_error"
+            updated_at_unix_ms = -1
+        _source_snapshot_update(digest, relative_path, source_hash, updated_at_unix_ms)
+        count += 1
+    return digest.hexdigest(), count
+
+
 def convert(settings: Settings) -> Dict[str, Any]:
     if not settings.root.is_dir():
         raise LocalFilesError(f"input.root is not a directory: {settings.root}")
@@ -927,6 +1075,8 @@ def convert(settings: Settings) -> Dict[str, Any]:
     documents = ShardWriter(stage, "documents", settings.shard_max_bytes)
     failures = ShardWriter(stage, "failures", settings.shard_max_bytes)
     successful_files = 0
+    source_snapshot = hashlib.sha256()
+    input_file_count = 0
     try:
         for path in _walk_sorted(
             settings.root,
@@ -941,15 +1091,22 @@ def convert(settings: Settings) -> Dict[str, Any]:
                 continue
             if not _selected(relative_path, settings):
                 continue
+            input_file_count += 1
+            snapshot_recorded = False
             try:
+                stat = path.stat()
+                updated_at_unix_ms = max(0, stat.st_mtime_ns // 1_000_000)
                 source_hash = sha256_file(path)
+                _source_snapshot_update(
+                    source_snapshot, relative_path, source_hash, updated_at_unix_ms
+                )
+                snapshot_recorded = True
                 text, extractor = extract_file(path, relative_path, settings)
                 if not text.strip():
                     raise FileFailure("no_text", "extractor returned no searchable text", extractor)
                 parts = split_body(text, settings.body_max_bytes)
                 if not parts:
                     raise FileFailure("no_text", "extractor returned no searchable text", extractor)
-                stat = path.stat()
                 mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
                 part_count = len(parts)
                 for index, body in enumerate(parts):
@@ -969,13 +1126,21 @@ def convert(settings: Settings) -> Dict[str, Any]:
                             "title": truncate_utf8(relative_path, 255),
                             "body": body,
                             "metadata": metadata,
-                            "updated_at_unix_ms": max(0, stat.st_mtime_ns // 1_000_000),
+                            "updated_at_unix_ms": updated_at_unix_ms,
                         }
                     )
                 successful_files += 1
             except FileFailure as error:
+                if not snapshot_recorded:
+                    _source_snapshot_update(
+                        source_snapshot, relative_path, f"error-{error.code}", -1
+                    )
                 failures.write(_failure(relative_path, error))
             except OSError as error:
+                if not snapshot_recorded:
+                    _source_snapshot_update(
+                        source_snapshot, relative_path, "error-io_error", -1
+                    )
                 failures.write(_failure(relative_path, FileFailure("io_error", str(error))))
         documents.close()
         failures.close()
@@ -988,6 +1153,8 @@ def convert(settings: Settings) -> Dict[str, Any]:
             "collection_id": settings.collection_id,
             "config_fingerprint": settings.config_fingerprint,
             "source_manifest_sha256": None,
+            "input_snapshot_sha256": source_snapshot.hexdigest(),
+            "input_file_count": input_file_count,
             "successful_files": successful_files,
             "total_records": documents.total_records,
             "total_bytes": documents.total_bytes,
@@ -1090,7 +1257,19 @@ def _load_document_manifest(
 
 
 def _load_documents_manifest(settings: Settings) -> Tuple[Dict[str, Any], List[Path]]:
-    return _load_document_manifest(settings, settings.output_dir, "convert", "documents")
+    manifest, paths = _load_document_manifest(
+        settings, settings.output_dir, "convert", "documents"
+    )
+    snapshot, input_file_count = _current_source_snapshot(settings)
+    if (
+        manifest.get("input_snapshot_sha256") != snapshot
+        or manifest.get("input_file_count") != input_file_count
+    ):
+        raise LocalFilesError(
+            "documents manifest input snapshot does not match current source files; "
+            "remove the complete output tree before regeneration"
+        )
+    return manifest, paths
 
 
 def _file_sha256_for_manifest(path: Path) -> str:
@@ -1408,13 +1587,14 @@ class _PassageCursor:
 
 
 def _post_embedding_json(config: EmbeddingConfig, inputs: Sequence[str]) -> Dict[str, Any]:
-    endpoint = config.base_url + ("/api/embed" if config.provider == "ollama" else "/embeddings")
     payload = {"model": config.model, "input": list(inputs)}
+    if config.provider == "openai":
+        payload["dimensions"] = config.dimensions
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if config.authorization_token:
         headers["Authorization"] = "Bearer " + config.authorization_token
     request = Request(
-        endpoint,
+        config.endpoint_url,
         data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         headers=headers,
         method="POST",
@@ -1428,6 +1608,15 @@ def _post_embedding_json(config: EmbeddingConfig, inputs: Sequence[str]) -> Dict
         raise LocalFilesError(f"embedding request failed: {error}") from error
     if not isinstance(value, dict):
         raise LocalFilesError("embedding response root must be an object")
+    _append_usage_log(
+        config.usage_log_path,
+        source="local-files",
+        service="embedding",
+        operation="batch_embed",
+        provider=config.provider,
+        model=config.model,
+        usage=value.get("usage"),
+    )
     return value
 
 
@@ -1549,72 +1738,184 @@ def _consume_document_shard_passages(
     return document_count, passage_count
 
 
-def _embed_document_group(
+def _document_group_inputs(
     document_shard: Path,
     passage_cursor: _PassageCursor,
-    output_dir: Path,
-    shard_max_bytes: int,
     embedding: EmbeddingConfig,
+) -> Tuple[List[Tuple[Dict[str, Any], List[Tuple[int, str, str]]]], List[Tuple[str, int, str, str]]]:
+    documents: List[Tuple[Dict[str, Any], List[Tuple[int, str, str]]]] = []
+    entries: List[Tuple[str, int, str, str]] = []
+    for document in _iter_ndjson((document_shard,), "document"):
+        document_id = document.get("id")
+        if (
+            document.get("operation") != "upsert"
+            or not isinstance(document_id, str)
+            or not document_id
+        ):
+            raise LocalFilesError("vector input must contain canonical document upserts")
+        title = document.get("title")
+        title_text = title.strip() if isinstance(title, str) and title.strip() else "none"
+        prepared: List[Tuple[int, str, str]] = []
+        for passage in passage_cursor.take(document_id):
+            ordinal = int(passage["ordinal"])
+            text = str(passage["text"])
+            if embedding.prompt_profile == "embeddinggemma":
+                text = f"title: {title_text} | text: {text}"
+            input_sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            prepared.append((ordinal, text, input_sha))
+            entries.append((document_id, ordinal, text, input_sha))
+        documents.append((document, prepared))
+    return documents, entries
+
+
+def _load_embedding_journal(
+    path: Path,
+    entries: Sequence[Tuple[str, int, str, str]],
+    dimensions: int,
+) -> int:
+    if not path.exists():
+        return 0
+    completed = 0
+    try:
+        with path.open("r+b") as source:
+            while True:
+                line_start = source.tell()
+                line = source.readline()
+                if not line:
+                    break
+                if not line.endswith(b"\n"):
+                    source.truncate(line_start)
+                    source.flush()
+                    os.fsync(source.fileno())
+                    break
+                if completed >= len(entries):
+                    raise LocalFilesError("embedding journal contains unexpected vectors")
+                try:
+                    value = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise LocalFilesError("embedding journal contains invalid JSON") from error
+                document_id, ordinal, _text, input_sha = entries[completed]
+                if (
+                    not isinstance(value, dict)
+                    or value.get("sequence") != completed
+                    or value.get("document_id") != document_id
+                    or value.get("ordinal") != ordinal
+                    or value.get("input_sha256") != input_sha
+                ):
+                    raise LocalFilesError("embedding journal does not match prepared passages")
+                _validated_vector(value.get("vector"), dimensions)
+                completed += 1
+    except OSError as error:
+        raise LocalFilesError(f"cannot read embedding journal: {error}") from error
+    return completed
+
+
+def _append_embedding_journal_batch(
+    path: Path,
+    entries: Sequence[Tuple[str, int, str, str]],
+    vectors: Sequence[Sequence[float]],
+    start: int,
+) -> None:
+    records = []
+    for offset, (entry, vector) in enumerate(zip(entries, vectors)):
+        document_id, ordinal, _text, input_sha = entry
+        records.append(
+            json.dumps(
+                {
+                    "sequence": start + offset,
+                    "document_id": document_id,
+                    "ordinal": ordinal,
+                    "input_sha256": input_sha,
+                    "vector": list(vector),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8") + b"\n"
+        )
+    try:
+        with path.open("ab") as output:
+            output.write(b"".join(records))
+            output.flush()
+            os.fsync(output.fileno())
+        _fsync_directory(path.parent)
+    except OSError as error:
+        raise LocalFilesError(f"cannot append embedding journal: {error}") from error
+
+
+def _write_document_group_from_journal(
+    output_dir: Path,
+    journal_path: Path,
+    documents: Sequence[Tuple[Dict[str, Any], List[Tuple[int, str, str]]]],
+    shard_max_bytes: int,
+    dimensions: int,
 ) -> Tuple[int, int, List[Dict[str, Any]]]:
     writer = ShardWriter(output_dir, "documents", shard_max_bytes)
-    pending: Any = deque()
-    batch_inputs: List[str] = []
-    batch_slots: List[Tuple[List[Optional[List[float]]], int]] = []
-    document_count = 0
     passage_count = 0
-
-    def flush_ready() -> None:
-        while pending and all(vector is not None for vector in pending[0][1]):
-            document, vectors = pending.popleft()
-            enriched = dict(document)
-            enriched["vectors"] = [vector for vector in vectors if vector is not None]
-            writer.write(enriched)
-
-    def send_batch() -> None:
-        if not batch_inputs:
-            return
-        vectors = _embedding_batch(embedding, batch_inputs)
-        if len(vectors) != len(batch_slots):
-            raise LocalFilesError("embedding count does not match passage count")
-        for vector, (slots, ordinal) in zip(vectors, batch_slots):
-            slots[ordinal] = vector
-        batch_inputs.clear()
-        batch_slots.clear()
-        flush_ready()
-
     try:
-        for document in _iter_ndjson((document_shard,), "document"):
-            document_id = document.get("id")
-            if (
-                document.get("operation") != "upsert"
-                or not isinstance(document_id, str)
-                or not document_id
-            ):
-                raise LocalFilesError("vector input must contain canonical document upserts")
-            passages = passage_cursor.take(document_id)
-            slots: List[Optional[List[float]]] = [None] * len(passages)
-            pending.append((document, slots))
-            title = document.get("title")
-            title_text = title.strip() if isinstance(title, str) and title.strip() else "none"
-            for ordinal, passage in enumerate(passages):
-                text = str(passage["text"])
-                if embedding.prompt_profile == "embeddinggemma":
-                    text = f"title: {title_text} | text: {text}"
-                batch_inputs.append(text)
-                batch_slots.append((slots, ordinal))
-                if len(batch_inputs) == embedding.batch_size:
-                    send_batch()
-            document_count += 1
-            passage_count += len(passages)
-        send_batch()
-        flush_ready()
-        if pending:
-            raise LocalFilesError("not all document vectors were assigned")
+        with journal_path.open("r", encoding="utf-8") as source:
+            for document, passages in documents:
+                vectors: List[List[float]] = []
+                for _passage in passages:
+                    line = source.readline()
+                    if not line:
+                        raise LocalFilesError("embedding journal ended before all passages")
+                    value = json.loads(line)
+                    vectors.append(_validated_vector(value.get("vector"), dimensions))
+                enriched = dict(document)
+                enriched["vectors"] = vectors
+                writer.write(enriched)
+                passage_count += len(passages)
+            if source.readline():
+                raise LocalFilesError("embedding journal contains extra vectors")
         writer.close()
-        return document_count, passage_count, writer.descriptors
+        return len(documents), passage_count, writer.descriptors
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        writer.close()
+        raise LocalFilesError(f"cannot finalize embedding journal: {error}") from error
     except Exception:
         writer.close()
         raise
+
+
+def _embed_document_group_resumable(
+    document_shard: Path,
+    passage_cursor: _PassageCursor,
+    progress_dir: Path,
+    output_dir: Path,
+    shard_max_bytes: int,
+    embedding: EmbeddingConfig,
+    expected: Mapping[str, Any],
+) -> Tuple[int, int, List[Dict[str, Any]]]:
+    progress_path = progress_dir / "progress.json"
+    journal_path = progress_dir / "vectors.ndjson"
+    if progress_dir.exists():
+        try:
+            progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise LocalFilesError(f"cannot load embedding progress: {error}") from error
+        if not isinstance(progress, dict) or any(progress.get(key) != value for key, value in expected.items()):
+            raise LocalFilesError("embedding progress configuration mismatch")
+    else:
+        progress_dir.mkdir(parents=True)
+        _write_manifest(progress_path, expected)
+        _fsync_directory(progress_dir)
+
+    documents, entries = _document_group_inputs(document_shard, passage_cursor, embedding)
+    completed = _load_embedding_journal(journal_path, entries, embedding.dimensions)
+    while completed < len(entries):
+        batch = entries[completed:completed + embedding.batch_size]
+        vectors = _embedding_batch(embedding, [entry[2] for entry in batch])
+        if len(vectors) != len(batch):
+            raise LocalFilesError("embedding count does not match passage count")
+        _append_embedding_journal_batch(journal_path, batch, vectors, completed)
+        completed += len(batch)
+    return _write_document_group_from_journal(
+        output_dir,
+        journal_path,
+        documents,
+        shard_max_bytes,
+        embedding.dimensions,
+    )
 
 
 def _embedding_checkpoint_expected(
@@ -1630,6 +1931,7 @@ def _embedding_checkpoint_expected(
         "chunk_config_sha256": chunk_config_sha,
         "provider": embedding.provider,
         "base_url": embedding.base_url,
+        "endpoint_url": embedding.endpoint_url,
         "model": embedding.model,
         "model_id": embedding.model_id,
         "dimensions": embedding.dimensions,
@@ -1676,6 +1978,7 @@ def embed_documents(settings: Settings) -> Dict[str, Any]:
         zip(document_shards, documents_manifest["shards"]), 1
     ):
         group_dir = work_dir / f"input-{ordinal:06d}"
+        progress_dir = work_dir / f".input-{ordinal:06d}.progress"
         expected = _embedding_checkpoint_expected(
             input_descriptor,
             passage_manifest_sha,
@@ -1706,16 +2009,16 @@ def embed_documents(settings: Settings) -> Dict[str, Any]:
             groups.append((group_dir, checkpoint))
             continue
 
-        temporary_group = Path(
-            tempfile.mkdtemp(prefix=f".input-{ordinal:06d}.tmp.", dir=work_dir)
-        )
+        temporary_group = Path(tempfile.mkdtemp(prefix=f".input-{ordinal:06d}.finalize.", dir=work_dir))
         try:
-            document_count, passage_count, descriptors = _embed_document_group(
+            document_count, passage_count, descriptors = _embed_document_group_resumable(
                 document_shard,
                 passage_cursor,
+                progress_dir,
                 temporary_group,
                 settings.shard_max_bytes,
                 settings.embedding,
+                expected,
             )
             checkpoint = dict(expected)
             checkpoint.update(
@@ -1729,6 +2032,7 @@ def embed_documents(settings: Settings) -> Dict[str, Any]:
             _fsync_directory(temporary_group)
             os.replace(temporary_group, group_dir)
             _fsync_directory(work_dir)
+            shutil.rmtree(progress_dir, ignore_errors=True)
             groups.append((group_dir, checkpoint))
         except Exception:
             shutil.rmtree(temporary_group, ignore_errors=True)
@@ -1778,7 +2082,9 @@ def embed_documents(settings: Settings) -> Dict[str, Any]:
         raise
 
 
-def _require_build_settings(settings: Settings, target: str) -> Tuple[Path, Path, Path]:
+def _require_build_settings(
+    settings: Settings, target: str, *, allow_existing: bool = False
+) -> Tuple[Path, Path, Path]:
     if target not in {"lexical", "rag", "hybrid"}:
         raise LocalFilesError("build target must be lexical, rag, or hybrid")
     if settings.yappo_makeindex is None:
@@ -1793,7 +2099,7 @@ def _require_build_settings(settings: Settings, target: str) -> Tuple[Path, Path
         raise LocalFilesError(f"yappo_makeindex is not executable: {settings.yappo_makeindex}")
     if not index_config.is_file():
         raise LocalFilesError(f"index config does not exist: {index_config}")
-    if settings.index_dir.exists():
+    if settings.index_dir.exists() and not allow_existing:
         raise LocalFilesError(f"index directory already exists: {settings.index_dir}")
     try:
         settings.index_dir.relative_to(settings.output_dir)
@@ -1900,6 +2206,56 @@ def _verify_built_index(
         raise LocalFilesError(
             f"built index contains {document_total} documents, expected {accepted}"
         )
+
+
+def _build_source_manifest_path(settings: Settings, target: str) -> Path:
+    if target == "hybrid":
+        if settings.vector_dir is None:
+            raise LocalFilesError("embedding.directory is required")
+        return settings.vector_dir / "manifest.json"
+    return settings.output_dir / "manifest.json"
+
+
+def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
+    _yappo_makeindex, index_config, index_dir = _require_build_settings(
+        settings, target, allow_existing=True
+    )
+    state_path = index_dir / BUILD_STATE_FILENAME
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise LocalFilesError(f"cannot reuse existing index without valid {BUILD_STATE_FILENAME}: {error}") from error
+    expected_source_sha = _file_sha256_for_manifest(_build_source_manifest_path(settings, target))
+    expected_config_sha = _file_sha256_for_manifest(index_config)
+    if (
+        not isinstance(state, dict)
+        or state.get("schema_version") != SCHEMA_VERSION
+        or state.get("stage") != "build"
+        or state.get("target") != target
+        or state.get("source_manifest_sha256") != expected_source_sha
+        or state.get("index_config_sha256") != expected_config_sha
+    ):
+        raise LocalFilesError("existing index build state does not match requested inputs")
+    generation = state.get("generation")
+    accepted = state.get("accepted")
+    if (
+        not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or generation <= 0
+        or not isinstance(accepted, int)
+        or isinstance(accepted, bool)
+        or accepted <= 0
+    ):
+        raise LocalFilesError("existing index build state is invalid")
+    _verify_built_index(index_dir, target, generation, accepted, index_config)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "stage": "build",
+        "target": target,
+        "generation": generation,
+        "accepted": accepted,
+        "index": str(index_dir),
+    }
 
 
 def build_index(settings: Settings, target: str) -> Dict[str, Any]:
@@ -2025,6 +2381,20 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
             accepted,
             index_config,
         )
+        _write_manifest(
+            stage_index / BUILD_STATE_FILENAME,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "stage": "build",
+                "target": target,
+                "generation": generation,
+                "accepted": accepted,
+                "source_manifest_sha256": _file_sha256_for_manifest(
+                    _build_source_manifest_path(settings, target)
+                ),
+                "index_config_sha256": _file_sha256_for_manifest(index_config),
+            },
+        )
         _fsync_directory(stage_index)
         os.replace(stage_index, index_dir)
         _fsync_directory(index_dir.parent)
@@ -2045,10 +2415,30 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
         shutil.rmtree(stage_root, ignore_errors=True)
 
 
+def _load_vector_manifest(settings: Settings) -> Dict[str, Any]:
+    if settings.vector_dir is None or settings.embedding is None:
+        raise LocalFilesError("hybrid target requires embedding configuration")
+    hybrid_config_sha = _validate_hybrid_index_config(settings, settings.embedding)
+    if settings.passage_dir is None:
+        raise LocalFilesError("prepare.directory is required")
+    passage_manifest_sha = _file_sha256_for_manifest(settings.passage_dir / "manifest.json")
+    manifest, _paths = _load_document_manifest(
+        settings,
+        settings.vector_dir,
+        "embed",
+        "hybrid",
+        _embed_manifest_fingerprint(settings, hybrid_config_sha, passage_manifest_sha),
+    )
+    return manifest
+
+
 def run_all(settings: Settings, target: str) -> Dict[str, Any]:
     if target not in {"documents", "lexical", "rag", "hybrid"}:
         raise LocalFilesError(f"unknown target {target!r}")
-    documents = convert(settings)
+    if settings.output_dir.exists():
+        documents, _document_paths = _load_documents_manifest(settings)
+    else:
+        documents = convert(settings)
     result: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "stage": "all",
@@ -2061,14 +2451,20 @@ def run_all(settings: Settings, target: str) -> Dict[str, Any]:
         },
     }
     if target in {"rag", "hybrid"}:
-        passages = prepare_passages(settings)
+        if settings.passage_dir is not None and settings.passage_dir.exists():
+            passages, _passage_paths = _load_passage_manifest(settings)
+        else:
+            passages = prepare_passages(settings)
         result["passages"] = {
             "total_records": passages["total_records"],
             "total_bytes": passages["total_bytes"],
             "shards": passages["shards"],
         }
     if target == "hybrid":
-        vectors = embed_documents(settings)
+        if settings.vector_dir is not None and settings.vector_dir.exists():
+            vectors = _load_vector_manifest(settings)
+        else:
+            vectors = embed_documents(settings)
         result["vectors"] = {
             "total_records": vectors["total_records"],
             "total_bytes": vectors["total_bytes"],
@@ -2076,7 +2472,10 @@ def run_all(settings: Settings, target: str) -> Dict[str, Any]:
             "shards": vectors["shards"],
         }
     if target != "documents":
-        result["index"] = build_index(settings, target)
+        if settings.index_dir is not None and settings.index_dir.exists():
+            result["index"] = _reuse_built_index(settings, target)
+        else:
+            result["index"] = build_index(settings, target)
     return result
 
 

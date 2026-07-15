@@ -6,12 +6,14 @@ import { OpenAICompatibleClient, type LlmClientOptions } from "./llm-client.js";
 import { validateCitations } from "./rag.js";
 import type { ReadyResponse, SearchMode } from "./types.js";
 import { YappodClient, YappodRequestError, type YappodClientOptions } from "./yappod-client.js";
+import { createUsageLogger } from "./usage-log.js";
 
 export interface AppConfig extends Omit<YappodClientOptions, "fetchImpl"> {
   staticDir?: string;
   fetchImpl?: typeof fetch;
   llm?: LlmClientOptions;
   embedding?: EmbeddingClientOptions;
+  usageLogPath?: string;
 }
 
 interface SearchBody {
@@ -91,9 +93,14 @@ function publicError(error: unknown): { status: number; body: { code: string; me
 export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const client = new YappodClient(config);
-  const llm = config.llm ? new OpenAICompatibleClient(config.llm) : null;
+  const usageLog = config.usageLogPath ? createUsageLogger(config.usageLogPath) : undefined;
+  const llm = config.llm ? new OpenAICompatibleClient({
+    ...config.llm,
+    usageLog: usageLog ?? config.llm.usageLog,
+  }) : null;
   const embedding = config.embedding ? new EmbeddingClient({
     ...config.embedding,
+    usageLog: usageLog ?? config.embedding.usageLog,
     fetchImpl: config.embedding.fetchImpl ?? config.fetchImpl,
   }) : null;
 
@@ -163,7 +170,7 @@ export async function buildApp(config: AppConfig): Promise<FastifyInstance> {
         query,
         mode,
         vector,
-        limit: request.body.limit ?? 10,
+        limit: request.body.limit ?? 50,
         cursor: request.body.cursor,
       }));
     } catch (error) {

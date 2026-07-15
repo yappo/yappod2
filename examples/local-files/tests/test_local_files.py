@@ -1,6 +1,9 @@
 import dataclasses
+import hashlib
 import importlib.util
+import io
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -164,7 +167,7 @@ class LocalFilesTest(unittest.TestCase):
         )
         return lexical, hybrid
 
-    def write_pipeline_config(self, directory, server, *, batch_size=2):
+    def write_pipeline_config(self, directory, server, *, batch_size=2, shard_bytes=500, extra=""):
         root = directory / "input"
         root.mkdir()
         (root / "alpha.txt").write_text("alpha searchable source", encoding="utf-8")
@@ -184,7 +187,7 @@ class LocalFilesTest(unittest.TestCase):
                 follow_symlinks = false
                 [output]
                 directory = {json.dumps(str(directory / "documents"))}
-                shard_max_bytes = 500
+                shard_max_bytes = {shard_bytes}
                 body_max_bytes = 1000000
                 [prepare]
                 directory = {json.dumps(str(directory / "passages"))}
@@ -198,6 +201,7 @@ class LocalFilesTest(unittest.TestCase):
                 batch_size = {batch_size}
                 timeout_ms = 5000
                 prompt_profile = "plain"
+                {extra}
                 [build]
                 yappo_makeindex = {json.dumps(str(makeindex))}
                 index_config = {json.dumps(str(lexical))}
@@ -572,6 +576,26 @@ class LocalFilesTest(unittest.TestCase):
                 self.assertEqual((directory / "vectors").exists(), target == "hybrid")
                 self.assertEqual((directory / "index").exists(), target != "documents")
 
+                calls_before_resume = EmbeddingHandler.calls
+                resumed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(MODULE_PATH),
+                        "all",
+                        "--config",
+                        str(config),
+                        "--target",
+                        target,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                self.assertEqual(json.loads(resumed.stdout)["target"], target)
+                self.assertEqual(EmbeddingHandler.calls, calls_before_resume)
+
                 if target == "hybrid":
                     vector_manifest = json.loads(
                         (directory / "vectors" / "manifest.json").read_text(encoding="utf-8")
@@ -696,6 +720,167 @@ class LocalFilesTest(unittest.TestCase):
         self.assertTrue((directory / "vectors" / "manifest.json").is_file())
         self.assertFalse(work.exists())
 
+    def test_embedding_resumes_after_last_durable_batch_inside_one_shard(self):
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        if not makeindex.is_file():
+            self.skipTest("build/yappo_makeindex is required")
+        server = self.start_embedding_server()
+        directory = self.base / "batch-checkpoint-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(directory, server, batch_size=1, shard_bytes=1_000_000)
+        settings = local_files.load_settings(config)
+        local_files.convert(settings)
+        local_files.prepare_passages(settings)
+
+        EmbeddingHandler.fail_on = 2
+        with self.assertRaisesRegex(local_files.LocalFilesError, "HTTP 500"):
+            local_files.embed_documents(settings)
+        journal = directory / ".vectors.work" / ".input-000001.progress" / "vectors.ndjson"
+        self.assertEqual(len(journal.read_text(encoding="utf-8").splitlines()), 1)
+        previous_calls = EmbeddingHandler.calls
+
+        EmbeddingHandler.fail_on = None
+        manifest = local_files.embed_documents(settings)
+        self.assertEqual(manifest["total_records"], 2)
+        self.assertEqual(EmbeddingHandler.calls, previous_calls + 1)
+        self.assertFalse((directory / ".vectors.work").exists())
+
+    def test_embedding_journal_truncates_only_an_incomplete_tail(self):
+        journal = self.base / "vectors.ndjson"
+        entries = [
+            ("doc-1", 0, "first", hashlib.sha256(b"first").hexdigest()),
+            ("doc-1", 1, "second", hashlib.sha256(b"second").hexdigest()),
+        ]
+        local_files._append_embedding_journal_batch(
+            journal, entries[:1], [[1.0, 0.0, 0.0]], 0
+        )
+        durable_size = journal.stat().st_size
+        with journal.open("ab") as output:
+            output.write(b'{"sequence":1,"document_id":"doc-1"')
+
+        self.assertEqual(local_files._load_embedding_journal(journal, entries, 3), 1)
+        self.assertEqual(journal.stat().st_size, durable_size)
+
+    def test_embedding_journal_rejects_middle_corruption_and_input_hash_change(self):
+        entries = [
+            ("doc-1", 0, "first", hashlib.sha256(b"first").hexdigest()),
+            ("doc-1", 1, "second", hashlib.sha256(b"second").hexdigest()),
+        ]
+        journal = self.base / "vectors.ndjson"
+        local_files._append_embedding_journal_batch(
+            journal, entries, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 0
+        )
+        lines = journal.read_bytes().splitlines(keepends=True)
+        journal.write_bytes(lines[0] + b"not-json\n")
+        with self.assertRaisesRegex(local_files.LocalFilesError, "invalid JSON"):
+            local_files._load_embedding_journal(journal, entries, 3)
+
+        journal.unlink()
+        local_files._append_embedding_journal_batch(
+            journal, entries, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 0
+        )
+        changed = list(entries)
+        changed[0] = ("doc-1", 0, "changed", hashlib.sha256(b"changed").hexdigest())
+        with self.assertRaisesRegex(local_files.LocalFilesError, "does not match"):
+            local_files._load_embedding_journal(journal, changed, 3)
+
+    def test_openai_payload_environment_token_usage_log_and_secure_url(self):
+        server = self.start_embedding_server()
+        directory = self.base / "openai-settings"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory,
+            server,
+            extra='authorization_token_env = "LOCAL_FILES_TEST_KEY"\n[usage_log]\npath = "usage.jsonl"',
+        )
+        config.write_text(config.read_text(encoding="utf-8").replace(
+            f'base_url = "http://127.0.0.1:{server.server_port}/v1"',
+            'endpoint_url = "https://api.openai.com/v1/embeddings"',
+        ), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": "secret"}):
+            settings = local_files.load_settings(config)
+        assert settings.embedding is not None
+        self.assertEqual(settings.embedding.authorization_token, "secret")
+        with mock.patch.object(
+            local_files,
+            "urlopen",
+            return_value=mock.MagicMock(
+                __enter__=lambda self: types.SimpleNamespace(
+                    read=lambda: json.dumps({
+                        "data": [{"index": 0, "embedding": [1, 0, 0]}],
+                        "usage": {"prompt_tokens": 2, "total_tokens": 2},
+                    }).encode("utf-8")
+                ),
+                __exit__=lambda *args: None,
+            ),
+        ) as opened:
+            local_files._embedding_batch(settings.embedding, ["text"])
+        request = opened.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.openai.com/v1/embeddings")
+        self.assertEqual(json.loads(request.data)["dimensions"], 3)
+        event = json.loads((directory / "usage.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(event["model"], "fixture-model")
+        self.assertEqual(event["usage"]["total_tokens"], 2)
+
+        source = config.read_text(encoding="utf-8").replace(
+            "https://api.openai.com/v1/embeddings",
+            "http://api.openai.com/v1/embeddings",
+        )
+        config.write_text(source, encoding="utf-8")
+        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": "secret"}):
+            with self.assertRaisesRegex(local_files.LocalFilesError, "must use https"):
+                local_files.load_settings(config)
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "not supported"):
+            local_files._authorization_token_from_env(
+                {"authorization_token": "plain-text-secret"}, "embedding"
+            )
+        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": ""}):
+            with self.assertRaisesRegex(local_files.LocalFilesError, "not set or empty"):
+                local_files._authorization_token_from_env(
+                    {"authorization_token_env": "LOCAL_FILES_TEST_KEY"}, "embedding"
+                )
+
+    def test_service_url_allows_only_explicit_http_private_ranges(self):
+        allowed = (
+            "http://localhost:1/v1",
+            "http://127.255.0.1:1/v1",
+            "http://10.2.3.4:1/v1",
+            "http://172.31.0.1:1/v1",
+            "http://192.168.1.2:1/v1",
+            "http://[::1]:1/v1",
+            "http://[fd12::1]:1/v1",
+            "https://api.example.com/v1",
+        )
+        for endpoint in allowed:
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(local_files._service_url(endpoint, "endpoint"), endpoint)
+        for endpoint in (
+            "http://example.com/v1",
+            "http://8.8.8.8/v1",
+            "http://169.254.1.1/v1",
+            "http://[fe80::1]/v1",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(local_files.LocalFilesError, "must use https"):
+                    local_files._service_url(endpoint, "endpoint")
+
+    def test_usage_log_failure_warns_without_raising(self):
+        path = self.base / "usage-directory"
+        path.mkdir()
+        stderr = io.StringIO()
+        with mock.patch.object(local_files.sys, "stderr", stderr):
+            local_files._append_usage_log(
+                path,
+                source="local-files",
+                service="embedding",
+                operation="batch_embed",
+                provider="openai",
+                model="text-embedding-3-small",
+                usage=None,
+            )
+        self.assertIn("warning: cannot append usage log", stderr.getvalue())
+
     def test_build_rejects_corrupt_shard_without_publishing_index(self):
         directory = self.base / "corrupt-pipeline"
         directory.mkdir()
@@ -713,6 +898,57 @@ class LocalFilesTest(unittest.TestCase):
 
         self.assertFalse((directory / "index").exists())
         self.assertEqual(list(directory.glob(".index.tmp.*")), [])
+
+    def test_all_rejects_corrupt_reusable_documents(self):
+        directory = self.base / "corrupt-reuse-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        manifest = local_files.run_all(settings, "documents")["documents"]
+        shard = directory / "documents" / manifest["shards"][0]["path"]
+        with shard.open("ab") as output:
+            output.write(b"corrupt\n")
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "verification failed"):
+            local_files.run_all(settings, "documents")
+
+    def test_all_rejects_changed_source_until_full_regeneration(self):
+        directory = self.base / "changed-source-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        local_files.run_all(settings, "documents")
+        (directory / "input" / "alpha.txt").write_text(
+            "changed source text", encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "input snapshot"):
+            local_files.run_all(settings, "documents")
+
+    def test_all_reuses_index_sidecar_and_rejects_mismatch(self):
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        if not makeindex.is_file():
+            self.skipTest("build/yappo_makeindex is required")
+        directory = self.base / "index-reuse-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        first = local_files.run_all(settings, "lexical")
+        second = local_files.run_all(settings, "lexical")
+        self.assertEqual(second["index"], first["index"])
+
+        state_path = directory / "index" / local_files.BUILD_STATE_FILENAME
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["target"] = "hybrid"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(local_files.LocalFilesError, "does not match"):
+            local_files.run_all(settings, "lexical")
 
     def test_build_process_failure_does_not_publish_or_leave_staging(self):
         directory = self.base / "failed-build-pipeline"
@@ -756,6 +992,7 @@ class LocalFilesTest(unittest.TestCase):
         embedding = local_files.EmbeddingConfig(
             provider="ollama",
             base_url="http://127.0.0.1:11434",
+            endpoint_url="http://127.0.0.1:11434/api/embed",
             model="fixture",
             model_id="fixture-2d-v1",
             dimensions=2,
@@ -763,6 +1000,7 @@ class LocalFilesTest(unittest.TestCase):
             timeout_ms=1000,
             prompt_profile="plain",
             authorization_token=None,
+            usage_log_path=None,
         )
         with mock.patch.object(
             local_files,

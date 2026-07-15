@@ -1,5 +1,6 @@
 import { buildRagPrompt } from "./rag.js";
 import type { Citation } from "./types.js";
+import type { UsageLogger } from "./usage-log.js";
 
 export interface LlmClientOptions {
   baseUrl: string;
@@ -7,6 +8,7 @@ export interface LlmClientOptions {
   effort?: string;
   authorizationToken?: string;
   timeoutMs: number;
+  usageLog?: UsageLogger;
   fetchImpl?: typeof fetch;
 }
 
@@ -67,6 +69,13 @@ export class OpenAICompatibleClient {
     } catch {
       throw new LlmRequestError("回答生成サービスから不正な応答を受け取りました");
     }
+    await this.options.usageLog?.({
+      service: "llm",
+      operation: "rag_answer",
+      provider: "openai-compatible",
+      model: this.options.model,
+      usage: (body as { usage?: unknown })?.usage,
+    });
     const content = (body as { choices?: Array<{ message?: { content?: unknown } }> })
       ?.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
