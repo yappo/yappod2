@@ -63,6 +63,7 @@ static void create_inputs(const ytest_env_t *env, char *config, char *input, cha
 
 static void test_build_and_all_search_modes(void **state) {
   ytest_env_t env;
+  ytest_cmd_result_t build_result;
   char config[PATH_MAX], input[PATH_MAX], index[PATH_MAX];
   char makeindex[PATH_MAX], search[PATH_MAX];
   char *build_argv[9], *lexical_argv[9], *vector_argv[9], *hybrid_argv[11];
@@ -76,7 +77,12 @@ static void test_build_and_all_search_modes(void **state) {
   build_argv[0] = makeindex; build_argv[1] = "build"; build_argv[2] = "--config";
   build_argv[3] = config; build_argv[4] = "--input"; build_argv[5] = input;
   build_argv[6] = "--index"; build_argv[7] = index; build_argv[8] = NULL;
-  run_command(build_argv, 0, "\"accepted\":2");
+  ytest_cmd_result_init(&build_result);
+  assert_int_equal(ytest_cmd_run(build_argv, NULL, NULL, 0U, &build_result), 0);
+  assert_true(build_result.exited); assert_int_equal(build_result.exit_code, 0);
+  assert_non_null(strstr(build_result.output, "\"accepted\":2"));
+  assert_null(strstr(build_result.output, "segment_id"));
+  ytest_cmd_result_free(&build_result);
 
   lexical_argv[0] = search; lexical_argv[1] = "--index"; lexical_argv[2] = index;
   lexical_argv[3] = "--mode"; lexical_argv[4] = "lexical";

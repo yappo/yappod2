@@ -480,14 +480,21 @@ static char *error_json(const char *code, const char *message, size_t *bytes) {
 }
 
 static char *update_json(const YAP_V2_UPDATE_RESULT *result, size_t *bytes) {
-  yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL); yyjson_mut_val *root; char *json;
+  yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL); yyjson_mut_val *root, *segment_ids; char *json;
+  size_t i;
   if (doc == NULL) return NULL;
-  root = yyjson_mut_obj(doc); yyjson_mut_doc_set_root(doc, root);
+  root = yyjson_mut_obj(doc); segment_ids = yyjson_mut_arr(doc); yyjson_mut_doc_set_root(doc, root);
   if (root == NULL || !yyjson_mut_obj_add_uint(doc, root, "generation", result->generation) ||
       !yyjson_mut_obj_add_uint(doc, root, "accepted", result->accepted) ||
       !yyjson_mut_obj_add_uint(doc, root, "upserts", result->upserts) ||
-      !yyjson_mut_obj_add_uint(doc, root, "deletes", result->deletes) ||
-      !yyjson_mut_obj_add_str(doc, root, "segment_id", result->segment_id)) {
+      !yyjson_mut_obj_add_uint(doc, root, "deletes", result->deletes) || segment_ids == NULL) {
+    yyjson_mut_doc_free(doc); return NULL;
+  }
+  for (i = 0U; i < result->segment_ids.count; i++)
+    if (!yyjson_mut_arr_add_str(doc, segment_ids, result->segment_ids.items[i])) {
+      yyjson_mut_doc_free(doc); return NULL;
+    }
+  if (!yyjson_mut_obj_add_val(doc, root, "segment_ids", segment_ids)) {
     yyjson_mut_doc_free(doc); return NULL;
   }
   json = yyjson_mut_write_opts(doc, YYJSON_WRITE_NOFLAG, NULL, bytes, NULL);
@@ -565,6 +572,7 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
        operation != YAP_V2_HTTP_INGEST && operation != YAP_V2_HTTP_PREPARE)) return -1;
   if (operation == YAP_V2_HTTP_INGEST) {
     YAP_V2_UPDATE_RESULT update; char update_error[256] = {0};
+    YAP_V2_update_result_init(&update);
     status = YAP_V2_update_json_batch(index_dir, body, body_bytes, &update,
                                       update_error, sizeof(update_error));
     if (update_error[0] == '\0')
@@ -572,13 +580,15 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
     if (status == YAP_V2_OK) {
       *http_status = 200; *response = update_json(&update, response_bytes);
     } else if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT ||
-               status == YAP_V2_OUT_OF_RANGE || status == YAP_V2_DUPLICATE) {
+               status == YAP_V2_OUT_OF_RANGE || status == YAP_V2_DUPLICATE ||
+               status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
       *http_status = 400; *response = error_json("invalid_batch", update_error, response_bytes);
     } else if (status == YAP_V2_CONFLICT) {
       *http_status = 409; *response = error_json("generation_conflict", update_error, response_bytes);
     } else {
       *http_status = 503; *response = error_json("update_unavailable", update_error, response_bytes);
     }
+    YAP_V2_update_result_free(&update);
     return *response == NULL ? -1 : 0;
   }
   document = yyjson_read((const char *)body, body_bytes, YYJSON_READ_NOFLAG);

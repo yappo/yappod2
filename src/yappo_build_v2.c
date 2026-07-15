@@ -94,11 +94,13 @@ static int publish_batch(const char *index_dir, YAP_V2_INGEST_OPERATION *operati
                          size_t count, uint64_t *generation, size_t *accepted,
                          char *error, size_t error_size) {
   YAP_V2_UPDATE_RESULT result;
+  YAP_V2_update_result_init(&result);
   int status = YAP_V2_build_apply(index_dir, operations, count, &result, error, error_size);
   if (status == YAP_V2_OK) {
     *generation = result.generation;
     *accepted += result.accepted;
   }
+  YAP_V2_update_result_free(&result);
   return status;
 }
 

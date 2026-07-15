@@ -49,7 +49,7 @@ static int append(BUFFER *buffer, const void *data, size_t len) {
   size_t needed, capacity; unsigned char *next;
   if (len > SIZE_MAX - buffer->len) return YAP_V2_OUT_OF_RANGE;
   needed = buffer->len + len;
-  if (needed > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) return YAP_V2_OUT_OF_RANGE;
+  if (needed > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES) return YAP_V2_SEGMENT_CAPACITY_EXCEEDED;
   if (needed > buffer->capacity) {
     capacity = buffer->capacity == 0U ? 256U : buffer->capacity;
     while (capacity < needed) {
@@ -171,11 +171,15 @@ void YAP_V2_metadata_index_free(YAP_V2_METADATA_INDEX *index) {
   free(index->entries); free(index->storage); memset(index, 0, sizeof(*index));
 }
 
-int YAP_V2_metadata_write(const char *path, uint64_t generation, const YAP_V2_CONFIG *config,
-                          const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
-                          YAP_V2_COMPONENT_DESCRIPTOR *component) {
+int YAP_V2_metadata_write_preparsed(const char *path, uint64_t generation,
+                                    const YAP_V2_CONFIG *config,
+                                    const YAP_V2_DOCUMENT_VIEW *documents,
+                                    const void *const *metadata_roots,
+                                    size_t document_count,
+                                    YAP_V2_COMPONENT_DESCRIPTOR *component) {
   BUFFER payload = {0}; uint64_t records = 0U; size_t i, field; int status = YAP_V2_OK;
-  if (path == NULL || config == NULL || component == NULL || (document_count > 0U && documents == NULL) ||
+  if (path == NULL || config == NULL || component == NULL ||
+      (document_count > 0U && (documents == NULL || metadata_roots == NULL)) ||
       YAP_V2_config_validate(config) != YAP_V2_OK) return YAP_V2_INVALID_ARGUMENT;
   if (document_count > YAP_V2_MAX_SEGMENT_DOCUMENTS) return YAP_V2_OUT_OF_RANGE;
   status = append_u32(&payload, 1U); if (status == YAP_V2_OK) status = append_u32(&payload, (uint32_t)config->filterable_field_count);
@@ -186,20 +190,45 @@ int YAP_V2_metadata_write(const char *path, uint64_t generation, const YAP_V2_CO
     status = append_u32(&payload, (uint32_t)len); if (status == YAP_V2_OK) status = append(&payload, config->filterable_fields[field], len);
   }
   for (i = 0U; status == YAP_V2_OK && i < document_count; i++) {
-    yyjson_doc *json; yyjson_val *root;
+    yyjson_val *root = (yyjson_val *)metadata_roots[i];
     if (YAP_V2_document_validate(&documents[i]) != YAP_V2_OK) { status = YAP_V2_INVALID_FORMAT; break; }
-    json = yyjson_read((const char *)documents[i].metadata_json.data, documents[i].metadata_json.len, 0U);
-    if (json == NULL || !yyjson_is_obj(yyjson_doc_get_root(json))) { yyjson_doc_free(json); status = YAP_V2_INVALID_FORMAT; break; }
-    root = yyjson_doc_get_root(json);
+    if (!yyjson_is_obj(root)) { status = YAP_V2_INVALID_FORMAT; break; }
     for (field = 0U; status == YAP_V2_OK && field < config->filterable_field_count; field++) {
       yyjson_val *value = path_value(root, config->filterable_fields[field]);
       if (value != NULL) status = append_value(&payload, (uint32_t)field, i, value, &records);
     }
-    yyjson_doc_free(json);
   }
   if (status == YAP_V2_OK) put_u64(payload.data + 16U, records);
   if (status == YAP_V2_OK) status = write_atomic(path, generation, &payload, records, component);
   free(payload.data); return status;
+}
+
+int YAP_V2_metadata_write(const char *path, uint64_t generation, const YAP_V2_CONFIG *config,
+                          const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
+                          YAP_V2_COMPONENT_DESCRIPTOR *component) {
+  yyjson_doc **json = NULL;
+  const void **roots = NULL;
+  size_t i;
+  int status = YAP_V2_OK;
+  if (path == NULL || config == NULL || component == NULL ||
+      (document_count > 0U && documents == NULL)) return YAP_V2_INVALID_ARGUMENT;
+  if (document_count > 0U) {
+    json = calloc(document_count, sizeof(*json));
+    roots = calloc(document_count, sizeof(*roots));
+    if (json == NULL || roots == NULL) status = YAP_V2_ALLOCATION_FAILED;
+  }
+  for (i = 0U; status == YAP_V2_OK && i < document_count; i++) {
+    json[i] = yyjson_read((const char *)documents[i].metadata_json.data,
+                          documents[i].metadata_json.len, 0U);
+    roots[i] = json[i] == NULL ? NULL : yyjson_doc_get_root(json[i]);
+    if (!yyjson_is_obj((yyjson_val *)roots[i])) status = YAP_V2_INVALID_FORMAT;
+  }
+  if (status == YAP_V2_OK)
+    status = YAP_V2_metadata_write_preparsed(path, generation, config, documents, roots,
+                                             document_count, component);
+  for (i = 0U; i < document_count; i++) yyjson_doc_free(json == NULL ? NULL : json[i]);
+  free(json); free(roots);
+  return status;
 }
 
 int YAP_V2_metadata_read(const char *path, uint64_t expected_generation,

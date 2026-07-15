@@ -11,8 +11,11 @@ typedef struct {
   size_t accepted;
   size_t upserts;
   size_t deletes;
-  char segment_id[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
+  YAP_V2_SEGMENT_ID_LIST segment_ids;
 } YAP_V2_UPDATE_RESULT;
+
+void YAP_V2_update_result_init(YAP_V2_UPDATE_RESULT *result);
+void YAP_V2_update_result_free(YAP_V2_UPDATE_RESULT *result);
 
 int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
                         size_t operation_count, YAP_V2_UPDATE_RESULT *result,

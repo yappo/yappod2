@@ -14,21 +14,8 @@ typedef struct {
   size_t capacity;
 } BUFFER;
 
-typedef struct {
-  char *term;
-  size_t term_len;
-  uint32_t object_type;
-  uint64_t object_ordinal;
-  uint32_t field;
-  uint32_t position;
-  uint32_t field_length;
-} OCCURRENCE;
-
-typedef struct {
-  OCCURRENCE *items;
-  size_t count;
-  size_t capacity;
-} OCCURRENCES;
+typedef YAP_V2_LEXICAL_OCCURRENCE OCCURRENCE;
+typedef YAP_V2_LEXICAL_PREPARED OCCURRENCES;
 
 static void put_u32(unsigned char *out, uint32_t value) {
   out[0] = (unsigned char)value;
@@ -52,7 +39,7 @@ static int append(BUFFER *buffer, const void *data, size_t len) {
     return YAP_V2_INVALID_ARGUMENT;
   required = buffer->len + len;
   if (required > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES)
-    return YAP_V2_OUT_OF_RANGE;
+    return YAP_V2_SEGMENT_CAPACITY_EXCEEDED;
   if (required > buffer->capacity) {
     capacity = buffer->capacity == 0U ? 256U : buffer->capacity;
     while (capacity < required) {
@@ -176,12 +163,16 @@ static int write_component(const char *path, uint32_t file_type, uint64_t genera
   return status;
 }
 
-static void occurrences_free(OCCURRENCES *occurrences) {
+void YAP_V2_lexical_prepared_init(YAP_V2_LEXICAL_PREPARED *prepared) {
+  if (prepared != NULL) memset(prepared, 0, sizeof(*prepared));
+}
+
+void YAP_V2_lexical_prepared_free(YAP_V2_LEXICAL_PREPARED *prepared) {
   size_t i;
-  for (i = 0U; i < occurrences->count; i++)
-    free(occurrences->items[i].term);
-  free(occurrences->items);
-  memset(occurrences, 0, sizeof(*occurrences));
+  if (prepared == NULL) return;
+  for (i = 0U; i < prepared->count; i++) free(prepared->items[i].term);
+  free(prepared->items);
+  memset(prepared, 0, sizeof(*prepared));
 }
 
 static int occurrence_add(OCCURRENCES *occurrences, const char *term, size_t term_len,
@@ -457,17 +448,120 @@ static int build_payloads(OCCURRENCES *occurrences, size_t document_count, size_
   return status;
 }
 
-int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
-                         const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
-                         const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count,
-                         YAP_V2_COMPONENT_DESCRIPTOR components[3]) {
+static int write_occurrences(const char *segment_dir, uint64_t generation,
+                             OCCURRENCES *occurrences, size_t document_count,
+                             size_t passage_count, const uint64_t field_totals[3],
+                             YAP_V2_COMPONENT_DESCRIPTOR components[3]) {
   static const char *const names[] = {"terms.yap2", "postings.yap2", "positions.yap2"};
   static const uint32_t types[] = {YAP_V2_FILE_TERMS, YAP_V2_FILE_POSTINGS, YAP_V2_FILE_POSITIONS};
-  OCCURRENCES occurrences = {0};
   BUFFER payloads[3] = {{0}};
   uint64_t term_count = 0U;
   uint64_t posting_count = 0U;
   uint64_t records[3];
+  size_t i;
+  int status;
+  status = build_payloads(occurrences, document_count, passage_count, field_totals, &payloads[0],
+                          &payloads[1], &payloads[2], &term_count, &posting_count);
+  records[0] = term_count;
+  records[1] = posting_count;
+  records[2] = occurrences->count;
+  for (i = 0U; status == YAP_V2_OK && i < 3U; i++) {
+    size_t path_len = strlen(segment_dir) + strlen(names[i]) + 2U;
+    char *path = (char *)malloc(path_len);
+    if (path == NULL) {
+      status = YAP_V2_ALLOCATION_FAILED;
+      break;
+    }
+    (void)snprintf(path, path_len, "%s/%s", segment_dir, names[i]);
+    status = write_component(path, types[i], generation, &payloads[i], records[i], &components[i]);
+    if (status == YAP_V2_OK) (void)strcpy(components[i].name, names[i]);
+    free(path);
+  }
+  for (i = 0U; i < 3U; i++) free(payloads[i].data);
+  return status;
+}
+
+int YAP_V2_lexical_prepare_unit(const YAP_V2_DOCUMENT_VIEW *document,
+                                const YAP_V2_PASSAGE_VIEW *passages,
+                                size_t passage_count,
+                                YAP_V2_LEXICAL_PREPARED *prepared) {
+  size_t i;
+  int status;
+  if (document == NULL || prepared == NULL ||
+      (passage_count > 0U && passages == NULL)) return YAP_V2_INVALID_ARGUMENT;
+  YAP_V2_lexical_prepared_init(prepared);
+  status = YAP_V2_document_validate(document);
+  if (status == YAP_V2_OK)
+    status = tokenize_field(prepared, document->title, YAP_V2_LEXICAL_DOCUMENT, 0U,
+                            YAP_V2_FIELD_TITLE, &prepared->field_token_count[0]);
+  if (status == YAP_V2_OK)
+    status = tokenize_field(prepared, document->body, YAP_V2_LEXICAL_DOCUMENT, 0U,
+                            YAP_V2_FIELD_BODY, &prepared->field_token_count[1]);
+  for (i = 0U; status == YAP_V2_OK && i < passage_count; i++) {
+    status = YAP_V2_passage_validate(&passages[i]);
+    if (status == YAP_V2_OK)
+      status = tokenize_field(prepared, passages[i].text, YAP_V2_LEXICAL_PASSAGE, i,
+                              YAP_V2_FIELD_PASSAGE, &prepared->field_token_count[2]);
+  }
+  if (status == YAP_V2_OK) {
+    prepared->document_count = 1U;
+    prepared->passage_count = passage_count;
+  } else {
+    YAP_V2_lexical_prepared_free(prepared);
+  }
+  return status;
+}
+
+int YAP_V2_lexical_write_prepared(const char *segment_dir, uint64_t generation,
+                                  const YAP_V2_LEXICAL_PREPARED *const *prepared,
+                                  size_t prepared_count,
+                                  YAP_V2_COMPONENT_DESCRIPTOR components[3]) {
+  OCCURRENCES combined = {0};
+  uint64_t field_totals[3] = {0U, 0U, 0U};
+  size_t document_base = 0U, passage_base = 0U, i, j, offset = 0U;
+  int status = YAP_V2_OK;
+  if (segment_dir == NULL || generation == 0U || prepared == NULL ||
+      prepared_count == 0U || components == NULL) return YAP_V2_INVALID_ARGUMENT;
+  for (i = 0U; i < prepared_count; i++) {
+    if (prepared[i] == NULL || prepared[i]->count > SIZE_MAX - combined.count)
+      return YAP_V2_INVALID_ARGUMENT;
+    combined.count += prepared[i]->count;
+  }
+  if (combined.count > SIZE_MAX / sizeof(*combined.items)) return YAP_V2_OUT_OF_RANGE;
+  combined.items = combined.count == 0U ? NULL : malloc(combined.count * sizeof(*combined.items));
+  if (combined.count > 0U && combined.items == NULL) return YAP_V2_ALLOCATION_FAILED;
+  combined.capacity = combined.count;
+  for (i = 0U; status == YAP_V2_OK && i < prepared_count; i++) {
+    for (j = 0U; j < 3U; j++) {
+      if (prepared[i]->field_token_count[j] > UINT64_MAX - field_totals[j]) {
+        status = YAP_V2_OUT_OF_RANGE;
+        break;
+      }
+      field_totals[j] += prepared[i]->field_token_count[j];
+    }
+    for (j = 0U; status == YAP_V2_OK && j < prepared[i]->count; j++) {
+      combined.items[offset] = prepared[i]->items[j];
+      if (combined.items[offset].object_type == YAP_V2_LEXICAL_DOCUMENT)
+        combined.items[offset].object_ordinal += document_base;
+      else
+        combined.items[offset].object_ordinal += passage_base;
+      offset++;
+    }
+    document_base += prepared[i]->document_count;
+    passage_base += prepared[i]->passage_count;
+  }
+  if (status == YAP_V2_OK)
+    status = write_occurrences(segment_dir, generation, &combined, document_base,
+                               passage_base, field_totals, components);
+  free(combined.items);
+  return status;
+}
+
+int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
+                         const YAP_V2_DOCUMENT_VIEW *documents, size_t document_count,
+                         const YAP_V2_PASSAGE_VIEW *passages, size_t passage_count,
+                         YAP_V2_COMPONENT_DESCRIPTOR components[3]) {
+  OCCURRENCES occurrences = {0};
   uint64_t field_totals[3] = {0U, 0U, 0U};
   size_t i;
   int status = YAP_V2_OK;
@@ -492,26 +586,8 @@ int YAP_V2_lexical_write(const char *segment_dir, uint64_t generation,
                               YAP_V2_FIELD_PASSAGE, &field_totals[2]);
   }
   if (status == YAP_V2_OK)
-    status = build_payloads(&occurrences, document_count, passage_count, field_totals, &payloads[0],
-                            &payloads[1], &payloads[2], &term_count, &posting_count);
-  records[0] = term_count;
-  records[1] = posting_count;
-  records[2] = occurrences.count;
-  for (i = 0U; status == YAP_V2_OK && i < 3U; i++) {
-    size_t path_len = strlen(segment_dir) + strlen(names[i]) + 2U;
-    char *path = (char *)malloc(path_len);
-    if (path == NULL) {
-      status = YAP_V2_ALLOCATION_FAILED;
-      break;
-    }
-    (void)snprintf(path, path_len, "%s/%s", segment_dir, names[i]);
-    status = write_component(path, types[i], generation, &payloads[i], records[i], &components[i]);
-    if (status == YAP_V2_OK)
-      (void)strcpy(components[i].name, names[i]);
-    free(path);
-  }
-  for (i = 0U; i < 3U; i++)
-    free(payloads[i].data);
-  occurrences_free(&occurrences);
+    status = write_occurrences(segment_dir, generation, &occurrences, document_count,
+                               passage_count, field_totals, components);
+  YAP_V2_lexical_prepared_free(&occurrences);
   return status;
 }
