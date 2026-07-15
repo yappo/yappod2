@@ -115,9 +115,9 @@ export class YappodClient {
         query: question,
         mode,
         ...(vector ? { vector } : {}),
-        limit: 8,
+        limit: 20,
         max_passages_per_document: 2,
-        max_context_bytes: 16384,
+        max_context_bytes: 32768,
       }),
     });
   }

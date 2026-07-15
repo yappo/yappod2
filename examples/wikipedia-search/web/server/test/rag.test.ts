@@ -98,9 +98,9 @@ describe("citation-grounded RAG BFF", () => {
     expect(retrieveBody).toEqual({
       query: "情報検索とは？",
       mode: "lexical",
-      limit: 8,
+      limit: 20,
       max_passages_per_document: 2,
-      max_context_bytes: 16384,
+      max_context_bytes: 32768,
     });
     const llmBody = JSON.parse(String(requests[1]?.init?.body));
     expect(llmBody.model).toBe("mock-model");
