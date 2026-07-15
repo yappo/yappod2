@@ -26,13 +26,18 @@ body_max_bytes = 1000000
 # directory = "./data/vectors"
 # provider = "lmstudio" # lmstudio | ollama | openai
 # base_url = "http://127.0.0.1:1234/v1"
+# endpoint_url = "https://api.openai.com/v1/embeddings" # base_urlとは排他
 # model = "replace-with-embedding-model"
 # model_id = "local-files-embedding-768-v1"
 # dimensions = 768
 # batch_size = 16
 # timeout_ms = 60000
 # prompt_profile = "plain" # plain | embeddinggemma
+# authorization_token_env = "OPENAI_API_KEY"
 #
+[usage_log]
+path = "./data/api-usage.jsonl"
+
 # [build]
 # yappo_makeindex = "../../build/yappo_makeindex"
 # index_config = "./config.lexical.toml"

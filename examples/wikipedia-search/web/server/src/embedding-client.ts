@@ -1,9 +1,12 @@
-export type EmbeddingProvider = "lmstudio" | "ollama";
+import type { UsageLogger } from "./usage-log.js";
+
+export type EmbeddingProvider = "lmstudio" | "ollama" | "openai";
 export type EmbeddingProfile = "plain" | "embeddinggemma";
 
 export interface EmbeddingClientOptions {
   provider: EmbeddingProvider;
-  baseUrl: string;
+  baseUrl?: string;
+  endpointUrl?: string;
   model: string;
   indexModelId?: string;
   dimensions: number;
@@ -11,6 +14,7 @@ export interface EmbeddingClientOptions {
   batchSize?: number;
   authorizationToken?: string;
   profile?: EmbeddingProfile;
+  usageLog?: UsageLogger;
   fetchImpl?: typeof fetch;
 }
 
@@ -26,8 +30,13 @@ export class EmbeddingRequestError extends Error {
 }
 
 function endpoint(options: EmbeddingClientOptions): URL {
+  if ((options.baseUrl === undefined) === (options.endpointUrl === undefined)) {
+    throw new Error("embedding must specify exactly one of baseUrl or endpointUrl");
+  }
+  if (options.endpointUrl) return new URL(options.endpointUrl);
+  if (!options.baseUrl) throw new Error("embedding baseUrl is required");
   const base = options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`;
-  return new URL(options.provider === "lmstudio" ? "embeddings" : "api/embed", base);
+  return new URL(options.provider === "ollama" ? "api/embed" : "embeddings", base);
 }
 
 function vector(value: unknown, dimensions: number): number[] {
@@ -92,14 +101,14 @@ export class EmbeddingClient {
     }
   }
 
-  async embed(inputs: string[]): Promise<number[][]> {
+  async embed(inputs: string[], operation = "batch_embed"): Promise<number[][]> {
     if (inputs.length === 0 || inputs.some((input) => !input.trim())) {
       throw new EmbeddingRequestError("invalid_embedding_input", "embedding対象の本文が空です", 400);
     }
     const output: number[][] = [];
     for (let offset = 0; offset < inputs.length; offset += this.batchSize) {
       const batch = inputs.slice(offset, offset + this.batchSize);
-      output.push(...await this.embedBatch(batch));
+      output.push(...await this.embedBatch(batch, operation));
     }
     return output;
   }
@@ -107,24 +116,29 @@ export class EmbeddingClient {
   embedQueries(inputs: string[]): Promise<number[][]> {
     return this.embed(this.options.profile === "embeddinggemma"
       ? inputs.map((input) => `task: search result | query: ${input}`)
-      : inputs);
+      : inputs, "query_embed");
   }
 
   embedDocuments(inputs: Array<{ text: string; title?: string }>): Promise<number[][]> {
     return this.embed(this.options.profile === "embeddinggemma"
       ? inputs.map((input) => `title: ${input.title?.trim() || "none"} | text: ${input.text}`)
-      : inputs.map((input) => input.text));
+      : inputs.map((input) => input.text), "document_embed");
   }
 
-  private async embedBatch(inputs: string[]): Promise<number[][]> {
+  private async embedBatch(inputs: string[], operation: string): Promise<number[][]> {
     let response: Response;
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.options.authorizationToken) headers.authorization = `Bearer ${this.options.authorizationToken}`;
     try {
+      const payload = {
+        model: this.options.model,
+        input: inputs,
+        ...(this.options.provider === "openai" ? { dimensions: this.options.dimensions } : {}),
+      };
       response = await this.fetchImpl(endpoint(this.options), {
         method: "POST",
         headers,
-        body: JSON.stringify({ model: this.options.model, input: inputs }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(this.options.timeoutMs),
       });
     } catch {
@@ -133,7 +147,7 @@ export class EmbeddingClient {
     if (!response.ok) {
       throw new EmbeddingRequestError(
         "embedding_failed",
-        `${this.options.provider === "lmstudio" ? "LM Studio" : "Ollama"}がembeddingを生成できませんでした`,
+        `${this.options.provider === "ollama" ? "Ollama" : "OpenAI互換server"}がembeddingを生成できませんでした`,
         response.status >= 400 && response.status < 500 ? 502 : 503,
       );
     }
@@ -143,8 +157,15 @@ export class EmbeddingClient {
     } catch {
       throw new EmbeddingRequestError("invalid_embedding_response", "embedding serverからJSON以外の応答を受け取りました", 502);
     }
-    return this.options.provider === "lmstudio"
-      ? lmStudioVectors(body, inputs.length, this.options.dimensions)
-      : ollamaVectors(body, inputs.length, this.options.dimensions);
+    await this.options.usageLog?.({
+      service: "embedding",
+      operation,
+      provider: this.options.provider,
+      model: this.options.model,
+      usage: (body as { usage?: unknown })?.usage,
+    });
+    return this.options.provider === "ollama"
+      ? ollamaVectors(body, inputs.length, this.options.dimensions)
+      : lmStudioVectors(body, inputs.length, this.options.dimensions);
   }
 }

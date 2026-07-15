@@ -3,19 +3,23 @@ base_url = "http://127.0.0.1:1234/v1"
 model = "model-identifier"
 effort = "low"
 timeout_ms = 30000
-# LM StudioでAPI token認証を有効にした場合だけ設定します。
-# authorization_token = "replace-with-lm-studio-api-token"
+# API token認証を有効にした場合だけ、tokenを保持する環境変数名を設定します。
+# authorization_token_env = "LLM_API_KEY"
 
 # vector検索・hybrid検索とvector indexへの文書登録に使用します。
 # lexical検索だけを使う場合は[embedding]全体を削除してください。
 [embedding]
-provider = "lmstudio"
+provider = "lmstudio" # lmstudio | ollama | openai
 base_url = "http://127.0.0.1:1234/v1"
+# endpoint_url = "https://api.openai.com/v1/embeddings" # base_urlとは排他
 model = "embedding-model-identifier"
 index_model_id = "embeddinggemma-300m-768-local-v1"
 dimensions = 768
 profile = "embeddinggemma"
 timeout_ms = 60000
 batch_size = 16
-# embedding serverでAPI token認証を有効にした場合だけ設定します。
-# authorization_token = "replace-with-embedding-api-token"
+# authorization_token_env = "OPENAI_API_KEY"
+
+# API応答ごとのmodelとusageをJSON Linesで追記します。
+[usage_log]
+path = "./data/api-usage.jsonl"

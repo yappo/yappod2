@@ -47,6 +47,36 @@ describe("EmbeddingClient", () => {
     expect(String(fetchImpl.mock.calls[0]?.[0])).toBe("http://127.0.0.1:11434/api/embed");
   });
 
+  it("calls a complete OpenAI endpoint with dimensions and records model usage", async () => {
+    const usageLog = vi.fn(async () => undefined);
+    const fetchImpl = fakeFetch(Response.json({
+      data: [{ index: 0, embedding: [1, 0] }],
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), (url, init) => {
+      expect(url).toBe("https://api.openai.com/v1/embeddings");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        model: "text-embedding-3-small",
+        input: ["本文"],
+        dimensions: 2,
+      });
+    });
+    const client = new EmbeddingClient({
+      provider: "openai",
+      endpointUrl: "https://api.openai.com/v1/embeddings",
+      model: "text-embedding-3-small",
+      dimensions: 2,
+      timeoutMs: 1000,
+      usageLog,
+      fetchImpl,
+    });
+    await expect(client.embed(["本文"])).resolves.toEqual([[1, 0]]);
+    expect(usageLog).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }));
+  });
+
   it("applies EmbeddingGemma's retrieval prompts to queries and documents", async () => {
     const bodies: unknown[] = [];
     const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {

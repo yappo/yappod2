@@ -42,6 +42,9 @@ batch_size = 16
 timeout_ms = 60000
 prompt_profile = "embeddinggemma"
 
+[usage_log]
+path = "./data/api-usage.jsonl"
+
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
 index_config = "./config.lexical.toml"

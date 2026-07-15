@@ -90,6 +90,17 @@ describe("Wikipedia search BFF", () => {
     });
   });
 
+  it("uses fifty results when the caller omits a search limit", async () => {
+    const requests: CapturedRequest[] = [];
+    const app = await appWith(fakeFetch((request) => {
+      requests.push(request);
+      return Response.json({ generation: 8, total: 0, results: [], next_cursor: null });
+    }));
+    const response = await app.inject({ method: "POST", url: "/api/search", payload: { query: "情報検索" } });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(requests[0]?.init?.body)).limit).toBe(50);
+  });
+
   it("keeps the write token in the BFF and builds one canonical upsert", async () => {
     const requests: CapturedRequest[] = [];
     const app = await appWith(fakeFetch((request) => {

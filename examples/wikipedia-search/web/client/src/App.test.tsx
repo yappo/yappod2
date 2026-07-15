@@ -81,7 +81,7 @@ describe("Wikipedia search UI", () => {
     expect(screen.getByText("情報検索は、情報を探し出す処理である。")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "続きを読み込む" }));
     expect(await screen.findByRole("link", { name: /検索エンジン/ })).toBeVisible();
-    expect(mockApi.search).toHaveBeenNthCalledWith(2, "情報検索", 10, "lexical", "v1.7.10.digest");
+    expect(mockApi.search).toHaveBeenNthCalledWith(2, "情報検索", 50, "lexical", "v1.7.10.digest");
   });
 
   it("shows separate empty, validation, and daemon states", async () => {
@@ -117,7 +117,7 @@ describe("Wikipedia search UI", () => {
       body: "利用者の行動を基準に画面を設計する。長い日本語本文にも対応する。",
     });
     await user.click(screen.getByRole("button", { name: "登録した文書を検索" }));
-    await waitFor(() => expect(mockApi.search).toHaveBeenCalledWith("操作設計", 10, "lexical", undefined));
+    await waitFor(() => expect(mockApi.search).toHaveBeenCalledWith("操作設計", 50, "lexical", undefined));
   });
 
   it("uses one selected mode for search and RAG", async () => {
@@ -131,7 +131,7 @@ describe("Wikipedia search UI", () => {
     await user.click(screen.getByRole("radio", { name: /^意味検索/ }));
     await user.type(screen.getByRole("searchbox", { name: "検索語句" }), "言い換え検索");
     await user.click(screen.getByRole("button", { name: "検索を実行" }));
-    await waitFor(() => expect(mockApi.search).toHaveBeenCalledWith("言い換え検索", 10, "vector", undefined));
+    await waitFor(() => expect(mockApi.search).toHaveBeenCalledWith("言い換え検索", 50, "vector", undefined));
 
     await user.click(screen.getByRole("button", { name: "質問" }));
     expect(screen.getByText("LLM server設定済み")).toBeVisible();

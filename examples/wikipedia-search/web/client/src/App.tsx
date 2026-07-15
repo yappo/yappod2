@@ -100,7 +100,7 @@ function SearchView({ api, initialQuery, mode, availableModes, onModeChange }: {
     setState("loading");
     setError("");
     try {
-      const response = await api.search(normalized, 10, mode, nextCursor);
+      const response = await api.search(normalized, 50, mode, nextCursor);
       setResults((current) => nextCursor ? [...current, ...response.results] : response.results);
       setTotal(response.total);
       setGeneration(response.generation);

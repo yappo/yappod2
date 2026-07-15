@@ -1,5 +1,7 @@
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -181,14 +183,18 @@ model = "embedding-model"
 index_model_id = "embed-index-v1"
 dimensions = 3
 profile = "plain"
-authorization_token = "secret"
+authorization_token_env = "WIKIPEDIA_TEST_TOKEN"
 timeout_ms = 45000
 batch_size = 8
+
+[usage_log]
+path = "usage.jsonl"
 """, encoding="utf-8")
-            settings = wikipedia_data.load_embedding_settings(index_config, web_config)
+            with mock.patch.dict(os.environ, {"WIKIPEDIA_TEST_TOKEN": "secret"}):
+                settings = wikipedia_data.load_embedding_settings(index_config, web_config)
             self.assertEqual(settings, wikipedia_data.EmbeddingSettings(
-                "lmstudio", "http://localhost:1234/v1", "embedding-model", 3,
-                8, 45.0, "plain", "secret",
+                "lmstudio", "http://localhost:1234/v1", "http://localhost:1234/v1/embeddings",
+                "embedding-model", 3, 8, 45.0, "plain", "secret", (root / "usage.jsonl").resolve(),
             ))
 
     def test_load_embedding_settings_rejects_index_mismatch(self):
@@ -238,6 +244,102 @@ batch_szie = 8
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "batch_szie"):
                 wikipedia_data.load_embedding_settings(index_config, web_config)
 
+    def test_openai_endpoint_token_and_https_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_config = root / "config.vector.toml"
+            web_config = root / "config.toml"
+            index_config.write_text(
+                '[vector]\nenabled=true\nmodel_id="openai-768"\ndimensions=768\n', encoding="utf-8"
+            )
+            web_config.write_text("""
+[embedding]
+provider = "openai"
+endpoint_url = "https://api.openai.com/v1/embeddings"
+model = "text-embedding-3-small"
+index_model_id = "openai-768"
+dimensions = 768
+profile = "plain"
+authorization_token_env = "CUSTOM_OPENAI_KEY"
+""", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": "token"}):
+                settings = wikipedia_data.load_embedding_settings(index_config, web_config)
+            self.assertEqual(settings.provider, "openai")
+            self.assertEqual(settings.endpoint_url, "https://api.openai.com/v1/embeddings")
+            self.assertEqual(settings.authorization_token, "token")
+
+            web_config.write_text(web_config.read_text(encoding="utf-8").replace(
+                "https://api.openai.com", "http://api.openai.com"
+            ), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": "token"}):
+                with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "must use https"):
+                    wikipedia_data.load_embedding_settings(index_config, web_config)
+
+            source = web_config.read_text(encoding="utf-8").replace(
+                "http://api.openai.com", "https://api.openai.com"
+            )
+            web_config.write_text(source.replace(
+                'authorization_token_env = "CUSTOM_OPENAI_KEY"',
+                'authorization_token = "plain-text-secret"',
+            ), encoding="utf-8")
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "authorization_token"):
+                wikipedia_data.load_embedding_settings(index_config, web_config)
+
+            web_config.write_text(source, encoding="utf-8")
+            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": ""}):
+                with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "not set or empty"):
+                    wikipedia_data.load_embedding_settings(index_config, web_config)
+
+    def test_service_url_allows_only_explicit_http_private_ranges(self):
+        for endpoint in (
+            "http://localhost:1/v1",
+            "http://127.255.0.1:1/v1",
+            "http://10.2.3.4:1/v1",
+            "http://172.31.0.1:1/v1",
+            "http://192.168.1.2:1/v1",
+            "http://[::1]:1/v1",
+            "http://[fd12::1]:1/v1",
+            "https://api.example.com/v1",
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(wikipedia_data._service_url(endpoint, "endpoint"), endpoint)
+        for endpoint in (
+            "http://example.com/v1",
+            "http://8.8.8.8/v1",
+            "http://169.254.1.1/v1",
+            "http://[fe80::1]/v1",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "must use https"):
+                    wikipedia_data._service_url(endpoint, "endpoint")
+
+    def test_openai_batch_sends_dimensions_and_appends_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            usage_log = Path(directory) / "usage.jsonl"
+            response = {
+                "data": [{"index": 0, "embedding": [1.0, 0.0]}],
+                "usage": {"prompt_tokens": 4, "total_tokens": 4},
+            }
+            with mock.patch.object(wikipedia_data, "_post_json", return_value=response) as post:
+                vectors = wikipedia_data._embedding_batch(
+                    "openai", "https://api.openai.com/v1/embeddings", "text-embedding-3-small",
+                    ["本文"], 2, 10.0, "token", usage_log,
+                )
+            self.assertEqual(vectors, [[1.0, 0.0]])
+            self.assertEqual(post.call_args.args[1]["dimensions"], 2)
+            event = read_ndjson(usage_log)[0]
+            self.assertEqual(event["model"], "text-embedding-3-small")
+            self.assertEqual(event["usage"]["total_tokens"], 4)
+
+    def test_usage_log_failure_warns_without_raising(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "usage-directory"
+            path.mkdir()
+            stderr = io.StringIO()
+            with mock.patch.object(wikipedia_data.sys, "stderr", stderr):
+                wikipedia_data._append_usage_log(path, "openai", "text-embedding-3-small", None)
+            self.assertIn("warning: cannot append usage log", stderr.getvalue())
+
     def test_embed_command_passes_toml_settings_to_adapter(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -263,8 +365,8 @@ dimensions = 2
                 ])
             self.assertEqual(status, 0)
             self.assertEqual(adapter.call_args.args[3:], (
-                "ollama", "http://localhost:11434", "embeddinggemma", 2,
-                16, 60.0, "embeddinggemma", None,
+                "ollama", "http://localhost:11434/api/embed", "embeddinggemma", 2,
+                16, 60.0, "embeddinggemma", None, None,
             ))
 
     def test_embed_documents_uses_prepared_passage_order_and_lm_studio_indexes(self):
@@ -287,7 +389,7 @@ dimensions = 2
             ]}
             with mock.patch.object(wikipedia_data, "_post_json", return_value=response) as post:
                 counts = wikipedia_data.embed_documents(
-                    documents, passages, output, "lmstudio", "http://localhost:1234/v1",
+                    documents, passages, output, "lmstudio", "http://localhost:1234/v1/embeddings",
                     "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
                 )
             self.assertEqual(counts, (1, 2))
@@ -316,7 +418,7 @@ dimensions = 2
                 wikipedia_data, "_post_json", return_value={"embeddings": [[float("nan"), 0.0]]}
             ), self.assertRaises(wikipedia_data.WikipediaDataError):
                 wikipedia_data.embed_documents(
-                    documents, passages, output, "ollama", "http://localhost:11434",
+                    documents, passages, output, "ollama", "http://localhost:11434/api/embed",
                     "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
                 )
             self.assertEqual(output.read_text(encoding="utf-8"), "original\n")
@@ -340,7 +442,7 @@ dimensions = 2
                 wikipedia_data.WikipediaDataError, "jawiki:1 ordinal 0"
             ):
                 wikipedia_data.embed_documents(
-                    documents, passages, output, "ollama", "http://localhost:11434",
+                    documents, passages, output, "ollama", "http://localhost:11434/api/embed",
                     "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
                 )
 
