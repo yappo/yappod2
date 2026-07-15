@@ -1,6 +1,7 @@
 #include "yappo_http_v2.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +78,13 @@ typedef struct {
   size_t count;
 } HTTP_RUNTIME;
 
+typedef struct {
+  pthread_rwlock_t lock;
+  pthread_mutex_t update_lock;
+  char *index_dir;
+  HTTP_RUNTIME *current;
+} HTTP_RUNTIME_STATE;
+
 static int path_join(char *out, size_t capacity, const char *a, const char *b) {
   int written = snprintf(out, capacity, "%s/%s", a, b);
   return written < 0 || (size_t)written >= capacity ? -1 : 0;
@@ -88,6 +96,24 @@ static const YAP_V2_COMPONENT_DESCRIPTOR *component(const YAP_V2_SEGMENT_DESCRIP
   for (i = 0U; i < segment->component_count; i++)
     if (segment->components[i].file_type == type) return &segment->components[i];
   return NULL;
+}
+
+static int same_segment_descriptor(const YAP_V2_SEGMENT_DESCRIPTOR *left,
+                                   const YAP_V2_SEGMENT_DESCRIPTOR *right) {
+  size_t i;
+  if (strcmp(left->id, right->id) != 0 ||
+      left->document_count != right->document_count ||
+      left->passage_count != right->passage_count ||
+      left->tombstone_count != right->tombstone_count ||
+      left->component_count != right->component_count) return 0;
+  for (i = 0U; i < left->component_count; i++) {
+    const YAP_V2_COMPONENT_DESCRIPTOR *a = &left->components[i];
+    const YAP_V2_COMPONENT_DESCRIPTOR *b = &right->components[i];
+    if (strcmp(a->name, b->name) != 0 || a->file_type != b->file_type ||
+        a->record_count != b->record_count || a->file_bytes != b->file_bytes ||
+        memcmp(a->checksum, b->checksum, sizeof(a->checksum)) != 0) return 0;
+  }
+  return 1;
 }
 
 static void runtime_close(HTTP_RUNTIME *runtime) {
@@ -118,8 +144,7 @@ static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   status = YAP_V2_config_load(config_path, &runtime->config, error, sizeof(error));
   if (status != YAP_V2_OK) return status;
   status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &runtime->manifest);
-  if (status != YAP_V2_OK || YAP_V2_manifest_verify_components(index_dir, &runtime->manifest) != YAP_V2_OK)
-    return status == YAP_V2_OK ? YAP_V2_CHECKSUM_MISMATCH : status;
+  if (status != YAP_V2_OK) return status;
   status = YAP_V2_snapshot_manager_open(&runtime->manager, index_dir, manifest_path, &runtime->config);
   if (status != YAP_V2_OK) return status;
   runtime->snapshot = YAP_V2_snapshot_acquire(&runtime->manager);
@@ -189,6 +214,129 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
     runtime_close(runtime);
   }
   return YAP_V2_CONFLICT;
+}
+
+static int runtime_reload_append(HTTP_RUNTIME *runtime, const char *index_dir) {
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_QUERY_SEGMENT *query = NULL;
+  YAP_V2_LEXICAL_SEGMENT *lexical = NULL;
+  YAP_V2_VECTOR_SEGMENT *vectors = NULL;
+  YAP_V2_ANN_SEGMENT *ann = NULL;
+  YAP_V2_METADATA_INDEX *metadata = NULL;
+  YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL;
+  char manifest_path[4096], segment_dir[4096], file_path[4096];
+  size_t old_count, i;
+  int status, changed = 0;
+  YAP_V2_manifest_init(&manifest);
+  if (path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0)
+    return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &manifest);
+  if (status != YAP_V2_OK) goto done;
+  old_count = runtime->count;
+  if (manifest.segment_count < old_count) { status = YAP_V2_CONFLICT; goto done; }
+  for (i = 0U; i < old_count; i++)
+    if (!same_segment_descriptor(&manifest.segments[i], &runtime->manifest.segments[i])) {
+      status = YAP_V2_CONFLICT; goto done;
+    }
+  if (manifest.generation == runtime->manifest.generation) { status = YAP_V2_OK; goto done; }
+  query = calloc(manifest.segment_count, sizeof(*query));
+  lexical = calloc(manifest.segment_count, sizeof(*lexical));
+  vectors = calloc(manifest.segment_count, sizeof(*vectors));
+  ann = calloc(manifest.segment_count, sizeof(*ann));
+  metadata = calloc(manifest.segment_count, sizeof(*metadata));
+  if (query == NULL || lexical == NULL || vectors == NULL || ann == NULL || metadata == NULL) {
+    status = YAP_V2_ALLOCATION_FAILED; goto done;
+  }
+  memcpy(query, runtime->query, old_count * sizeof(*query));
+  memcpy(lexical, runtime->lexical, old_count * sizeof(*lexical));
+  memcpy(vectors, runtime->vectors, old_count * sizeof(*vectors));
+  memcpy(ann, runtime->ann, old_count * sizeof(*ann));
+  memcpy(metadata, runtime->metadata, old_count * sizeof(*metadata));
+  for (i = 0U; i < old_count; i++) {
+    if (runtime->query[i].lexical != NULL) query[i].lexical = &lexical[i];
+    if (runtime->query[i].vector != NULL) {
+      ann[i].vectors = &vectors[i]; query[i].vector = &ann[i];
+    }
+    if (runtime->query[i].metadata != NULL) query[i].metadata = &metadata[i];
+  }
+  for (i = old_count; status == YAP_V2_OK && i < manifest.segment_count; i++) {
+    const YAP_V2_SEGMENT_DESCRIPTOR *descriptor = &manifest.segments[i];
+    const YAP_V2_COMPONENT_DESCRIPTOR *ann_file;
+    int written = snprintf(segment_dir, sizeof(segment_dir), "%s/segments/%s",
+                           index_dir, descriptor->id);
+    if (written < 0 || (size_t)written >= sizeof(segment_dir)) {
+      status = YAP_V2_INVALID_ARGUMENT; break;
+    }
+    YAP_V2_lexical_segment_init(&lexical[i]);
+    YAP_V2_vector_segment_init(&vectors[i]);
+    YAP_V2_ann_segment_init(&ann[i]);
+    YAP_V2_metadata_index_init(&metadata[i]);
+    if (component(descriptor, YAP_V2_FILE_TERMS) != NULL) {
+      status = YAP_V2_lexical_segment_open(segment_dir, 0U, &lexical[i]);
+      if (status != YAP_V2_OK) break;
+      query[i].lexical = &lexical[i];
+    }
+    if (component(descriptor, YAP_V2_FILE_VECTORS) != NULL) {
+      if (path_join(file_path, sizeof(file_path), segment_dir, "vectors.yap2") != 0) {
+        status = YAP_V2_INVALID_ARGUMENT; break;
+      }
+      status = YAP_V2_vector_segment_open(file_path, 0U, &runtime->config,
+                                          &vectors[i], NULL);
+      if (status != YAP_V2_OK) break;
+      ann[i].vectors = &vectors[i];
+      ann_file = component(descriptor, YAP_V2_FILE_ANN);
+      if (ann_file != NULL) {
+        if (path_join(file_path, sizeof(file_path), segment_dir, ann_file->name) != 0) {
+          status = YAP_V2_INVALID_ARGUMENT; break;
+        }
+        status = YAP_V2_ann_view(file_path, &vectors[i], 64U, &ann[i], NULL);
+        if (status != YAP_ANN_OK) { status = YAP_V2_CONFLICT; break; }
+      }
+      query[i].vector = &ann[i];
+    }
+    if (component(descriptor, YAP_V2_FILE_METADATA) != NULL) {
+      if (path_join(file_path, sizeof(file_path), segment_dir, "metadata.yap2") != 0) {
+        status = YAP_V2_INVALID_ARGUMENT; break;
+      }
+      status = YAP_V2_metadata_read(file_path, 0U, &runtime->config,
+                                    &metadata[i], NULL);
+      if (status != YAP_V2_OK) break;
+      query[i].metadata = &metadata[i];
+    }
+  }
+  if (status == YAP_V2_OK) status = YAP_V2_snapshot_manager_reload(&runtime->manager, &changed);
+  if (status == YAP_V2_OK && !changed) status = YAP_V2_CONFLICT;
+  if (status == YAP_V2_OK) {
+    snapshot = YAP_V2_snapshot_acquire(&runtime->manager);
+    if (snapshot == NULL || YAP_V2_snapshot_generation(snapshot) != manifest.generation)
+      status = YAP_V2_CONFLICT;
+  }
+  if (status == YAP_V2_OK) {
+    free(runtime->query); free(runtime->lexical); free(runtime->vectors);
+    free(runtime->ann); free(runtime->metadata);
+    YAP_V2_snapshot_release(runtime->snapshot);
+    YAP_V2_manifest_free(&runtime->manifest);
+    runtime->manifest = manifest; YAP_V2_manifest_init(&manifest);
+    runtime->query = query; query = NULL;
+    runtime->lexical = lexical; lexical = NULL;
+    runtime->vectors = vectors; vectors = NULL;
+    runtime->ann = ann; ann = NULL;
+    runtime->metadata = metadata; metadata = NULL;
+    runtime->snapshot = snapshot; snapshot = NULL;
+    runtime->count = runtime->manifest.segment_count;
+  }
+done:
+  if (status != YAP_V2_OK && lexical != NULL) {
+    for (i = runtime->count; i < manifest.segment_count; i++) {
+      YAP_V2_ann_segment_close(&ann[i]);
+      YAP_V2_vector_segment_close(&vectors[i]);
+      YAP_V2_lexical_segment_close(&lexical[i]);
+      YAP_V2_metadata_index_free(&metadata[i]);
+    }
+  }
+  free(query); free(lexical); free(vectors); free(ann); free(metadata);
+  YAP_V2_snapshot_release(snapshot); YAP_V2_manifest_free(&manifest);
+  return status;
 }
 
 static int only_keys(yyjson_val *object, const char *const *allowed) {
@@ -557,15 +705,17 @@ done:
   return status;
 }
 
-int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
-                        const unsigned char *body, size_t body_bytes, int *http_status,
-                        char **response, size_t *response_bytes) {
-  HTTP_RUNTIME runtime; yyjson_doc *document = NULL; yyjson_val *root;
+static int http_execute_loaded(HTTP_RUNTIME *runtime, const char *index_dir,
+                               YAP_V2_HTTP_OPERATION operation,
+                               const unsigned char *body, size_t body_bytes,
+                               int *http_status, char **response,
+                               size_t *response_bytes) {
+  yyjson_doc *document = NULL; yyjson_val *root;
   YAP_V2_QUERY_REQUEST request; YAP_V2_RETRIEVE_OPTIONS retrieve;
   YAP_V2_QUERY_HIT *hits = NULL; float *vector = NULL; size_t hit_count = 0U, offset = 0U;
   size_t page_limit, execution_limit, page_count; unsigned char query_digest[32]; int status, parsed;
   if (http_status == NULL || response == NULL || response_bytes == NULL) return -1;
-  memset(&runtime, 0, sizeof(runtime)); memset(&request, 0, sizeof(request));
+  memset(&request, 0, sizeof(request));
   *http_status = 500; *response = NULL; *response_bytes = 0U;
   if (index_dir == NULL || body == NULL || body_bytes == 0U || body_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
       (operation != YAP_V2_HTTP_SEARCH && operation != YAP_V2_HTTP_RETRIEVE &&
@@ -591,19 +741,18 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
     YAP_V2_update_result_free(&update);
     return *response == NULL ? -1 : 0;
   }
+  if (runtime == NULL) return -1;
   document = yyjson_read((const char *)body, body_bytes, YYJSON_READ_NOFLAG);
   root = document == NULL ? NULL : yyjson_doc_get_root(document);
   if (!yyjson_is_obj(root)) goto bad_request;
-  status = runtime_open(&runtime, index_dir);
-  if (status != YAP_V2_OK) goto unavailable;
   if (operation == YAP_V2_HTTP_PREPARE) {
-    status = prepare_json(&runtime.config, root, response, response_bytes);
+    status = prepare_json(&runtime->config, root, response, response_bytes);
     if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT ||
         status == YAP_V2_OUT_OF_RANGE) goto bad_request;
     if (status != YAP_V2_OK) goto unavailable;
     *http_status = 200; goto done;
   }
-  parsed = parse_request(root, &runtime, operation, &request, &vector, &retrieve);
+  parsed = parse_request(root, runtime, operation, &request, &vector, &retrieve);
   if (parsed != 0) {
     if (parsed == -2) goto unavailable;
     goto bad_request;
@@ -612,7 +761,7 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   if (operation == YAP_V2_HTTP_SEARCH && yyjson_obj_get(root, "cursor") != NULL) {
     yyjson_val *cursor = yyjson_obj_get(root, "cursor");
     if (!yyjson_is_str(cursor) || cursor_decode(yyjson_get_str(cursor),
-        YAP_V2_snapshot_generation(runtime.snapshot), query_digest, &offset) != 0) goto bad_request;
+        YAP_V2_snapshot_generation(runtime->snapshot), query_digest, &offset) != 0) goto bad_request;
   }
   page_limit = request.top_k;
   if (operation == YAP_V2_HTTP_SEARCH) {
@@ -623,13 +772,13 @@ int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
   hits = calloc(execution_limit, sizeof(*hits));
   if (hits == NULL) goto unavailable;
   request.top_k = execution_limit; request.candidate_k = execution_limit < 100U ? 100U : execution_limit;
-  status = YAP_V2_query_execute(runtime.snapshot, runtime.query, runtime.count, &request,
+  status = YAP_V2_query_execute(runtime->snapshot, runtime->query, runtime->count, &request,
                                 hits, execution_limit, &hit_count);
   if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT) goto bad_request;
   if (status != YAP_V2_OK) goto unavailable;
   if (offset > hit_count) goto bad_request;
   page_count = hit_count - offset < page_limit ? hit_count - offset : page_limit;
-  status = make_response(&runtime, operation, hits + offset, page_count, &request, &retrieve,
+  status = make_response(runtime, operation, hits + offset, page_count, &request, &retrieve,
                          operation == YAP_V2_HTTP_SEARCH && hit_count > offset + page_count,
                          offset + page_count, query_digest, response, response_bytes);
   if (status != YAP_V2_OK) goto unavailable;
@@ -640,5 +789,149 @@ unavailable:
   *http_status = 503; *response = error_json("search_unavailable", "validated search snapshot is unavailable", response_bytes);
 done:
   free((void *)request.filter_json.data); free(vector); free(hits); if (document != NULL) yyjson_doc_free(document);
-  runtime_close(&runtime); return *response == NULL ? -1 : 0;
+  return *response == NULL ? -1 : 0;
+}
+
+void YAP_V2_http_runtime_init(YAP_V2_HTTP_RUNTIME *runtime) {
+  if (runtime != NULL) runtime->state = NULL;
+}
+
+int YAP_V2_http_runtime_open(YAP_V2_HTTP_RUNTIME *runtime, const char *index_dir) {
+  HTTP_RUNTIME_STATE *state;
+  int status;
+  if (runtime == NULL || runtime->state != NULL || index_dir == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  state = calloc(1U, sizeof(*state));
+  if (state == NULL) return YAP_V2_ALLOCATION_FAILED;
+  if (pthread_rwlock_init(&state->lock, NULL) != 0) { free(state); return YAP_V2_IO_ERROR; }
+  if (pthread_mutex_init(&state->update_lock, NULL) != 0) {
+    pthread_rwlock_destroy(&state->lock); free(state); return YAP_V2_IO_ERROR;
+  }
+  state->index_dir = strdup(index_dir);
+  state->current = calloc(1U, sizeof(*state->current));
+  if (state->index_dir == NULL || state->current == NULL) {
+    free(state->index_dir); free(state->current);
+    pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+    free(state); return YAP_V2_ALLOCATION_FAILED;
+  }
+  status = runtime_open(state->current, state->index_dir);
+  if (status != YAP_V2_OK) {
+    runtime_close(state->current); free(state->current); free(state->index_dir);
+    pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+    free(state); return status;
+  }
+  runtime->state = state;
+  return YAP_V2_OK;
+}
+
+void YAP_V2_http_runtime_close(YAP_V2_HTTP_RUNTIME *runtime) {
+  HTTP_RUNTIME_STATE *state;
+  if (runtime == NULL || runtime->state == NULL) return;
+  state = runtime->state;
+  pthread_rwlock_wrlock(&state->lock);
+  runtime_close(state->current); free(state->current); state->current = NULL;
+  pthread_rwlock_unlock(&state->lock);
+  pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+  free(state->index_dir); free(state); runtime->state = NULL;
+}
+
+int YAP_V2_http_runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
+                                YAP_V2_HTTP_OPERATION operation,
+                                const unsigned char *body, size_t body_bytes,
+                                int *http_status, char **response,
+                                size_t *response_bytes) {
+  HTTP_RUNTIME_STATE *state;
+  int result;
+  if (runtime == NULL || runtime->state == NULL) return -1;
+  state = runtime->state;
+  if (operation == YAP_V2_HTTP_INGEST) {
+    pthread_mutex_lock(&state->update_lock);
+    result = http_execute_loaded(NULL, state->index_dir, operation, body, body_bytes,
+                                 http_status, response, response_bytes);
+    if (result == 0 && *http_status == 200) {
+      pthread_rwlock_wrlock(&state->lock);
+      if (runtime_reload_append(state->current, state->index_dir) != YAP_V2_OK) {
+        free(*response); *response = error_json("reload_failed",
+          "index was updated but the new snapshot could not be loaded", response_bytes);
+        *http_status = 503; result = *response == NULL ? -1 : 0;
+      }
+      pthread_rwlock_unlock(&state->lock);
+    }
+    pthread_mutex_unlock(&state->update_lock);
+    return result;
+  }
+  pthread_rwlock_rdlock(&state->lock);
+  result = http_execute_loaded(state->current, state->index_dir, operation, body,
+                               body_bytes, http_status, response, response_bytes);
+  pthread_rwlock_unlock(&state->lock);
+  return result;
+}
+
+int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
+                              YAP_V2_OPERATIONAL_STATE *operational) {
+  HTTP_RUNTIME_STATE *state;
+  HTTP_RUNTIME *current;
+  if (runtime == NULL || runtime->state == NULL || operational == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  state = runtime->state;
+  pthread_rwlock_rdlock(&state->lock); current = state->current;
+  memset(operational, 0, sizeof(*operational));
+  operational->ready = current != NULL;
+  if (current != NULL) {
+    operational->generation = current->manifest.generation;
+    operational->segment_count = current->manifest.segment_count;
+    operational->embedding_configured =
+      current->config.vector_metric != YAP_V2_VECTOR_DISABLED;
+    operational->embedding_dimensions = current->config.vector_dimensions;
+    memcpy(operational->embedding_model_id, current->config.vector_model_id,
+           strlen(current->config.vector_model_id) + 1U);
+  }
+  pthread_rwlock_unlock(&state->lock);
+  return current == NULL ? YAP_V2_CONFLICT : YAP_V2_OK;
+}
+
+int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime) {
+  HTTP_RUNTIME_STATE *state;
+  HTTP_RUNTIME *candidate = NULL, *previous;
+  int status;
+  if (runtime == NULL || runtime->state == NULL) return YAP_V2_INVALID_ARGUMENT;
+  state = runtime->state;
+  pthread_mutex_lock(&state->update_lock);
+  pthread_rwlock_wrlock(&state->lock);
+  status = runtime_reload_append(state->current, state->index_dir);
+  pthread_rwlock_unlock(&state->lock);
+  if (status == YAP_V2_CONFLICT) {
+    candidate = calloc(1U, sizeof(*candidate));
+    if (candidate == NULL) {
+      status = YAP_V2_ALLOCATION_FAILED;
+    } else {
+      status = runtime_open(candidate, state->index_dir);
+      if (status == YAP_V2_OK) {
+        pthread_rwlock_wrlock(&state->lock);
+        previous = state->current; state->current = candidate; candidate = NULL;
+        pthread_rwlock_unlock(&state->lock);
+        runtime_close(previous); free(previous);
+      }
+    }
+  }
+  if (candidate != NULL) { runtime_close(candidate); free(candidate); }
+  pthread_mutex_unlock(&state->update_lock);
+  return status;
+}
+
+int YAP_V2_http_execute(const char *index_dir, YAP_V2_HTTP_OPERATION operation,
+                        const unsigned char *body, size_t body_bytes, int *http_status,
+                        char **response, size_t *response_bytes) {
+  HTTP_RUNTIME runtime;
+  int status, result;
+  if (operation == YAP_V2_HTTP_INGEST)
+    return http_execute_loaded(NULL, index_dir, operation, body, body_bytes,
+                               http_status, response, response_bytes);
+  memset(&runtime, 0, sizeof(runtime));
+  status = runtime_open(&runtime, index_dir);
+  if (status != YAP_V2_OK) return -1;
+  result = http_execute_loaded(&runtime, index_dir, operation, body, body_bytes,
+                               http_status, response, response_bytes);
+  runtime_close(&runtime);
+  return result;
 }

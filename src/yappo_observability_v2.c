@@ -145,7 +145,6 @@ int YAP_V2_operational_probe_index(const char *index_dir, YAP_V2_OPERATIONAL_STA
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }
   status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
-  if (status == YAP_V2_OK) status = YAP_V2_manifest_verify_components(index_dir, &manifest);
   if (status != YAP_V2_OK) { set_error(error, error_size, "index snapshot is invalid"); goto done; }
   state->ready = 1; state->generation = manifest.generation; state->segment_count = manifest.segment_count;
   state->embedding_configured = config.vector_metric != YAP_V2_VECTOR_DISABLED;

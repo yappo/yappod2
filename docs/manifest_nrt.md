@@ -16,14 +16,15 @@ manifestの`segments`は古い順から新しい順です。検索snapshotは末
 - `YAP_V2_manifest_publish_if_generation(path, expected, manifest)` はlock下で現在generationが
   `expected`と同じ場合だけ`expected + 1`を公開します。batch writerはsegment構築中に別writerが
   先行した場合のlost updateを防ぐため、このcompare-and-swap APIを使います。
-- `YAP_V2_snapshot_manager_reload`は新manifestと全componentを別snapshotへ読み切ってからcurrent pointerを交換します。同一generationはno-op、generation逆行は拒否し、検証失敗時は旧snapshotを維持します。queryはacquire/releaseでgenerationを固定し、reload後も参照中の旧snapshotは解放されません。
+- `YAP_V2_snapshot_manager_reload`は新manifestを読み、descriptorが一致する既存segmentを再利用し、追加segmentだけを検証・読込してからcurrent pointerを交換します。同一generationはno-op、generation逆行は拒否し、検証失敗時は旧snapshotを維持します。queryはacquire/releaseでgenerationを固定し、reload後も参照中の旧snapshotは解放されません。
 
 ## 更新手順
 
 1. 新しい document/passage segment を一時ファイルへ生成し、component、segment、`segments/`親directoryをfsyncする。
 2. segment を公開名へ atomic rename する（この時点では manifest から未参照でよい）。
-3. 現在の manifest を読み、既存 segment と新しい segment を含む候補を作る。
-4. 読み込んだgenerationをexpectedとして`YAP_V2_manifest_publish_if_generation`を呼び出す。
+3. 新しいsegmentだけのsize、SHA-256、header、内部構造を検証する。
+4. 現在の manifest を読み、既存 segment と新しい segment を含む候補を作る。
+5. 読み込んだgenerationをexpectedとして`YAP_V2_manifest_publish_if_generation`を呼び出す。
 
 CAS publishはlock下でgenerationを再読込します。競合したwriterは`YAP_V2_CONFLICT`となり、
 候補segmentをmanifestへ部分公開しません。generationが`UINT64_MAX`に達した場合も更新を拒否します。
