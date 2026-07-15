@@ -35,12 +35,12 @@ directory = "./data/yappod2-passages"
 directory = "./data/yappod2-vectors"
 provider = "lmstudio"
 base_url = "http://127.0.0.1:1234/v1"
-model = "replace-with-embedding-model"
-model_id = "local-files-embedding-768-v1"
+model = "text-embedding-embeddinggemma-300m"
+model_id = "embeddinggemma-300m-768-local-v1"
 dimensions = 768
 batch_size = 16
 timeout_ms = 60000
-prompt_profile = "plain"
+prompt_profile = "embeddinggemma"
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"

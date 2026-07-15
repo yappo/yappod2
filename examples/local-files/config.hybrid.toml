@@ -9,7 +9,7 @@ overlap_chars = 200
 
 [vector]
 enabled = true
-model_id = "local-files-embedding-768-v1"
+model_id = "embeddinggemma-300m-768-local-v1"
 dimensions = 768
 metric = "cosine"
 
