@@ -1,9 +1,21 @@
-# index生成処理とWeb stackが共有するapplication設定です。
-# yappo_makeindexが読むindex構造用TOMLは[build].index_configで別に指定します。
 schema_version = 1
+format_version = 2
 
-[build]
-index_directory = "../local-files/data/yappod2-index"
+[index]
+directory = "../local-files/data/yappod2-index"
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = false
+
+[metadata]
+filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [daemon]
 run_directory = "./run"

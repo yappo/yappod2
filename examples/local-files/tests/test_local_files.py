@@ -125,61 +125,34 @@ class LocalFilesTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         return server
 
-    def write_index_configs(self, directory):
-        lexical = directory / "config.lexical.toml"
-        hybrid = directory / "config.hybrid.toml"
-        common = textwrap.dedent(
-            """
-            format_version = 2
-            [tokenizer]
-            id = "unicode_nfkc_casefold_v2"
-            [chunking]
-            max_chars = 32
-            overlap_chars = 4
-            """
-        )
-        lexical.write_text(
-            common
-            + textwrap.dedent(
-                """
-                [vector]
-                enabled = false
-                [metadata]
-                filterable_fields = ["collection_id", "source_path"]
-                """
-            ),
-            encoding="utf-8",
-        )
-        hybrid.write_text(
-            common
-            + textwrap.dedent(
-                """
-                [vector]
-                enabled = true
-                model_id = "fixture-3d-v1"
-                dimensions = 3
-                metric = "cosine"
-                [metadata]
-                filterable_fields = ["collection_id", "source_path"]
-                """
-            ),
-            encoding="utf-8",
-        )
-        return lexical, hybrid
-
-    def write_pipeline_config(self, directory, server, *, batch_size=2, shard_bytes=500, extra=""):
+    def write_pipeline_config(self, directory, server, *, batch_size=2, shard_bytes=500,
+                              extra="", vector_enabled=False):
         root = directory / "input"
         root.mkdir()
         (root / "alpha.txt").write_text("alpha searchable source", encoding="utf-8")
         (root / "beta.txt").write_text("beta searchable source", encoding="utf-8")
-        lexical, hybrid = self.write_index_configs(directory)
         makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
         config = directory / "local-files.toml"
         config.write_text(
             textwrap.dedent(
                 f"""
                 schema_version = 1
+                format_version = 2
                 collection_id = "pipeline-fixture"
+                [index]
+                directory = {json.dumps(str(directory / "index"))}
+                [tokenizer]
+                id = "unicode_nfkc_casefold_v2"
+                [chunking]
+                max_chars = 32
+                overlap_chars = 4
+                [vector]
+                enabled = {str(vector_enabled).lower()}
+                {('model_id = "fixture-3d-v1"' if vector_enabled else '')}
+                {('dimensions = 3' if vector_enabled else '')}
+                {('metric = "cosine"' if vector_enabled else '')}
+                [metadata]
+                filterable_fields = ["collection_id", "source_path"]
                 [input]
                 root = {json.dumps(str(root))}
                 include = ["*", "**/*"]
@@ -204,9 +177,12 @@ class LocalFilesTest(unittest.TestCase):
                 {extra}
                 [build]
                 yappo_makeindex = {json.dumps(str(makeindex))}
-                index_config = {json.dumps(str(lexical))}
-                hybrid_index_config = {json.dumps(str(hybrid))}
-                index_directory = {json.dumps(str(directory / "index"))}
+                [daemon]
+                run_directory = {json.dumps(str(directory / "run"))}
+                core_host = "127.0.0.1"
+                core_port = 18401
+                front_host = "127.0.0.1"
+                front_port = 18400
                 [extract]
                 max_extracted_bytes = 1048576
                 enable_plugins = false
@@ -558,7 +534,9 @@ class LocalFilesTest(unittest.TestCase):
             with self.subTest(target=target):
                 directory = self.base / f"pipeline-{target}"
                 directory.mkdir()
-                config = self.write_pipeline_config(directory, server)
+                config = self.write_pipeline_config(
+                    directory, server, vector_enabled=target == "hybrid"
+                )
                 completed = subprocess.run(
                     [
                         sys.executable,
@@ -699,7 +677,9 @@ class LocalFilesTest(unittest.TestCase):
         server = self.start_embedding_server()
         directory = self.base / "checkpoint-pipeline"
         directory.mkdir()
-        config = self.write_pipeline_config(directory, server, batch_size=1)
+        config = self.write_pipeline_config(
+            directory, server, batch_size=1, vector_enabled=True
+        )
         settings = local_files.load_settings(config)
         local_files.convert(settings)
         local_files.prepare_passages(settings)
@@ -735,7 +715,10 @@ class LocalFilesTest(unittest.TestCase):
         server = self.start_embedding_server()
         directory = self.base / "batch-checkpoint-pipeline"
         directory.mkdir()
-        config = self.write_pipeline_config(directory, server, batch_size=1, shard_bytes=1_000_000)
+        config = self.write_pipeline_config(
+            directory, server, batch_size=1, shard_bytes=1_000_000,
+            vector_enabled=True,
+        )
         settings = local_files.load_settings(config)
         local_files.convert(settings)
         local_files.prepare_passages(settings)
@@ -800,6 +783,7 @@ class LocalFilesTest(unittest.TestCase):
             directory,
             server,
             extra='authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"\n[usage_log]\npath = "usage.jsonl"',
+            vector_enabled=True,
         )
         config.write_text(config.read_text(encoding="utf-8").replace(
             f'base_url = "http://127.0.0.1:{server.server_port}/v1"',
@@ -972,8 +956,8 @@ class LocalFilesTest(unittest.TestCase):
         settings = local_files.load_settings(config)
         local_files.convert(settings)
         invalid_config = directory / "invalid-index.toml"
-        invalid_config.write_text("not valid TOML =", encoding="utf-8")
-        settings = dataclasses.replace(settings, index_config=invalid_config)
+        invalid_config.write_text("[vector]\nenabled=false\n", encoding="utf-8")
+        settings = dataclasses.replace(settings, config_path=invalid_config)
 
         with self.assertRaisesRegex(local_files.LocalFilesError, "exited with"):
             local_files.build_index(settings, "lexical")

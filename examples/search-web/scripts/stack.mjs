@@ -49,20 +49,18 @@ function buildIndex(config) {
   if (existsSync(config.indexDirectory)) {
     throw new Error(`index path already exists: ${config.indexDirectory}`);
   }
-  if (!config.build.input || !config.build.indexConfig || !config.build.makeindex) {
-    throw new Error("build.input, build.index_config, and build.yappo_makeindex are required to create an index");
+  if (!config.build.input || !config.build.makeindex) {
+    throw new Error("build.input and build.yappo_makeindex are required to create an index");
   }
   for (const [name, path] of [
     ["build.input", config.build.input],
-    ["build.index_config", config.build.indexConfig],
     ["build.yappo_makeindex", config.build.makeindex],
   ]) {
     if (!existsSync(path)) throw new Error(`${name} not found: ${path}`);
   }
   run(config.build.makeindex, [
-    "build", "--config", config.build.indexConfig,
+    "build", "--config", config.path,
     "--input", config.build.input,
-    "--index", config.indexDirectory,
   ]);
 }
 
@@ -109,21 +107,13 @@ async function start(config) {
   run("npm", ["run", "build"], { cwd: webDir });
   let started = false;
   try {
-    run(core, ["--index", config.indexDirectory, "--port", String(config.daemon.corePort), "--config", config.path], {
-      cwd: config.daemon.runDirectory,
-    });
+    run(core, ["--config", config.path]);
     if (!await waitFor(() => {
       const pid = readPid(pidPath(config, "core"));
       return pid !== null && alive(pid);
     })) throw new Error("yappod_core did not start");
 
-    run(front, [
-      "--index", config.indexDirectory,
-      "--core-host", config.daemon.coreHost,
-      "--core-port", String(config.daemon.corePort),
-      "--port", String(config.daemon.frontPort),
-      "--config", config.path,
-    ], { cwd: config.daemon.runDirectory });
+    run(front, ["--config", config.path]);
     if (!await waitFor(async () => {
       try {
         const response = await fetch(`http://${config.daemon.frontHost}:${config.daemon.frontPort}/health/ready`);

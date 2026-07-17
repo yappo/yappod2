@@ -2,7 +2,6 @@
 
 `yappod_front` and `yappod_core` load the same fail-closed runtime policy from the shared
 application TOML passed with `--config PATH`. Invalid values prevent the daemon from starting.
-Environment-variable runtime configuration is not supported.
 
 ```toml
 [daemon]

@@ -2,6 +2,7 @@
 #include "yappo_ingest.h"
 #include "yappo_http_v2.h"
 #include "yappo_update_v2.h"
+#include "yappo_application_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,34 +12,41 @@ static void usage(FILE *output) {
   fputs("Usage:\n"
         "  yappo_makeindex prepare --config CONFIG --input INPUT --output OUTPUT "
         "[--input-format ndjson|tsv]\n"
-        "  yappo_makeindex build --config CONFIG --input documents.ndjson "
-        "--index INDEX_DIR\n"
-        "  yappo_makeindex update --input operations.ndjson --index INDEX_DIR\n"
-        "  yappo_makeindex verify --index INDEX_DIR\n",
+        "  yappo_makeindex build --config CONFIG --input documents.ndjson\n"
+        "  yappo_makeindex update --config CONFIG --input operations.ndjson\n"
+        "  yappo_makeindex verify --config CONFIG\n",
         output);
 }
 
 static int verify_main(int argc, char **argv) {
-  const char *index_dir = NULL;
+  const char *config_path = NULL, *index_option = NULL;
+  YAP_APPLICATION_CONFIG application;
   YAP_V2_HTTP_RUNTIME runtime;
   YAP_V2_OPERATIONAL_STATE state;
   int i, status;
   for (i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) index_dir = argv[++i];
+    if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) config_path = argv[++i];
+    else if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) index_option = argv[++i];
     else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-      fputs("Usage: yappo_makeindex verify --index INDEX_DIR\n", stdout);
+      fputs("Usage: yappo_makeindex verify --config CONFIG\n", stdout);
       return EXIT_SUCCESS;
     } else {
       fprintf(stderr, "Unknown verify option: %s\n", argv[i]);
       return EXIT_FAILURE;
     }
   }
-  if (index_dir == NULL) {
-    fputs("verify requires --index INDEX_DIR\n", stderr);
+  if (config_path == NULL || index_option != NULL) {
+    fputs("verify requires --config CONFIG\n", stderr);
     return EXIT_FAILURE;
   }
+  {
+    char error[256] = {0};
+    if (YAP_application_config_load(config_path, &application, error, sizeof(error)) != YAP_V2_OK) {
+      fprintf(stderr, "Config error: %s\n", error); return EXIT_FAILURE;
+    }
+  }
   YAP_V2_http_runtime_init(&runtime);
-  status = YAP_V2_http_runtime_open(&runtime, index_dir);
+  status = YAP_V2_http_runtime_open(&runtime, application.index_directory);
   if (status != YAP_V2_OK) {
     fprintf(stderr, "verification failed: %s\n", YAP_V2_status_string(status));
     return EXIT_FAILURE;

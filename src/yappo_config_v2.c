@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <toml.h>
+#include <unistd.h>
 
 typedef struct {
   uint32_t state[8];
@@ -322,4 +323,68 @@ void YAP_V2_config_fingerprint_hex(const unsigned char fingerprint[32], char out
   if (fingerprint == NULL || output == NULL) return;
   for (i=0;i<32;i++){output[i*2]=hex[fingerprint[i]>>4];output[i*2+1]=hex[fingerprint[i]&15U];}
   output[64]='\0';
+}
+
+static int write_toml_string(FILE *file, const char *value) {
+  const unsigned char *cursor = (const unsigned char *)value;
+  if (fputc('"', file) == EOF) return -1;
+  while (*cursor != '\0') {
+    if (*cursor == '"' || *cursor == '\\') {
+      if (fputc('\\', file) == EOF || fputc(*cursor, file) == EOF) return -1;
+    } else if (*cursor == '\n' || *cursor == '\r' || *cursor == '\t') {
+      int escaped = *cursor == '\n' ? 'n' : *cursor == '\r' ? 'r' : 't';
+      if (fputc('\\', file) == EOF || fputc(escaped, file) == EOF) return -1;
+    } else if (*cursor < 0x20U || *cursor == 0x7fU) {
+      if (fprintf(file, "\\u%04x", (unsigned int)*cursor) < 0) return -1;
+    } else if (fputc(*cursor, file) == EOF) {
+      return -1;
+    }
+    cursor++;
+  }
+  return fputc('"', file) == EOF ? -1 : 0;
+}
+
+int YAP_V2_config_save(const char *path, const YAP_V2_CONFIG *config,
+                       char *error, size_t error_size) {
+  FILE *file;
+  const char *metric;
+  size_t i;
+  if (path == NULL || config == NULL) return YAP_V2_INVALID_ARGUMENT;
+  if (YAP_V2_config_validate(config) != YAP_V2_OK) return YAP_V2_INVALID_FORMAT;
+  file = fopen(path, "wx");
+  if (file == NULL) {
+    set_error(error, error_size, "cannot create %s: %s", path, strerror(errno));
+    return YAP_V2_IO_ERROR;
+  }
+  metric = config->vector_metric == YAP_V2_VECTOR_COSINE ? "cosine" :
+           config->vector_metric == YAP_V2_VECTOR_DOT ? "dot" : "l2";
+  if (fprintf(file, "format_version = %" PRIu32 "\n\n[tokenizer]\nid = ",
+              config->format_version) < 0 || write_toml_string(file, config->tokenizer_id) != 0 ||
+      fprintf(file, "\n\n[chunking]\nmax_chars = %" PRIu32 "\noverlap_chars = %" PRIu32
+                    "\n\n[vector]\nenabled = %s\n",
+              config->chunk_max_chars,
+              config->chunk_overlap_chars,
+              config->vector_metric == YAP_V2_VECTOR_DISABLED ? "false" : "true") < 0)
+    goto io_error;
+  if (config->vector_metric != YAP_V2_VECTOR_DISABLED) {
+    if (fputs("model_id = ", file) < 0 || write_toml_string(file, config->vector_model_id) != 0 ||
+        fprintf(file, "\ndimensions = %" PRIu32 "\nmetric = \"%s\"\n",
+                config->vector_dimensions, metric) < 0)
+      goto io_error;
+  }
+  if (fputs("\n[metadata]\nfilterable_fields = [", file) < 0) goto io_error;
+  for (i = 0U; i < config->filterable_field_count; i++)
+    if ((i != 0U && fputs(", ", file) < 0) ||
+        write_toml_string(file, config->filterable_fields[i]) != 0)
+      goto io_error;
+  if (fputs("]\n", file) < 0 || fflush(file) != 0 || fsync(fileno(file)) != 0 || fclose(file) != 0) {
+    file = NULL;
+    goto io_error;
+  }
+  return YAP_V2_OK;
+io_error:
+  if (file != NULL) (void)fclose(file);
+  (void)unlink(path);
+  set_error(error, error_size, "cannot write %s", path);
+  return YAP_V2_IO_ERROR;
 }

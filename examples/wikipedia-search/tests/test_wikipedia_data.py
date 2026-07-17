@@ -162,16 +162,14 @@ class WikipediaDataTest(unittest.TestCase):
     def test_load_embedding_settings_reads_index_and_shared_toml(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            index_config = root / "config.vector.toml"
             web_config = root / "config.toml"
-            index_config.write_text("""
+            web_config.write_text("""
 [vector]
 enabled = true
 model_id = "embed-index-v1"
 dimensions = 3
 metric = "cosine"
-""", encoding="utf-8")
-            web_config.write_text("""
+
 [llm]
 base_url = "http://localhost:1234/v1"
 model = "answer-model"
@@ -191,7 +189,7 @@ batch_size = 8
 path = "usage.jsonl"
 """, encoding="utf-8")
             with mock.patch.dict(os.environ, {"YAPPOD_TEST_EMBEDDING_TOKEN": "secret"}):
-                settings = wikipedia_data.load_embedding_settings(index_config, web_config)
+                settings = wikipedia_data.load_embedding_settings(web_config)
             self.assertEqual(settings, wikipedia_data.EmbeddingSettings(
                 "lmstudio", "http://localhost:1234/v1", "http://localhost:1234/v1/embeddings",
                 "embedding-model", 3, 8, 45.0, "plain", "secret", (root / "usage.jsonl").resolve(),
@@ -200,12 +198,12 @@ path = "usage.jsonl"
     def test_load_embedding_settings_rejects_index_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            index_config = root / "config.vector.toml"
             web_config = root / "config.toml"
-            index_config.write_text(
-                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=768\n', encoding="utf-8"
-            )
             web_config.write_text("""
+[vector]
+enabled=true
+model_id="index-v1"
+dimensions=768
 [embedding]
 provider = "ollama"
 base_url = "http://localhost:11434"
@@ -214,8 +212,12 @@ model_id = "different-index"
 dimensions = 768
 """, encoding="utf-8")
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "embedding.model_id"):
-                wikipedia_data.load_embedding_settings(index_config, web_config)
+                wikipedia_data.load_embedding_settings(web_config)
             web_config.write_text("""
+[vector]
+enabled=true
+model_id="index-v1"
+dimensions=768
 [embedding]
 provider = "ollama"
 base_url = "http://localhost:11434"
@@ -224,17 +226,17 @@ model_id = "index-v1"
 dimensions = 384
 """, encoding="utf-8")
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "dimensions"):
-                wikipedia_data.load_embedding_settings(index_config, web_config)
+                wikipedia_data.load_embedding_settings(web_config)
 
     def test_load_embedding_settings_rejects_unknown_keys(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            index_config = root / "config.vector.toml"
             web_config = root / "config.toml"
-            index_config.write_text(
-                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=768\n', encoding="utf-8"
-            )
             web_config.write_text("""
+[vector]
+enabled=true
+model_id="index-v1"
+dimensions=768
 [embedding]
 provider = "ollama"
 base_url = "http://localhost:11434"
@@ -242,17 +244,17 @@ model = "embeddinggemma"
 batch_szie = 8
 """, encoding="utf-8")
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "batch_szie"):
-                wikipedia_data.load_embedding_settings(index_config, web_config)
+                wikipedia_data.load_embedding_settings(web_config)
 
     def test_openai_endpoint_token_and_https_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            index_config = root / "config.vector.toml"
             web_config = root / "config.toml"
-            index_config.write_text(
-                '[vector]\nenabled=true\nmodel_id="openai-768"\ndimensions=768\n', encoding="utf-8"
-            )
             web_config.write_text("""
+[vector]
+enabled=true
+model_id="openai-768"
+dimensions=768
 [embedding]
 provider = "openai"
 endpoint_url = "https://api.openai.com/v1/embeddings"
@@ -263,7 +265,7 @@ prompt_profile = "plain"
 authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"
 """, encoding="utf-8")
             with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "token"}):
-                settings = wikipedia_data.load_embedding_settings(index_config, web_config)
+                settings = wikipedia_data.load_embedding_settings(web_config)
             self.assertEqual(settings.provider, "openai")
             self.assertEqual(settings.endpoint_url, "https://api.openai.com/v1/embeddings")
             self.assertEqual(settings.authorization_token, "token")
@@ -273,7 +275,7 @@ authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"
             ), encoding="utf-8")
             with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "token"}):
                 with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "must use https"):
-                    wikipedia_data.load_embedding_settings(index_config, web_config)
+                    wikipedia_data.load_embedding_settings(web_config)
 
             source = web_config.read_text(encoding="utf-8").replace(
                 "http://api.openai.com", "https://api.openai.com"
@@ -283,7 +285,7 @@ authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"
                 'authorization_token = "token"',
             ), encoding="utf-8")
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "not supported"):
-                wikipedia_data.load_embedding_settings(index_config, web_config)
+                wikipedia_data.load_embedding_settings(web_config)
 
     def test_service_url_allows_only_explicit_http_private_ranges(self):
         for endpoint in (
@@ -338,12 +340,12 @@ authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"
     def test_embed_command_passes_toml_settings_to_adapter(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            index_config = root / "config.vector.toml"
             web_config = root / "config.toml"
-            index_config.write_text(
-                '[vector]\nenabled=true\nmodel_id="index-v1"\ndimensions=2\n', encoding="utf-8"
-            )
             web_config.write_text("""
+[vector]
+enabled=true
+model_id="index-v1"
+dimensions=2
 [embedding]
 provider = "ollama"
 base_url = "http://localhost:11434"
@@ -356,7 +358,7 @@ dimensions = 2
                     "embed", "--documents", str(root / "documents.ndjson"),
                     "--passages", str(root / "passages.ndjson"),
                     "--output", str(root / "vector.ndjson"),
-                    "--index-config", str(index_config), "--config", str(web_config),
+                    "--config", str(web_config),
                 ])
             self.assertEqual(status, 0)
             self.assertEqual(adapter.call_args.args[3:], (

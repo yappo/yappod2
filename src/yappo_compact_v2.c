@@ -1,4 +1,5 @@
 #include "yappo_compact_v2.h"
+#include "yappo_application_config.h"
 
 #include "yappo_ann_v2.h"
 #include "yappo_config_v2.h"
@@ -311,13 +312,22 @@ done:
 }
 
 int YAP_V2_compact_main(int argc, char **argv) {
-  const char *index_dir = NULL; YAP_V2_COMPACTION_RESULT result; char error[256] = {0}; int i, status;
+  const char *index_dir = NULL, *config_path = NULL; YAP_APPLICATION_CONFIG application;
+  YAP_V2_COMPACTION_RESULT result; char error[256] = {0}; int i, status;
   for (i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--index") != 0) { fprintf(stderr, "Unknown compact option: %s\n", argv[i]); return EXIT_FAILURE; }
+    const char **target;
+    if (strcmp(argv[i], "--index") == 0) target = &index_dir;
+    else if (strcmp(argv[i], "--config") == 0) target = &config_path;
+    else { fprintf(stderr, "Unknown compact option: %s\n", argv[i]); return EXIT_FAILURE; }
     if (++i >= argc) { fputs("Missing --index value\n", stderr); return EXIT_FAILURE; }
-    index_dir = argv[i];
+    *target = argv[i];
   }
-  if (index_dir == NULL) { fputs("Usage: yappo_compact --index INDEX_DIR\n", stderr); return EXIT_FAILURE; }
+  if ((index_dir == NULL) == (config_path == NULL)) { fputs("Usage: yappo_compact (--config CONFIG | --index INDEX_DIR)\n", stderr); return EXIT_FAILURE; }
+  if (config_path != NULL) {
+    status = YAP_application_config_load(config_path, &application, error, sizeof(error));
+    if (status != YAP_V2_OK) { fprintf(stderr, "Config error: %s\n", error); return EXIT_FAILURE; }
+    index_dir = application.index_directory;
+  }
   YAP_V2_compaction_result_init(&result);
   status = YAP_V2_compact(index_dir, &result, error, sizeof(error));
   if (status != YAP_V2_OK) {

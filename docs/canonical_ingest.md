@@ -40,5 +40,5 @@ yappo_makeindex prepare --config config.toml --input legacy.tsv --input-format t
 ```
 
 ```sh
-yappo_makeindex update --input operations.ndjson --index /srv/yappod/index
+yappo_makeindex update --config /srv/yappod/config.toml --input operations.ndjson
 ```

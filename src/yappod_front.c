@@ -3,6 +3,7 @@
 #include "yappo_net.h"
 #include "yappo_observability_v2.h"
 #include "yappo_runtime_policy_v2.h"
+#include "yappo_application_config.h"
 
 #include <errno.h>
 #include <netdb.h>
@@ -14,6 +15,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -60,7 +62,9 @@ typedef struct {
 
 static volatile sig_atomic_t shutdown_requested = 0;
 static int listen_socket = -1;
-static const char *pid_file = "front.pid";
+static char pid_file[YAP_APPLICATION_PATH_BYTES] = "front.pid";
+static char log_file[YAP_APPLICATION_PATH_BYTES] = "front.log";
+static char error_file[YAP_APPLICATION_PATH_BYTES] = "front.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_METRICS metrics;
@@ -69,11 +73,11 @@ static uint64_t next_request_id = 1U;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s --index INDEX_DIR --core-host HOST [--config CONFIG] [--port PORT] "
-          "[--core-port PORT]\n"
+          "Usage: %s (--config CONFIG | --index INDEX_DIR --core-host HOST [--port PORT] "
+          "[--core-port PORT])\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --core-host HOST   yappod_core host (required)\n"
-          "  --config CONFIG    Shared application TOML (optional)\n"
+          "  --config CONFIG    Shared application TOML\n"
           "  --port PORT        HTTP port (default: %d)\n"
           "  --core-port PORT   Internal frame port (default: %d)\n",
           program, DEFAULT_FRONT_PORT, DEFAULT_CORE_PORT);
@@ -116,14 +120,38 @@ static int redirect_stream(FILE *stream, const char *path, const char *mode) {
   return fclose(opened);
 }
 
+static int mkdir_p(const char *path) {
+  char copy[YAP_APPLICATION_PATH_BYTES];
+  char *cursor;
+  size_t length = strlen(path);
+  if (length == 0U || length >= sizeof(copy)) return -1;
+  memcpy(copy, path, length + 1U);
+  for (cursor = copy + 1; *cursor != '\0'; cursor++) {
+    if (*cursor != '/') continue;
+    *cursor = '\0';
+    if (mkdir(copy, 0700) != 0 && errno != EEXIST) return -1;
+    *cursor = '/';
+  }
+  return mkdir(copy, 0700) == 0 || errno == EEXIST ? 0 : -1;
+}
+
+static int set_run_paths(const char *directory) {
+  if (mkdir_p(directory) != 0 ||
+      snprintf(pid_file, sizeof(pid_file), "%s/front.pid", directory) >= (int)sizeof(pid_file) ||
+      snprintf(log_file, sizeof(log_file), "%s/front.log", directory) >= (int)sizeof(log_file) ||
+      snprintf(error_file, sizeof(error_file), "%s/front.error", directory) >= (int)sizeof(error_file))
+    return -1;
+  return 0;
+}
+
 static int daemonize_process(void) {
   pid_t child = fork();
   FILE *file;
   if (child < 0) return -1;
   if (child > 0) return 1;
   if (setsid() < 0 || redirect_stream(stdin, "/dev/null", "r") != 0 ||
-      redirect_stream(stdout, "front.log", "a") != 0 ||
-      redirect_stream(stderr, "front.error", "a") != 0) return -1;
+      redirect_stream(stdout, log_file, "a") != 0 ||
+      redirect_stream(stderr, error_file, "a") != 0) return -1;
   file = fopen(pid_file, "w");
   if (file == NULL || fprintf(file, "%ld\n", (long)getpid()) < 0 || fclose(file) != 0)
     return -1;
@@ -131,24 +159,23 @@ static int daemonize_process(void) {
   return 0;
 }
 
-static int create_listener(int port) {
-  struct sockaddr_in address;
-  int descriptor, reuse = 1;
-  descriptor = socket(AF_INET, SOCK_STREAM, 0);
-  if (descriptor < 0 ||
-      setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
-    if (descriptor >= 0) (void)close(descriptor);
-    return -1;
+static int create_listener(const char *host, int port) {
+  struct addrinfo hints, *addresses = NULL, *address;
+  char port_text[16];
+  int descriptor = -1, reuse = 1;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; hints.ai_flags = AI_PASSIVE;
+  (void)snprintf(port_text, sizeof(port_text), "%d", port);
+  if (getaddrinfo(host, port_text, &hints, &addresses) != 0) return -1;
+  for (address = addresses; address != NULL; address = address->ai_next) {
+    descriptor = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+    if (descriptor < 0) continue;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == 0 &&
+        bind(descriptor, address->ai_addr, address->ai_addrlen) == 0 &&
+        listen(descriptor, SOMAXCONN) == 0) break;
+    (void)close(descriptor); descriptor = -1;
   }
-  memset(&address, 0, sizeof(address));
-  address.sin_family = AF_INET;
-  address.sin_port = htons((unsigned short)port);
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-      listen(descriptor, SOMAXCONN) != 0) {
-    (void)close(descriptor);
-    return -1;
-  }
+  freeaddrinfo(addresses);
   return descriptor;
 }
 
@@ -600,12 +627,15 @@ static void *run_worker(void *opaque) {
 
 int main(int argc, char **argv) {
   const char *index_dir = NULL, *core_host = NULL, *config_path = NULL;
+  const char *listen_host = NULL;
+  YAP_APPLICATION_CONFIG application;
   int port = DEFAULT_FRONT_PORT, core_port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0}, probe_error[256] = {0};
   YAP_V2_OPERATIONAL_STATE state;
   pthread_t threads[FRONT_WORKERS];
   worker_t workers[FRONT_WORKERS];
   size_t started = 0U;
+  int have_port = 0, have_core_port = 0;
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
@@ -619,6 +649,7 @@ int main(int argc, char **argv) {
       *target = argv[i];
     } else if (strcmp(argv[i], "--port") == 0 || strcmp(argv[i], "--core-port") == 0) {
       int *target = strcmp(argv[i], "--port") == 0 ? &port : &core_port;
+      if (strcmp(argv[i], "--port") == 0) have_port = 1; else have_core_port = 1;
       if (++i >= argc || parse_port(argv[i], target) != 0) {
         usage(stderr, argv[0]);
         return EXIT_FAILURE;
@@ -629,6 +660,30 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   }
+  if (config_path != NULL &&
+      (index_dir != NULL || core_host != NULL || have_port || have_core_port)) {
+    fputs("--config cannot be combined with legacy daemon options\n", stderr);
+    return EXIT_FAILURE;
+  }
+  if (config_path != NULL) {
+    if (YAP_application_config_load(config_path, &application, policy_error,
+                                    sizeof(policy_error)) != YAP_V2_OK) {
+      fprintf(stderr, "Invalid application config: %s\n", policy_error);
+      return EXIT_FAILURE;
+    }
+    index_dir = application.index_directory;
+    core_host = application.core_host;
+    core_port = application.core_port;
+    listen_host = application.front_host;
+    port = application.front_port;
+    runtime_policy = application.runtime_policy;
+    if (set_run_paths(application.run_directory) != 0) {
+      fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
+      return EXIT_FAILURE;
+    }
+  } else {
+    YAP_V2_runtime_policy_init(&runtime_policy);
+  }
   if (index_dir == NULL || core_host == NULL ||
       YAP_V2_operational_probe_index(index_dir, &state, probe_error, sizeof(probe_error)) !=
         YAP_V2_OK || !state.ready || state.segment_count == 0U) {
@@ -636,15 +691,12 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
-  if (YAP_V2_runtime_policy_load_config(&runtime_policy, config_path, policy_error,
-                                        sizeof(policy_error)) !=
-        YAP_V2_OK ||
-      YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
+  if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
       YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
     return EXIT_FAILURE;
   }
-  listen_socket = create_listener(port);
+  listen_socket = create_listener(listen_host, port);
   if (listen_socket < 0) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_metrics_close(&metrics);

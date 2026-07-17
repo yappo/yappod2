@@ -1,4 +1,5 @@
 #include "yappo_update_v2.h"
+#include "yappo_application_config.h"
 
 #include "yappo_config_v2.h"
 #include "yappo_manifest_v2.h"
@@ -386,23 +387,28 @@ static int read_file(const char *path, unsigned char **data_out, size_t *bytes_o
 }
 
 int YAP_V2_update_main(int argc, char **argv) {
-  const char *input_path = NULL, *index_dir = NULL; unsigned char *data = NULL; size_t bytes = 0U;
+  const char *input_path = NULL, *config_path = NULL, *index_option = NULL; unsigned char *data = NULL; size_t bytes = 0U;
+  YAP_APPLICATION_CONFIG application;
   YAP_V2_UPDATE_RESULT result; char error[256] = {0}; int i, status;
   for (i = 1; i < argc; i++) {
     const char **target;
     if (strcmp(argv[i], "--input") == 0) target = &input_path;
-    else if (strcmp(argv[i], "--index") == 0) target = &index_dir;
+    else if (strcmp(argv[i], "--config") == 0) target = &config_path;
+    else if (strcmp(argv[i], "--index") == 0) target = &index_option;
     else { fprintf(stderr, "Unknown update option: %s\n", argv[i]); return EXIT_FAILURE; }
     if (++i >= argc) { fputs("Missing update option value\n", stderr); return EXIT_FAILURE; }
     *target = argv[i];
   }
-  if (input_path == NULL || index_dir == NULL) {
-    fputs("Usage: yappo_makeindex update --input operations.ndjson --index INDEX_DIR\n", stderr);
+  if (input_path == NULL || config_path == NULL || index_option != NULL) {
+    fputs("Usage: yappo_makeindex update --config CONFIG --input operations.ndjson\n", stderr);
     return EXIT_FAILURE;
+  }
+  if (YAP_application_config_load(config_path, &application, error, sizeof(error)) != YAP_V2_OK) {
+    fprintf(stderr, "Config error: %s\n", error); return EXIT_FAILURE;
   }
   if (read_file(input_path, &data, &bytes) != 0) { perror("update input"); return EXIT_FAILURE; }
   YAP_V2_update_result_init(&result);
-  status = YAP_V2_update_ndjson(index_dir, data, bytes, &result, error, sizeof(error)); free(data);
+  status = YAP_V2_update_ndjson(application.index_directory, data, bytes, &result, error, sizeof(error)); free(data);
   if (status != YAP_V2_OK) { fprintf(stderr, "Update failed: %s (%s)\n", error, YAP_V2_status_string(status)); return EXIT_FAILURE; }
   printf("{\"generation\":%llu,\"accepted\":%zu,\"upserts\":%zu,\"deletes\":%zu,\"segment_ids\":[",
          (unsigned long long)result.generation, result.accepted, result.upserts, result.deletes);

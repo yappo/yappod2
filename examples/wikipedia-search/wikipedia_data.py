@@ -35,7 +35,6 @@ DUMP_CHECKSUM_PATTERN = re.compile(r"^jawiki-\d{8}-pages-articles-multistream\.x
 API_SEARCH_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
 EXAMPLE_DIR = Path(__file__).resolve().parent
-DEFAULT_VECTOR_CONFIG = EXAMPLE_DIR / "config.vector.toml"
 DEFAULT_APP_CONFIG = EXAMPLE_DIR / "wikipedia-search.toml"
 DEFAULT_TOPICS = (
     "日本の歴史",
@@ -264,8 +263,8 @@ def _append_usage_log(path: Optional[Path], provider: str, model: str, usage: ob
         print("warning: cannot append usage log {}: {}".format(path, error), file=sys.stderr)
 
 
-def load_embedding_settings(index_config: Path, app_config: Path) -> EmbeddingSettings:
-    vector = _read_toml_table(index_config, "vector")
+def load_embedding_settings(app_config: Path) -> EmbeddingSettings:
+    vector = _read_toml_table(app_config, "vector")
     embedding = _read_toml_table(app_config, "embedding")
     _only_config_keys(vector, ("enabled", "model_id", "dimensions", "metric"), "vector")
     _only_config_keys(embedding, (
@@ -273,7 +272,7 @@ def load_embedding_settings(index_config: Path, app_config: Path) -> EmbeddingSe
         "prompt_profile", "authorization_token", "authorization_token_env", "timeout_ms", "batch_size",
     ), "embedding")
     if vector.get("enabled") is not True:
-        raise WikipediaDataError("vector.enabled must be true in {}".format(index_config))
+        raise WikipediaDataError("vector.enabled must be true in {}".format(app_config))
     index_model_id = _config_string(vector, "model_id", "vector.model_id")
     dimensions = _config_integer(vector, "dimensions", "vector.dimensions", None, 1, 65536)
     configured_dimensions = embedding.get("dimensions", dimensions)
@@ -847,7 +846,6 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--documents", type=Path, required=True)
     embed.add_argument("--passages", type=Path, required=True)
     embed.add_argument("--output", type=Path, required=True)
-    embed.add_argument("--index-config", type=Path, default=DEFAULT_VECTOR_CONFIG)
     embed.add_argument("--config", type=Path, default=DEFAULT_APP_CONFIG)
     return parser
 
@@ -867,7 +865,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             written, skipped = convert_wikiextractor(args.input, args.output, args.limit)
             result = {"output": str(args.output), "written": written, "skipped": skipped}
         else:
-            settings = load_embedding_settings(args.index_config, args.config)
+            settings = load_embedding_settings(args.config)
             documents, passages = embed_documents(
                 args.documents, args.passages, args.output, settings.provider, settings.endpoint_url,
                 settings.model, settings.dimensions, settings.batch_size, settings.timeout,

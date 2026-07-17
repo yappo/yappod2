@@ -104,7 +104,27 @@ static void test_rejects_invalid_disabled_vector(void **state) {
   assert_int_equal(unlink(path),0);
 }
 
+static void test_save_round_trips_escaped_strings(void **state) {
+  char path[] = "/tmp/yappod-config-save-XXXXXX";
+  char error[256] = {0};
+  YAP_V2_CONFIG source, loaded;
+  int fd;
+  (void)state;
+  fd = mkstemp(path); assert_true(fd >= 0); assert_int_equal(close(fd), 0);
+  assert_int_equal(unlink(path), 0);
+  YAP_V2_config_init(&source);
+  assert_true(snprintf(source.tokenizer_id, sizeof(source.tokenizer_id), "token\\\"id") > 0);
+  source.filterable_field_count = 1U;
+  assert_true(snprintf(source.filterable_fields[0], sizeof(source.filterable_fields[0]),
+                       "field\"name") > 0);
+  assert_int_equal(YAP_V2_config_save(path, &source, error, sizeof(error)), YAP_V2_OK);
+  assert_int_equal(YAP_V2_config_load(path, &loaded, error, sizeof(error)), YAP_V2_OK);
+  assert_string_equal(loaded.tokenizer_id, source.tokenizer_id);
+  assert_string_equal(loaded.filterable_fields[0], source.filterable_fields[0]);
+  assert_int_equal(unlink(path), 0);
+}
+
 int main(void) {
-  const struct CMUnitTest tests[]={cmocka_unit_test(test_load_and_fingerprint),cmocka_unit_test(test_defaults),cmocka_unit_test(test_filterable_fields_are_canonical),cmocka_unit_test(test_rejects_duplicate_filterable_field),cmocka_unit_test(test_rejects_unknown_key),cmocka_unit_test(test_rejects_unknown_nested_key),cmocka_unit_test(test_rejects_invalid_disabled_vector)};
+  const struct CMUnitTest tests[]={cmocka_unit_test(test_load_and_fingerprint),cmocka_unit_test(test_defaults),cmocka_unit_test(test_filterable_fields_are_canonical),cmocka_unit_test(test_rejects_duplicate_filterable_field),cmocka_unit_test(test_rejects_unknown_key),cmocka_unit_test(test_rejects_unknown_nested_key),cmocka_unit_test(test_rejects_invalid_disabled_vector),cmocka_unit_test(test_save_round_trips_escaped_strings)};
   return cmocka_run_group_tests(tests,NULL,NULL);
 }
