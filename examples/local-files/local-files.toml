@@ -3,7 +3,7 @@ format_version = 2
 collection_id = "my-files"
 
 [index]
-directory = "./data/index"
+directory = "../data/local-files/index"
 
 [tokenizer]
 id = "unicode_nfkc_casefold_v2"
@@ -30,17 +30,17 @@ exclude = [
 follow_symlinks = false
 
 [output]
-directory = "./data/documents"
+directory = "../data/local-files/documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
 # このfileは設定項目のsampleです。copyして入力・出力pathを変更して使います。
 # `rag`/`hybrid`では[prepare]、`hybrid`では[embedding]も有効にします。
 # [prepare]
-# directory = "./data/passages"
+# directory = "../data/local-files/passages"
 #
 # [embedding]
-# directory = "./data/vectors"
+# directory = "../data/local-files/vectors"
 # provider = "lmstudio" # lmstudio | ollama | openai
 # base_url = "http://127.0.0.1:1234/v1"
 # endpoint_url = "https://api.openai.com/v1/embeddings" # base_urlとは排他
@@ -53,13 +53,13 @@ body_max_bytes = 1000000
 # authorization_token_env = "EMBEDDING_API_KEY"
 #
 [usage_log]
-path = "./data/api-usage.jsonl"
+path = "../data/local-files/api-usage.jsonl"
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
 
 [daemon]
-run_directory = "./data/run"
+run_directory = "../data/local-files/run"
 core_host = "127.0.0.1"
 core_port = 18401
 front_host = "127.0.0.1"

@@ -2,7 +2,7 @@ schema_version = 1
 format_version = 2
 
 [index]
-directory = "./index"
+directory = "../data/wikipedia-search/index"
 
 [tokenizer]
 id = "unicode_nfkc_casefold_v2"
@@ -19,10 +19,10 @@ filterable_fields = ["language", "source"]
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
-input = "./data/documents.ndjson"
+input = "../data/wikipedia-search/documents.ndjson"
 
 [daemon]
-run_directory = "./run"
+run_directory = "../data/wikipedia-search/run"
 core_host = "127.0.0.1"
 core_port = 18401
 front_host = "127.0.0.1"
@@ -58,4 +58,4 @@ yappod_timeout_ms = 5000
 # authorization_token_env = "EMBEDDING_API_KEY"
 
 [usage_log]
-path = "./data/api-usage.jsonl"
+path = "../data/wikipedia-search/api-usage.jsonl"

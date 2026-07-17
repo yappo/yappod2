@@ -2,7 +2,7 @@ schema_version = 1
 format_version = 2
 
 [index]
-directory = "../local-files/data/yappod2-index"
+directory = "../data/local-files/yappod2-index"
 
 [tokenizer]
 id = "unicode_nfkc_casefold_v2"
@@ -18,7 +18,7 @@ enabled = false
 filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [daemon]
-run_directory = "./run"
+run_directory = "../data/search-web/run"
 core_host = "127.0.0.1"
 core_port = 18401
 front_host = "127.0.0.1"
@@ -44,7 +44,7 @@ yappod_timeout_ms = 5000
 
 # vector/hybrid検索を使う場合だけ有効にします。index生成側も同じsectionを読みます。
 # [embedding]
-# directory = "../local-files/data/vectors"
+# directory = "../data/local-files/vectors"
 # provider = "lmstudio" # lmstudio | ollama | openai
 # base_url = "http://127.0.0.1:1234/v1"
 # model = "embedding-model-identifier"
@@ -56,4 +56,4 @@ yappod_timeout_ms = 5000
 # authorization_token_env = "EMBEDDING_API_KEY"
 
 [usage_log]
-path = "./data/api-usage.jsonl"
+path = "../data/search-web/api-usage.jsonl"
