@@ -35,8 +35,9 @@ static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s --index INDEX_DIR [--port PORT]\n"
+          "Usage: %s --index INDEX_DIR [--config CONFIG] [--port PORT]\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
+          "  --config CONFIG    Shared application TOML (optional)\n"
           "  --port PORT        Internal frame port (default: %d)\n",
           program, DEFAULT_CORE_PORT);
 }
@@ -253,7 +254,7 @@ static void *run_reloader(void *opaque) {
 }
 
 int main(int argc, char **argv) {
-  const char *index_dir = NULL;
+  const char *index_dir = NULL, *config_path = NULL;
   int port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0};
   YAP_V2_HTTP_RUNTIME http_runtime;
@@ -267,9 +268,9 @@ int main(int argc, char **argv) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0) {
+    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--config") == 0) {
       if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
-      index_dir = argv[i];
+      if (strcmp(argv[i - 1], "--index") == 0) index_dir = argv[i]; else config_path = argv[i];
     } else if (strcmp(argv[i], "--port") == 0) {
       if (++i >= argc || parse_port(argv[i], &port) != 0) {
         usage(stderr, argv[0]);
@@ -286,7 +287,8 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
-  if (YAP_V2_runtime_policy_load_env(&runtime_policy, policy_error, sizeof(policy_error)) !=
+  if (YAP_V2_runtime_policy_load_config(&runtime_policy, config_path, policy_error,
+                                        sizeof(policy_error)) !=
         YAP_V2_OK ||
       YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);

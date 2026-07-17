@@ -234,10 +234,10 @@ static int wait_front_ready(int front_port, int retries, int sleep_ms) {
 }
 
 static int launch_core_daemon(const char *bin_path, const char *index_dir, int core_port,
-                              const char *cwd) {
+                              const char *cwd, const char *config_path) {
   ytest_cmd_result_t result;
   char core_port_str[16];
-  char *argv_core[6];
+  char *argv_core[8];
 
   if (snprintf(core_port_str, sizeof(core_port_str), "%d", core_port) >=
       (int)sizeof(core_port_str)) {
@@ -251,7 +251,13 @@ static int launch_core_daemon(const char *bin_path, const char *index_dir, int c
   argv_core[2] = (char *)index_dir;
   argv_core[3] = "--port";
   argv_core[4] = core_port_str;
-  argv_core[5] = NULL;
+  if (config_path != NULL) {
+    argv_core[5] = "--config";
+    argv_core[6] = (char *)config_path;
+    argv_core[7] = NULL;
+  } else {
+    argv_core[5] = NULL;
+  }
 
   if (ytest_cmd_run(argv_core, cwd, NULL, 0U, &result) != 0) {
     ytest_cmd_result_free(&result);
@@ -269,11 +275,12 @@ static int launch_core_daemon(const char *bin_path, const char *index_dir, int c
 }
 
 static int launch_front_daemon(const char *bin_path, const char *index_dir, const char *server,
-                               int front_port, int core_port, const char *cwd) {
+                               int front_port, int core_port, const char *cwd,
+                               const char *config_path) {
   ytest_cmd_result_t result;
   char front_port_str[16];
   char core_port_str[16];
-  char *argv_front[10];
+  char *argv_front[12];
 
   if (server == NULL) {
     errno = EINVAL;
@@ -297,7 +304,13 @@ static int launch_front_daemon(const char *bin_path, const char *index_dir, cons
   argv_front[6] = front_port_str;
   argv_front[7] = "--core-port";
   argv_front[8] = core_port_str;
-  argv_front[9] = NULL;
+  if (config_path != NULL) {
+    argv_front[9] = "--config";
+    argv_front[10] = (char *)config_path;
+    argv_front[11] = NULL;
+  } else {
+    argv_front[9] = NULL;
+  }
 
   if (ytest_cmd_run(argv_front, cwd, NULL, 0U, &result) != 0) {
     ytest_cmd_result_free(&result);
@@ -314,8 +327,9 @@ static int launch_front_daemon(const char *bin_path, const char *index_dir, cons
   return 0;
 }
 
-int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
-                             const char *index_dir, const char *run_dir) {
+int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char *build_dir,
+                                         const char *index_dir, const char *run_dir,
+                                         const char *config_path) {
   char core_bin[PATH_MAX];
   char front_bin[PATH_MAX];
   char core_pid_path[PATH_MAX];
@@ -387,12 +401,13 @@ int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
     fprintf(stderr, "[TEST] daemon attempt=%d core_port=%d front_port=%d\n", attempt + 1,
             stack->core_port, stack->front_port);
 
-    if (launch_core_daemon(core_bin, index_dir, stack->core_port, stack->run_dir) == 0 &&
+    if (launch_core_daemon(core_bin, index_dir, stack->core_port, stack->run_dir,
+                           config_path) == 0 &&
         ytest_read_pid_file(stack->run_dir, "core.pid", 100, 20, &stack->core_pid) == 0 &&
         kill(stack->core_pid, 0) == 0 &&
         ytest_wait_for_port(stack->core_port, 50, 100) == 0 &&
         launch_front_daemon(front_bin, index_dir, "127.0.0.1", stack->front_port,
-                            stack->core_port, stack->run_dir) == 0 &&
+                            stack->core_port, stack->run_dir, config_path) == 0 &&
         ytest_read_pid_file(stack->run_dir, "front.pid", 100, 20, &stack->front_pid) == 0 &&
         kill(stack->front_pid, 0) == 0 &&
         ytest_wait_for_port(stack->front_port, 50, 100) == 0 &&
@@ -409,6 +424,11 @@ int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
 
   errno = last_errno;
   return -1;
+}
+
+int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
+                             const char *index_dir, const char *run_dir) {
+  return ytest_daemon_stack_start_with_config(stack, build_dir, index_dir, run_dir, NULL);
 }
 
 int ytest_daemon_stack_alive(const ytest_daemon_stack_t *stack) {

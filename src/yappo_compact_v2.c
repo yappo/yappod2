@@ -84,9 +84,14 @@ int YAP_V2_compact_gc(const char *index_dir, const YAP_V2_MANIFEST *manifest,
   return status;
 }
 
+static const char *testing_failpoint;
+
+void YAP_V2_compaction_set_failpoint_for_testing(const char *name) {
+  testing_failpoint = name;
+}
+
 static int failpoint(const char *name) {
-  const char *configured = getenv("YAPPOD_V2_COMPACTION_FAILPOINT");
-  if (configured != NULL && strcmp(configured, name) == 0) _exit(86);
+  if (testing_failpoint != NULL && strcmp(testing_failpoint, name) == 0) _exit(86);
   return YAP_V2_OK;
 }
 

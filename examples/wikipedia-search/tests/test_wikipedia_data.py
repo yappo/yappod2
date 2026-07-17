@@ -159,7 +159,7 @@ class WikipediaDataTest(unittest.TestCase):
             self.assertEqual((written, skipped), (2, 0))
             self.assertEqual(len(read_ndjson(output)), 2)
 
-    def test_load_embedding_settings_reads_index_and_web_toml(self):
+    def test_load_embedding_settings_reads_index_and_shared_toml(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             index_config = root / "config.vector.toml"
@@ -180,17 +180,17 @@ model = "answer-model"
 provider = "lmstudio"
 base_url = "http://localhost:1234/v1"
 model = "embedding-model"
-index_model_id = "embed-index-v1"
+model_id = "embed-index-v1"
 dimensions = 3
-profile = "plain"
-authorization_token_env = "WIKIPEDIA_TEST_TOKEN"
+prompt_profile = "plain"
+authorization_token_env = "YAPPOD_TEST_EMBEDDING_TOKEN"
 timeout_ms = 45000
 batch_size = 8
 
 [usage_log]
 path = "usage.jsonl"
 """, encoding="utf-8")
-            with mock.patch.dict(os.environ, {"WIKIPEDIA_TEST_TOKEN": "secret"}):
+            with mock.patch.dict(os.environ, {"YAPPOD_TEST_EMBEDDING_TOKEN": "secret"}):
                 settings = wikipedia_data.load_embedding_settings(index_config, web_config)
             self.assertEqual(settings, wikipedia_data.EmbeddingSettings(
                 "lmstudio", "http://localhost:1234/v1", "http://localhost:1234/v1/embeddings",
@@ -210,17 +210,17 @@ path = "usage.jsonl"
 provider = "ollama"
 base_url = "http://localhost:11434"
 model = "embeddinggemma"
-index_model_id = "different-index"
+model_id = "different-index"
 dimensions = 768
 """, encoding="utf-8")
-            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "index_model_id"):
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "embedding.model_id"):
                 wikipedia_data.load_embedding_settings(index_config, web_config)
             web_config.write_text("""
 [embedding]
 provider = "ollama"
 base_url = "http://localhost:11434"
 model = "embeddinggemma"
-index_model_id = "index-v1"
+model_id = "index-v1"
 dimensions = 384
 """, encoding="utf-8")
             with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "dimensions"):
@@ -257,12 +257,12 @@ batch_szie = 8
 provider = "openai"
 endpoint_url = "https://api.openai.com/v1/embeddings"
 model = "text-embedding-3-small"
-index_model_id = "openai-768"
+model_id = "openai-768"
 dimensions = 768
-profile = "plain"
-authorization_token_env = "CUSTOM_OPENAI_KEY"
+prompt_profile = "plain"
+authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"
 """, encoding="utf-8")
-            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": "token"}):
+            with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "token"}):
                 settings = wikipedia_data.load_embedding_settings(index_config, web_config)
             self.assertEqual(settings.provider, "openai")
             self.assertEqual(settings.endpoint_url, "https://api.openai.com/v1/embeddings")
@@ -271,7 +271,7 @@ authorization_token_env = "CUSTOM_OPENAI_KEY"
             web_config.write_text(web_config.read_text(encoding="utf-8").replace(
                 "https://api.openai.com", "http://api.openai.com"
             ), encoding="utf-8")
-            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": "token"}):
+            with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "token"}):
                 with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "must use https"):
                     wikipedia_data.load_embedding_settings(index_config, web_config)
 
@@ -279,16 +279,11 @@ authorization_token_env = "CUSTOM_OPENAI_KEY"
                 "http://api.openai.com", "https://api.openai.com"
             )
             web_config.write_text(source.replace(
-                'authorization_token_env = "CUSTOM_OPENAI_KEY"',
-                'authorization_token = "plain-text-secret"',
+                'authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"',
+                'authorization_token = "token"',
             ), encoding="utf-8")
-            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "authorization_token"):
+            with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "not supported"):
                 wikipedia_data.load_embedding_settings(index_config, web_config)
-
-            web_config.write_text(source, encoding="utf-8")
-            with mock.patch.dict(os.environ, {"CUSTOM_OPENAI_KEY": ""}):
-                with self.assertRaisesRegex(wikipedia_data.WikipediaDataError, "not set or empty"):
-                    wikipedia_data.load_embedding_settings(index_config, web_config)
 
     def test_service_url_allows_only_explicit_http_private_ranges(self):
         for endpoint in (
@@ -353,7 +348,7 @@ authorization_token_env = "CUSTOM_OPENAI_KEY"
 provider = "ollama"
 base_url = "http://localhost:11434"
 model = "embeddinggemma"
-index_model_id = "index-v1"
+model_id = "index-v1"
 dimensions = 2
 """, encoding="utf-8")
             with mock.patch.object(wikipedia_data, "embed_documents", return_value=(1, 2)) as adapter:
@@ -361,12 +356,12 @@ dimensions = 2
                     "embed", "--documents", str(root / "documents.ndjson"),
                     "--passages", str(root / "passages.ndjson"),
                     "--output", str(root / "vector.ndjson"),
-                    "--index-config", str(index_config), "--web-config", str(web_config),
+                    "--index-config", str(index_config), "--config", str(web_config),
                 ])
             self.assertEqual(status, 0)
             self.assertEqual(adapter.call_args.args[3:], (
                 "ollama", "http://localhost:11434/api/embed", "embeddinggemma", 2,
-                16, 60.0, "embeddinggemma", None, None,
+                16, 60.0, "plain", None, None,
             ))
 
     def test_embed_documents_uses_prepared_passage_order_and_lm_studio_indexes(self):

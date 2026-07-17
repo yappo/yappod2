@@ -1,6 +1,7 @@
 data/
 index/
 run/
+wikipedia-search.toml
 .venv/
 __pycache__/
 tests/__pycache__/

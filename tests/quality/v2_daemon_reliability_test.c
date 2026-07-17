@@ -119,7 +119,8 @@ static void test_concurrent_search_update_load_and_rss(void **state) {
   update_worker_t updater;
   pthread_t search_threads[SEARCH_WORKERS], update_thread, concurrent_search_thread;
   double latencies[SEARCH_WORKERS * REQUESTS_PER_WORKER];
-  char run_dir[PATH_MAX], *response = NULL;
+  char run_dir[PATH_MAX], policy_path[PATH_MAX], *response = NULL;
+  FILE *policy_file;
   unsigned long rss_kib;
   size_t i, j, latency_count = 0U, p95_rank;
   (void)state;
@@ -127,9 +128,14 @@ static void test_concurrent_search_update_load_and_rss(void **state) {
   assert_int_equal(ytest_env_init(&env), 0);
   assert_int_equal(YAP_Test_v2_quality_index_create(env.tmp_root), 0);
   assert_int_equal(ytest_path_join(run_dir, sizeof(run_dir), env.tmp_root, "run"), 0);
-  assert_int_equal(setenv("YAPPOD_V2_MAX_INFLIGHT", "16", 1), 0);
+  assert_int_equal(ytest_path_join(policy_path, sizeof(policy_path), env.tmp_root,
+                                   "runtime.toml"), 0);
+  policy_file = fopen(policy_path, "wb"); assert_non_null(policy_file);
+  assert_true(fputs("[daemon]\nmax_inflight=16\n", policy_file) >= 0);
+  assert_int_equal(fclose(policy_file), 0);
   ytest_daemon_stack_init(&stack);
-  if (ytest_daemon_stack_start(&stack, env.build_dir, env.tmp_root, run_dir) != 0) {
+  if (ytest_daemon_stack_start_with_config(&stack, env.build_dir, env.tmp_root, run_dir,
+                                           policy_path) != 0) {
     ytest_daemon_stack_dump_logs(&stack, stderr);
     fail_msg("failed to start daemon stack");
   }
@@ -172,7 +178,6 @@ static void test_concurrent_search_update_load_and_rss(void **state) {
   free(response);
   assert_true(ytest_daemon_stack_alive(&stack));
   ytest_daemon_stack_stop(&stack);
-  assert_int_equal(unsetenv("YAPPOD_V2_MAX_INFLIGHT"), 0);
   ytest_env_destroy(&env);
 }
 

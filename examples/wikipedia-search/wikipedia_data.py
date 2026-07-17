@@ -36,7 +36,7 @@ API_SEARCH_LIMIT = 50
 DEFAULT_USER_AGENT = "yappod2-wikipedia-example/1.0 (https://github.com/yappo/yappod2)"
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_VECTOR_CONFIG = EXAMPLE_DIR / "config.vector.toml"
-DEFAULT_WEB_CONFIG = EXAMPLE_DIR / "web" / "config.toml"
+DEFAULT_APP_CONFIG = EXAMPLE_DIR / "wikipedia-search.toml"
 DEFAULT_TOPICS = (
     "日本の歴史",
     "日本の地理",
@@ -214,6 +214,10 @@ def _service_url(value: object, name: str, base: bool = False) -> str:
 
 
 def _authorization_token_from_env(table: Dict[str, object], name: str) -> Optional[str]:
+    if "authorization_token" in table:
+        raise WikipediaDataError(
+            "{}.authorization_token is not supported; use {}.authorization_token_env".format(name, name)
+        )
     environment_name = _config_string(
         table, "authorization_token_env", "{}.authorization_token_env".format(name), required=False
     )
@@ -260,13 +264,13 @@ def _append_usage_log(path: Optional[Path], provider: str, model: str, usage: ob
         print("warning: cannot append usage log {}: {}".format(path, error), file=sys.stderr)
 
 
-def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSettings:
+def load_embedding_settings(index_config: Path, app_config: Path) -> EmbeddingSettings:
     vector = _read_toml_table(index_config, "vector")
-    embedding = _read_toml_table(web_config, "embedding")
+    embedding = _read_toml_table(app_config, "embedding")
     _only_config_keys(vector, ("enabled", "model_id", "dimensions", "metric"), "vector")
     _only_config_keys(embedding, (
-        "provider", "base_url", "endpoint_url", "model", "index_model_id", "dimensions", "profile",
-        "authorization_token_env", "timeout_ms", "batch_size",
+        "directory", "provider", "base_url", "endpoint_url", "model", "model_id", "dimensions",
+        "prompt_profile", "authorization_token", "authorization_token_env", "timeout_ms", "batch_size",
     ), "embedding")
     if vector.get("enabled") is not True:
         raise WikipediaDataError("vector.enabled must be true in {}".format(index_config))
@@ -276,10 +280,10 @@ def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSe
     if configured_dimensions != dimensions:
         raise WikipediaDataError("embedding.dimensions must match vector.dimensions")
     configured_model_id = _config_string(
-        embedding, "index_model_id", "embedding.index_model_id", required=False
+        embedding, "model_id", "embedding.model_id", required=False
     )
     if configured_model_id is not None and configured_model_id != index_model_id:
-        raise WikipediaDataError("embedding.index_model_id must match vector.model_id")
+        raise WikipediaDataError("embedding.model_id must match vector.model_id")
     provider = _config_string(embedding, "provider", "embedding.provider")
     if provider not in ("lmstudio", "ollama", "openai"):
         raise WikipediaDataError("embedding.provider must be lmstudio, ollama, or openai")
@@ -293,9 +297,11 @@ def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSe
     else:
         assert base_url is not None
         endpoint_url = base_url + ("/api/embed" if provider == "ollama" else "/embeddings")
-    profile = _config_string(embedding, "profile", "embedding.profile", required=False) or "embeddinggemma"
+    profile = _config_string(
+        embedding, "prompt_profile", "embedding.prompt_profile", required=False
+    ) or "plain"
     if profile not in ("embeddinggemma", "plain"):
-        raise WikipediaDataError("embedding.profile must be embeddinggemma or plain")
+        raise WikipediaDataError("embedding.prompt_profile must be embeddinggemma or plain")
     authorization_token = _authorization_token_from_env(embedding, "embedding")
     timeout_ms = _config_integer(embedding, "timeout_ms", "embedding.timeout_ms", 60000, 1000, 600000)
     return EmbeddingSettings(
@@ -308,7 +314,7 @@ def load_embedding_settings(index_config: Path, web_config: Path) -> EmbeddingSe
         timeout_ms / 1000.0,
         profile,
         authorization_token,
-        _usage_log_path(web_config),
+        _usage_log_path(app_config),
     )
 
 
@@ -825,12 +831,12 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--topic", action="append", dest="topics")
     api.add_argument("--limit", type=_positive_int, default=1000)
     api.add_argument("--output", type=Path, required=True)
-    api.add_argument("--user-agent", default=os.environ.get("WIKIMEDIA_USER_AGENT", DEFAULT_USER_AGENT))
+    api.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
 
     download = subparsers.add_parser("download-dump", help="download and verify the official full XML dump")
     download.add_argument("--base-url", default=DEFAULT_DUMP_BASE_URL)
     download.add_argument("--output-dir", type=Path, required=True)
-    download.add_argument("--user-agent", default=os.environ.get("WIKIMEDIA_USER_AGENT", DEFAULT_USER_AGENT))
+    download.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
 
     convert = subparsers.add_parser("convert-dump", help="convert WikiExtractor JSON output")
     convert.add_argument("--input", type=Path, required=True)
@@ -842,7 +848,7 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--passages", type=Path, required=True)
     embed.add_argument("--output", type=Path, required=True)
     embed.add_argument("--index-config", type=Path, default=DEFAULT_VECTOR_CONFIG)
-    embed.add_argument("--web-config", type=Path, default=DEFAULT_WEB_CONFIG)
+    embed.add_argument("--config", type=Path, default=DEFAULT_APP_CONFIG)
     return parser
 
 
@@ -861,7 +867,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             written, skipped = convert_wikiextractor(args.input, args.output, args.limit)
             result = {"output": str(args.output), "written": written, "skipped": skipped}
         else:
-            settings = load_embedding_settings(args.index_config, args.web_config)
+            settings = load_embedding_settings(args.index_config, args.config)
             documents, passages = embed_documents(
                 args.documents, args.passages, args.output, settings.provider, settings.endpoint_url,
                 settings.model, settings.dimensions, settings.batch_size, settings.timeout,

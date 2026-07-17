@@ -33,7 +33,7 @@ body_max_bytes = 1000000
 # batch_size = 16
 # timeout_ms = 60000
 # prompt_profile = "plain" # plain | embeddinggemma
-# authorization_token_env = "OPENAI_API_KEY"
+# authorization_token_env = "EMBEDDING_API_KEY"
 #
 [usage_log]
 path = "./data/api-usage.jsonl"
@@ -43,6 +43,29 @@ path = "./data/api-usage.jsonl"
 # index_config = "./config.lexical.toml"
 # hybrid_index_config = "./config.hybrid.toml"
 # index_directory = "./data/index"
+
+[daemon]
+run_directory = "./data/run"
+core_host = "127.0.0.1"
+core_port = 18401
+front_host = "127.0.0.1"
+front_port = 18400
+max_inflight = 4
+max_inflight_bytes = 4194304
+request_timeout_ms = 5000
+# write_token = "replace-with-16-or-more-characters"
+
+[web]
+host = "127.0.0.1"
+port = 4173
+yappod_timeout_ms = 5000
+
+# 回答生成を使う場合だけ追加します。
+# [llm]
+# base_url = "http://127.0.0.1:1234/v1"
+# model = "model-identifier"
+# timeout_ms = 30000
+# authorization_token_env = "LLM_API_KEY"
 
 [extract]
 enable_plugins = false

@@ -64,6 +64,32 @@ examples/local-files/data/
 別のqueryとして`segment_write`、`BM25`、`unicode_nfkc_casefold_v2`なども試せます。titleには
 `src/yappo_makeindex.c`のようなrepository root相対pathが入るため、file名も検索対象です。
 
+### Web UIで検索する
+
+`local-files-yappod2.toml`は収集・embedding・index生成だけでなく、daemonとWeb UIの設定も保持します。
+別のWeb専用設定fileや一般設定の環境変数overrideは使いません。Web依存関係を一度installしてから、同じ設定を指定します。
+
+```sh
+cd examples/search-web
+npm install
+cd ../..
+
+examples/search-web/scripts/start.sh \
+  --config examples/local-files/local-files-yappod2.toml
+```
+
+標準では`http://127.0.0.1:4173`で検索、引用付き質問、文書登録を利用できます。停止時も同じ設定を渡します。
+
+```sh
+examples/search-web/scripts/stop.sh \
+  --config examples/local-files/local-files-yappod2.toml
+```
+
+local-files文書はURLを持たず、titleの相対pathをリンクなしで表示します。lexical indexではlexical検索と
+lexical RAG、hybrid indexでは同じ`[embedding]`設定を使うvector/hybrid検索とRAGも利用できます。
+`[daemon].write_token`を設定すると文書登録を認証できますが、登録内容は元fileや生成済みdocument shardへ
+反映されないため、local-files pipelineでindexを再生成すると失われます。
+
 入力fileの絶対pathはIDやmetadataへ保存しません。ただし、source codeや設定の原文自体に秘密情報や
 絶対pathが書かれていれば、その文字列はbodyへ入ります。検索対象にすべきでないfileは
 `local-files-yappod2.toml`の`input.exclude`へ追加してください。
@@ -214,7 +240,7 @@ dimensions = 768
 batch_size = 16
 timeout_ms = 60000
 prompt_profile = "plain" # plain | embeddinggemma
-# authorization_token_env = "OPENAI_API_KEY"
+# authorization_token_env = "EMBEDDING_API_KEY"
 
 [usage_log]
 path = "./data/api-usage.jsonl"
@@ -224,8 +250,8 @@ path = "./data/api-usage.jsonl"
   そのまま使用します。
 - LM StudioとOpenAIでは`base_url`へ`/embeddings`を追加して呼び出します。
 - Ollamaでは通常`base_url = "http://127.0.0.1:11434"`とし、`/api/embed`を追加して呼び出します。
-- bearer tokenが必要なら、tokenを保持する環境変数名を`authorization_token_env`へ指定します。
-  環境変数が未定義または空ならAPIを呼ぶ前に停止します。平文の`authorization_token`は拒否します。
+- bearer tokenが必要なら、共有設定の`authorization_token_env`へtokenを保持する環境変数名を指定します。
+  環境変数名が不正、またはtokenが未設定・空ならAPIを呼ぶ前に停止します。
 - `embedding.model_id`と`dimensions`は`config.hybrid.toml`の`[vector]`と一致させます。
 - lexical configとhybrid configの`[tokenizer]`、`[chunking]`も一致させます。異なる場合、CLIは
   passage/vector ordinalの不整合を避けるため失敗します。

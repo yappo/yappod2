@@ -26,7 +26,8 @@ typedef struct {
 } YAP_V2_RUNTIME_LIMITER;
 
 void YAP_V2_runtime_policy_init(YAP_V2_RUNTIME_POLICY *policy);
-int YAP_V2_runtime_policy_load_env(YAP_V2_RUNTIME_POLICY *policy, char *error, size_t error_size);
+int YAP_V2_runtime_policy_load_config(YAP_V2_RUNTIME_POLICY *policy, const char *config_path,
+                                      char *error, size_t error_size);
 int YAP_V2_runtime_limiter_init(YAP_V2_RUNTIME_LIMITER *limiter,
                                 const YAP_V2_RUNTIME_POLICY *policy);
 void YAP_V2_runtime_limiter_close(YAP_V2_RUNTIME_LIMITER *limiter);

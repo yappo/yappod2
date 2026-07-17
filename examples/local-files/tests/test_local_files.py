@@ -245,6 +245,14 @@ class LocalFilesTest(unittest.TestCase):
         self.assertNotEqual(configured.config_fingerprint, disabled.config_fingerprint)
         self.assertNotEqual(enabled.config_fingerprint, disabled.config_fingerprint)
 
+    def test_web_and_daemon_settings_do_not_change_pipeline_fingerprint(self):
+        self.write_config(content_match=False)
+        before = local_files.load_settings(self.config)
+        with self.config.open("a", encoding="utf-8") as output:
+            output.write("\n[daemon]\nfront_port = 19000\n[web]\nport = 5199\n")
+        after = local_files.load_settings(self.config)
+        self.assertEqual(before.config_fingerprint, after.config_fingerprint)
+
     def test_body_split_preserves_text_and_utf8_boundaries(self):
         text = ("あいうえお\n\n" * 90) + ("abcdef\n" * 20)
         parts = local_files.split_body(text, 101)
@@ -784,20 +792,20 @@ class LocalFilesTest(unittest.TestCase):
         with self.assertRaisesRegex(local_files.LocalFilesError, "does not match"):
             local_files._load_embedding_journal(journal, changed, 3)
 
-    def test_openai_payload_environment_token_usage_log_and_secure_url(self):
+    def test_openai_payload_config_token_usage_log_and_secure_url(self):
         server = self.start_embedding_server()
         directory = self.base / "openai-settings"
         directory.mkdir()
         config = self.write_pipeline_config(
             directory,
             server,
-            extra='authorization_token_env = "LOCAL_FILES_TEST_KEY"\n[usage_log]\npath = "usage.jsonl"',
+            extra='authorization_token_env = "YAPPOD_TEST_OPENAI_TOKEN"\n[usage_log]\npath = "usage.jsonl"',
         )
         config.write_text(config.read_text(encoding="utf-8").replace(
             f'base_url = "http://127.0.0.1:{server.server_port}/v1"',
             'endpoint_url = "https://api.openai.com/v1/embeddings"',
         ), encoding="utf-8")
-        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": "secret"}):
+        with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "secret"}):
             settings = local_files.load_settings(config)
         assert settings.embedding is not None
         self.assertEqual(settings.embedding.authorization_token, "secret")
@@ -827,19 +835,24 @@ class LocalFilesTest(unittest.TestCase):
             "http://api.openai.com/v1/embeddings",
         )
         config.write_text(source, encoding="utf-8")
-        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": "secret"}):
-            with self.assertRaisesRegex(local_files.LocalFilesError, "must use https"):
-                local_files.load_settings(config)
+        with self.assertRaisesRegex(local_files.LocalFilesError, "must use https"):
+            local_files.load_settings(config)
 
+        with mock.patch.dict(os.environ, {"YAPPOD_TEST_OPENAI_TOKEN": "secret"}):
+            self.assertEqual(
+                local_files._authorization_token_from_env(
+                    {"authorization_token_env": "YAPPOD_TEST_OPENAI_TOKEN"}, "embedding"
+                ),
+                "secret",
+            )
         with self.assertRaisesRegex(local_files.LocalFilesError, "not supported"):
             local_files._authorization_token_from_env(
                 {"authorization_token": "plain-text-secret"}, "embedding"
             )
-        with mock.patch.dict(os.environ, {"LOCAL_FILES_TEST_KEY": ""}):
-            with self.assertRaisesRegex(local_files.LocalFilesError, "not set or empty"):
-                local_files._authorization_token_from_env(
-                    {"authorization_token_env": "LOCAL_FILES_TEST_KEY"}, "embedding"
-                )
+        with self.assertRaisesRegex(local_files.LocalFilesError, "environment variable name"):
+            local_files._authorization_token_from_env(
+                {"authorization_token_env": "contains space"}, "embedding"
+            )
 
     def test_service_url_allows_only_explicit_http_private_ranges(self):
         allowed = (

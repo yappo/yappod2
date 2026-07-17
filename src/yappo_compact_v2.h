@@ -13,6 +13,7 @@ typedef struct {
 
 void YAP_V2_compaction_result_init(YAP_V2_COMPACTION_RESULT *result);
 void YAP_V2_compaction_result_free(YAP_V2_COMPACTION_RESULT *result);
+void YAP_V2_compaction_set_failpoint_for_testing(const char *name);
 
 int YAP_V2_compact_gc(const char *index_dir, const YAP_V2_MANIFEST *manifest,
                       size_t *removed_segments);
