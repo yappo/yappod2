@@ -166,16 +166,15 @@ jobs:
         shell: bash
         run: |
           PREFIX="${RUNNER_TEMP}/yappod"
-          INDEX_DIR="$(mktemp -d)"
-          trap 'rm -rf "${INDEX_DIR}"' EXIT
+          WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "${WORK_DIR}"' EXIT
 
-          rmdir "${INDEX_DIR}"
+          cp examples/config.toml "${WORK_DIR}/config.toml"
           "${PREFIX}/bin/yappo_makeindex" build \
-            --config examples/config.toml \
-            --input examples/documents.ndjson \
-            --index "${INDEX_DIR}" >/dev/null
+            --config "${WORK_DIR}/config.toml" \
+            --input examples/documents.ndjson >/dev/null
           "${PREFIX}/bin/search" \
-            --index "${INDEX_DIR}" \
+            --config "${WORK_DIR}/config.toml" \
             --mode lexical \
             --query "modern search" | grep -q '"id":"doc-1"'
 
