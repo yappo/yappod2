@@ -292,21 +292,26 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   if (status != YAP_V2_OK) goto done;
   value = config->core_port;
   status = read_uint32(daemon, "core_port", &value, 1U, 65535U, 1, error, error_size);
-  if (status != YAP_V2_OK) goto done; config->core_port = (uint16_t)value;
+  if (status != YAP_V2_OK) goto done;
+  config->core_port = (uint16_t)value;
   status = read_string(daemon, "front_host", config->front_host, sizeof(config->front_host), 1, error, error_size);
   if (status != YAP_V2_OK) goto done;
   value = config->front_port;
   status = read_uint32(daemon, "front_port", &value, 1U, 65535U, 1, error, error_size);
-  if (status != YAP_V2_OK) goto done; config->front_port = (uint16_t)value;
+  if (status != YAP_V2_OK) goto done;
+  config->front_port = (uint16_t)value;
   value = (uint32_t)config->runtime_policy.max_inflight;
   status = read_uint32(daemon, "max_inflight", &value, 1U, 1024U, 0, error, error_size);
-  if (status != YAP_V2_OK) goto done; config->runtime_policy.max_inflight = value;
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.max_inflight = value;
   value = (uint32_t)config->runtime_policy.max_inflight_bytes;
   status = read_uint32(daemon, "max_inflight_bytes", &value, 1U, 1024U * 1024U * 1024U, 0, error, error_size);
-  if (status != YAP_V2_OK) goto done; config->runtime_policy.max_inflight_bytes = value;
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.max_inflight_bytes = value;
   value = config->runtime_policy.request_timeout_ms;
   status = read_uint32(daemon, "request_timeout_ms", &value, 1U, 60000U, 0, error, error_size);
-  if (status != YAP_V2_OK) goto done; config->runtime_policy.request_timeout_ms = value;
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.request_timeout_ms = value;
   token = toml_string_in(daemon, "write_token");
   if (!token.ok && toml_key_exists(daemon, "write_token")) { set_error(error, error_size, "daemon.write_token must be a string"); status = YAP_V2_INVALID_FORMAT; goto done; }
   if (token.ok) {
