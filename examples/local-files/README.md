@@ -6,8 +6,6 @@ canonical NDJSONへ変換し、必要に応じてpassage生成、embedding、ind
 shardはCLI内部のFIFOから既存の`yappo_makeindex build`へ1回だけ渡すため、shell scriptで連結する
 必要はありません。
 
-`yappo_makeindex`本体とそのCLIは変更せずに利用します。
-
 ## まず試す: yappod2 repository自身をindexにして検索する
 
 このrepository専用の[`local-files-yappod2.toml`](local-files-yappod2.toml)を用意しています。
@@ -54,7 +52,7 @@ examples/local-files/data/
 
 ```sh
 ./build/search \
-  --index examples/local-files/data/yappod2-index \
+  --config examples/local-files/local-files-yappod2.toml \
   --mode lexical \
   --scope documents \
   --query yappo_makeindex \
@@ -67,7 +65,7 @@ examples/local-files/data/
 ### Web UIで検索する
 
 `local-files-yappod2.toml`は収集・embedding・index生成だけでなく、daemonとWeb UIの設定も保持します。
-別のWeb専用設定fileや一般設定の環境変数overrideは使いません。Web依存関係を一度installしてから、同じ設定を指定します。
+Web依存関係を一度installしてから、同じ設定を指定します。
 
 ```sh
 cd examples/search-web
@@ -109,7 +107,7 @@ rm -rf examples/local-files/data
 examples/local-files/.venv/bin/python \
   examples/local-files/local_files.py all \
   --config examples/local-files/local-files-yappod2.toml \
-  --target hybrid
+  --target lexical
 ```
 
 ## targetと生成物
@@ -198,7 +196,24 @@ Tikaは自動downloadしません。
 
 ```toml
 schema_version = 1
+format_version = 2
 collection_id = "my-files"
+
+[index]
+directory = "./data/index"
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = false
+
+[metadata]
+filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [input]
 root = "/absolute/path/to/search-root"
@@ -216,9 +231,6 @@ directory = "./data/passages"
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
-index_config = "./config.lexical.toml"
-hybrid_index_config = "./config.hybrid.toml"
-index_directory = "./data/index"
 ```
 
 `collection_id`は1〜32文字の英数字、`.`、`_`、`-`で指定します。異なるcollectionの同じ相対pathが
@@ -252,12 +264,11 @@ path = "./data/api-usage.jsonl"
 - Ollamaでは通常`base_url = "http://127.0.0.1:11434"`とし、`/api/embed`を追加して呼び出します。
 - bearer tokenが必要なら、共有設定の`authorization_token_env`へtokenを保持する環境変数名を指定します。
   環境変数名が不正、またはtokenが未設定・空ならAPIを呼ぶ前に停止します。
-- `embedding.model_id`と`dimensions`は`config.hybrid.toml`の`[vector]`と一致させます。
-- lexical configとhybrid configの`[tokenizer]`、`[chunking]`も一致させます。異なる場合、CLIは
-  passage/vector ordinalの不整合を避けるため失敗します。
+- `embedding.model_id`と`dimensions`は同じ設定の`[vector]`と一致させます。
+- hybrid indexでは`[vector].enabled = true`にし、`model_id`、`dimensions`、`metric`を設定します。
 
 yappod2自身をhybrid化する場合は、`local-files-yappod2.toml`のplaceholder `model`、`model_id`、
-`dimensions`と、`config.hybrid.toml`の対応値を実際のembedding modelへ合わせてから実行します。
+`dimensions`と、同じfileの`[vector]`を実際のembedding modelへ合わせてから実行します。
 
 OpenAIの`text-embedding-3-small`を使う例です。OpenAI providerでは`dimensions`をAPI requestにも
 含めます。
@@ -300,7 +311,7 @@ examples/local-files/.venv/bin/python \
 
 ```sh
 ./build/search \
-  --index examples/local-files/data/yappod2-index \
+  --config examples/local-files/local-files-yappod2.toml \
   --mode hybrid \
   --scope documents \
   --query yappo_makeindex \

@@ -155,15 +155,20 @@ static void test_http_atomic_update_latest_wins_and_delete(void **state) {
 }
 
 static void test_cli_update_and_strict_batch_schema(void **state) {
-  ytest_env_t env; char input[PATH_MAX], executable[PATH_MAX]; ytest_cmd_result_t command;
+  ytest_env_t env; char input[PATH_MAX], executable[PATH_MAX], application[PATH_MAX], source[8192]; ytest_cmd_result_t command;
   char *argv[7]; const char *line = "{\"operation\":\"upsert\",\"id\":\"doc-cli\","
     "\"body\":\"hello\",\"vectors\":[[0,1]]}\n"; yyjson_doc *document;
   (void)state; assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
   assert_int_equal(ytest_path_join(input, sizeof(input), env.tmp_root, "operations.ndjson"), 0);
   assert_int_equal(ytest_write_file(input, line, strlen(line)), 0);
   assert_int_equal(ytest_path_join(executable, sizeof(executable), env.build_dir, "yappo_makeindex"), 0);
+  assert_int_equal(ytest_path_join(application, sizeof(application), env.tmp_root, "application.toml"), 0);
+  assert_true(snprintf(source, sizeof(source),
+    "schema_version=1\nformat_version=2\nindex.directory='%s'\n[tokenizer]\nid='unicode_nfkc_cf_v1'\n[chunking]\nmax_chars=5\noverlap_chars=0\n[vector]\nenabled=true\nmodel_id='test-2d'\ndimensions=2\nmetric='cosine'\n[metadata]\nfilterable_fields=['category']\n[daemon]\nrun_directory='%s/run'\ncore_host='127.0.0.1'\ncore_port=18401\nfront_host='127.0.0.1'\nfront_port=18400\n",
+    env.tmp_root, env.tmp_root) > 0);
+  assert_int_equal(ytest_write_file(application, source, strlen(source)), 0);
   argv[0] = executable; argv[1] = "update"; argv[2] = "--input"; argv[3] = input;
-  argv[4] = "--index"; argv[5] = env.tmp_root; argv[6] = NULL;
+  argv[4] = "--config"; argv[5] = application; argv[6] = NULL;
   ytest_cmd_result_init(&command); assert_int_equal(ytest_cmd_run(argv, NULL, NULL, 0U, &command), 0);
   assert_true(command.exited); assert_int_equal(command.exit_code, 0); assert_non_null(strstr(command.output, "\"generation\":2"));
   assert_non_null(strstr(command.output, "\"segment_ids\":["));

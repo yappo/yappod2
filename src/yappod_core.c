@@ -3,9 +3,11 @@
 #include "yappo_net.h"
 #include "yappo_observability_v2.h"
 #include "yappo_runtime_policy_v2.h"
+#include "yappo_application_config.h"
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -29,15 +31,17 @@ typedef struct {
 
 static volatile sig_atomic_t shutdown_requested = 0;
 static int listen_socket = -1;
-static const char *pid_file = "core.pid";
+static char pid_file[YAP_APPLICATION_PATH_BYTES] = "core.pid";
+static char log_file[YAP_APPLICATION_PATH_BYTES] = "core.log";
+static char error_file[YAP_APPLICATION_PATH_BYTES] = "core.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s --index INDEX_DIR [--config CONFIG] [--port PORT]\n"
+          "Usage: %s (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
-          "  --config CONFIG    Shared application TOML (optional)\n"
+          "  --config CONFIG    Shared application TOML\n"
           "  --port PORT        Internal frame port (default: %d)\n",
           program, DEFAULT_CORE_PORT);
 }
@@ -79,14 +83,38 @@ static int redirect_stream(FILE *stream, const char *path, const char *mode) {
   return fclose(opened);
 }
 
+static int mkdir_p(const char *path) {
+  char copy[YAP_APPLICATION_PATH_BYTES];
+  char *cursor;
+  size_t length = strlen(path);
+  if (length == 0U || length >= sizeof(copy)) return -1;
+  memcpy(copy, path, length + 1U);
+  for (cursor = copy + 1; *cursor != '\0'; cursor++) {
+    if (*cursor != '/') continue;
+    *cursor = '\0';
+    if (mkdir(copy, 0700) != 0 && errno != EEXIST) return -1;
+    *cursor = '/';
+  }
+  return mkdir(copy, 0700) == 0 || errno == EEXIST ? 0 : -1;
+}
+
+static int set_run_paths(const char *directory) {
+  if (mkdir_p(directory) != 0 ||
+      snprintf(pid_file, sizeof(pid_file), "%s/core.pid", directory) >= (int)sizeof(pid_file) ||
+      snprintf(log_file, sizeof(log_file), "%s/core.log", directory) >= (int)sizeof(log_file) ||
+      snprintf(error_file, sizeof(error_file), "%s/core.error", directory) >= (int)sizeof(error_file))
+    return -1;
+  return 0;
+}
+
 static int daemonize_process(void) {
   pid_t child = fork();
   FILE *file;
   if (child < 0) return -1;
   if (child > 0) return 1;
   if (setsid() < 0 || redirect_stream(stdin, "/dev/null", "r") != 0 ||
-      redirect_stream(stdout, "core.log", "a") != 0 ||
-      redirect_stream(stderr, "core.error", "a") != 0) return -1;
+      redirect_stream(stdout, log_file, "a") != 0 ||
+      redirect_stream(stderr, error_file, "a") != 0) return -1;
   file = fopen(pid_file, "w");
   if (file == NULL || fprintf(file, "%ld\n", (long)getpid()) < 0 || fclose(file) != 0)
     return -1;
@@ -94,24 +122,23 @@ static int daemonize_process(void) {
   return 0;
 }
 
-static int create_listener(int port) {
-  struct sockaddr_in address;
-  int descriptor, reuse = 1;
-  descriptor = socket(AF_INET, SOCK_STREAM, 0);
-  if (descriptor < 0 ||
-      setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
-    if (descriptor >= 0) (void)close(descriptor);
-    return -1;
+static int create_listener(const char *host, int port) {
+  struct addrinfo hints, *addresses = NULL, *address;
+  char port_text[16];
+  int descriptor = -1, reuse = 1;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; hints.ai_flags = AI_PASSIVE;
+  (void)snprintf(port_text, sizeof(port_text), "%d", port);
+  if (getaddrinfo(host, port_text, &hints, &addresses) != 0) return -1;
+  for (address = addresses; address != NULL; address = address->ai_next) {
+    descriptor = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
+    if (descriptor < 0) continue;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == 0 &&
+        bind(descriptor, address->ai_addr, address->ai_addrlen) == 0 &&
+        listen(descriptor, SOMAXCONN) == 0) break;
+    (void)close(descriptor); descriptor = -1;
   }
-  memset(&address, 0, sizeof(address));
-  address.sin_family = AF_INET;
-  address.sin_port = htons((unsigned short)port);
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-      listen(descriptor, SOMAXCONN) != 0) {
-    (void)close(descriptor);
-    return -1;
-  }
+  freeaddrinfo(addresses);
   return descriptor;
 }
 
@@ -255,8 +282,11 @@ static void *run_reloader(void *opaque) {
 
 int main(int argc, char **argv) {
   const char *index_dir = NULL, *config_path = NULL;
+  const char *listen_host = NULL;
+  YAP_APPLICATION_CONFIG application;
   int port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0};
+  int have_port = 0;
   YAP_V2_HTTP_RUNTIME http_runtime;
   pthread_t threads[CORE_WORKERS], reloader_thread;
   worker_t workers[CORE_WORKERS];
@@ -272,6 +302,7 @@ int main(int argc, char **argv) {
       if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
       if (strcmp(argv[i - 1], "--index") == 0) index_dir = argv[i]; else config_path = argv[i];
     } else if (strcmp(argv[i], "--port") == 0) {
+      have_port = 1;
       if (++i >= argc || parse_port(argv[i], &port) != 0) {
         usage(stderr, argv[0]);
         return EXIT_FAILURE;
@@ -282,20 +313,38 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   }
+  if (config_path != NULL && (index_dir != NULL || have_port)) {
+    fputs("--config cannot be combined with --index or --port\n", stderr);
+    return EXIT_FAILURE;
+  }
+  if (config_path != NULL) {
+    if (YAP_application_config_load(config_path, &application, policy_error,
+                                    sizeof(policy_error)) != YAP_V2_OK) {
+      fprintf(stderr, "Invalid application config: %s\n", policy_error);
+      return EXIT_FAILURE;
+    }
+    index_dir = application.index_directory;
+    listen_host = application.core_host;
+    port = application.core_port;
+    runtime_policy = application.runtime_policy;
+    if (set_run_paths(application.run_directory) != 0) {
+      fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
+      return EXIT_FAILURE;
+    }
+  } else {
+    YAP_V2_runtime_policy_init(&runtime_policy);
+  }
   if (index_dir == NULL || YAP_V2_http_runtime_open(&http_runtime, index_dir) != YAP_V2_OK) {
     fprintf(stderr, "Invalid v2 index\n");
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
-  if (YAP_V2_runtime_policy_load_config(&runtime_policy, config_path, policy_error,
-                                        sizeof(policy_error)) !=
-        YAP_V2_OK ||
-      YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
+  if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
-  listen_socket = create_listener(port);
+  listen_socket = create_listener(listen_host, port);
   if (listen_socket < 0) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_runtime_limiter_close(&runtime_limiter);

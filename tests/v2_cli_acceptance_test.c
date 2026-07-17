@@ -14,7 +14,10 @@
 #include "test_fs.h"
 
 static const char config_text[] =
+  "schema_version=1\n"
   "format_version=2\n"
+  "[index]\n"
+  "directory=\"./index\"\n"
   "[tokenizer]\n"
   "id=\"unicode_nfkc_cf_v1\"\n"
   "[chunking]\n"
@@ -26,7 +29,16 @@ static const char config_text[] =
   "dimensions=2\n"
   "metric=\"cosine\"\n"
   "[metadata]\n"
-  "filterable_fields=[\"category\"]\n";
+  "filterable_fields=[\"category\"]\n"
+  "[daemon]\n"
+  "run_directory=\"./run\"\n"
+  "core_host=\"127.0.0.1\"\n"
+  "core_port=18401\n"
+  "front_host=\"127.0.0.1\"\n"
+  "front_port=18400\n"
+  "write_token=\"0123456789abcdef-secure\"\n"
+  "[llm]\n"
+  "authorization_token_env=\"LLM_API_KEY\"\n";
 
 static const char documents[] =
   "{\"operation\":\"upsert\",\"id\":\"doc-red\","
@@ -48,6 +60,8 @@ static void run_command(char *const argv[], int expected_exit, const char *expec
   assert_int_equal(result.exit_code, expected_exit);
   if (expected_output != NULL) {
     assert_non_null(result.output);
+    if (strstr(result.output, expected_output) == NULL)
+      print_message("expected output containing %s, got: %s\n", expected_output, result.output);
     assert_non_null(strstr(result.output, expected_output));
   }
   ytest_cmd_result_free(&result);
@@ -65,26 +79,39 @@ static void test_build_and_all_search_modes(void **state) {
   ytest_env_t env;
   ytest_cmd_result_t build_result;
   char config[PATH_MAX], input[PATH_MAX], index[PATH_MAX];
-  char makeindex[PATH_MAX], search[PATH_MAX];
-  char *build_argv[9], *lexical_argv[9], *vector_argv[9], *hybrid_argv[11];
+  char makeindex[PATH_MAX], search[PATH_MAX], compact[PATH_MAX], update[PATH_MAX];
+  char *build_argv[7], *lexical_argv[9], *vector_argv[9], *hybrid_argv[11];
+  char stored_config[PATH_MAX];
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
   create_inputs(&env, config, input, index);
   assert_int_equal(ytest_path_join(makeindex, sizeof(makeindex), env.build_dir,
                                    "yappo_makeindex"), 0);
   assert_int_equal(ytest_path_join(search, sizeof(search), env.build_dir, "search"), 0);
+  assert_int_equal(ytest_path_join(compact, sizeof(compact), env.build_dir, "yappo_compact"), 0);
+  assert_int_equal(ytest_path_join(update, sizeof(update), env.tmp_root, "update.ndjson"), 0);
 
   build_argv[0] = makeindex; build_argv[1] = "build"; build_argv[2] = "--config";
   build_argv[3] = config; build_argv[4] = "--input"; build_argv[5] = input;
-  build_argv[6] = "--index"; build_argv[7] = index; build_argv[8] = NULL;
+  build_argv[6] = NULL;
   ytest_cmd_result_init(&build_result);
   assert_int_equal(ytest_cmd_run(build_argv, NULL, NULL, 0U, &build_result), 0);
   assert_true(build_result.exited); assert_int_equal(build_result.exit_code, 0);
   assert_non_null(strstr(build_result.output, "\"accepted\":2"));
   assert_null(strstr(build_result.output, "segment_id"));
   ytest_cmd_result_free(&build_result);
+  assert_int_equal(ytest_path_join(stored_config, sizeof(stored_config), index, "config.toml"), 0);
+  {
+    char *saved = NULL; size_t saved_bytes = 0U;
+    assert_int_equal(ytest_read_file(stored_config, &saved, &saved_bytes), 0);
+    assert_non_null(strstr((char *)saved, "[tokenizer]"));
+    assert_null(strstr((char *)saved, "daemon"));
+    assert_null(strstr((char *)saved, "write_token"));
+    assert_null(strstr((char *)saved, "authorization_token_env"));
+    free(saved);
+  }
 
-  lexical_argv[0] = search; lexical_argv[1] = "--index"; lexical_argv[2] = index;
+  lexical_argv[0] = search; lexical_argv[1] = "--config"; lexical_argv[2] = config;
   lexical_argv[3] = "--mode"; lexical_argv[4] = "lexical";
   lexical_argv[5] = "--query"; lexical_argv[6] = "scarlet";
   lexical_argv[7] = NULL;
@@ -102,14 +129,25 @@ static void test_build_and_all_search_modes(void **state) {
   hybrid_argv[7] = "--vector"; hybrid_argv[8] = "1,0";
   hybrid_argv[9] = NULL;
   run_command(hybrid_argv, 0, "\"results\":[{\"id\":\"doc-red\"");
+  assert_int_equal(ytest_write_file(update,
+    "{\"operation\":\"upsert\",\"id\":\"doc-green\",\"url\":\"https://example.test/green\",\"title\":\"Green\",\"body\":\"emerald notes\",\"metadata\":{\"category\":\"guide\"},\"vectors\":[[1,0]]}\n",
+    strlen("{\"operation\":\"upsert\",\"id\":\"doc-green\",\"url\":\"https://example.test/green\",\"title\":\"Green\",\"body\":\"emerald notes\",\"metadata\":{\"category\":\"guide\"},\"vectors\":[[1,0]]}\n")), 0);
+  {
+    char *update_argv[] = {makeindex, "update", "--config", config, "--input", update, NULL};
+    char *verify_argv[] = {makeindex, "verify", "--config", config, NULL};
+    char *compact_argv[] = {compact, "--config", config, NULL};
+    run_command(update_argv, 0, "\"generation\":3");
+    run_command(verify_argv, 0, "verified generation=3");
+    run_command(compact_argv, 0, "\"generation\":4");
+  }
   ytest_env_destroy(&env);
 }
 
 static void test_build_is_atomic_and_legacy_cli_is_rejected(void **state) {
   ytest_env_t env;
   char config[PATH_MAX], input[PATH_MAX], index[PATH_MAX], invalid[PATH_MAX];
-  char makeindex[PATH_MAX], search[PATH_MAX], marker[PATH_MAX];
-  char *invalid_argv[9], *legacy_build[6], *legacy_search[5];
+  char makeindex[PATH_MAX], search[PATH_MAX], compact[PATH_MAX], core[PATH_MAX], front[PATH_MAX], marker[PATH_MAX];
+  char *invalid_argv[7], *mixed_build[9], *legacy_build[6], *legacy_search[5];
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
   create_inputs(&env, config, input, index);
@@ -118,10 +156,13 @@ static void test_build_is_atomic_and_legacy_cli_is_rejected(void **state) {
   assert_int_equal(ytest_path_join(makeindex, sizeof(makeindex), env.build_dir,
                                    "yappo_makeindex"), 0);
   assert_int_equal(ytest_path_join(search, sizeof(search), env.build_dir, "search"), 0);
+  assert_int_equal(ytest_path_join(core, sizeof(core), env.build_dir, "yappod_core"), 0);
+  assert_int_equal(ytest_path_join(front, sizeof(front), env.build_dir, "yappod_front"), 0);
+  assert_int_equal(ytest_path_join(compact, sizeof(compact), env.build_dir, "yappo_compact"), 0);
 
   invalid_argv[0] = makeindex; invalid_argv[1] = "build"; invalid_argv[2] = "--config";
   invalid_argv[3] = config; invalid_argv[4] = "--input"; invalid_argv[5] = invalid;
-  invalid_argv[6] = "--index"; invalid_argv[7] = index; invalid_argv[8] = NULL;
+  invalid_argv[6] = NULL;
   run_command(invalid_argv, 1, "Build failed");
   assert_int_equal(access(index, F_OK), -1);
 
@@ -131,6 +172,22 @@ static void test_build_is_atomic_and_legacy_cli_is_rejected(void **state) {
   invalid_argv[5] = input;
   run_command(invalid_argv, 1, "already exists");
   assert_int_equal(access(marker, F_OK), 0);
+
+  mixed_build[0] = makeindex; mixed_build[1] = "build"; mixed_build[2] = "--config";
+  mixed_build[3] = config; mixed_build[4] = "--input"; mixed_build[5] = input;
+  mixed_build[6] = "--index"; mixed_build[7] = index; mixed_build[8] = NULL;
+  run_command(mixed_build, 1, "Usage:");
+  {
+    char *mixed_search[] = {search, "--config", config, "--index", index,
+                            "--mode", "lexical", "--query", "x", NULL};
+    char *mixed_core[] = {core, "--config", config, "--port", "18401", NULL};
+    char *mixed_front[] = {front, "--config", config, "--core-host", "127.0.0.1", NULL};
+    char *mixed_compact[] = {compact, "--config", config, "--index", index, NULL};
+    run_command(mixed_search, 1, "Usage:");
+    run_command(mixed_core, 1, "cannot be combined");
+    run_command(mixed_front, 1, "cannot be combined");
+    run_command(mixed_compact, 1, "Usage:");
+  }
 
   legacy_build[0] = makeindex; legacy_build[1] = "-f"; legacy_build[2] = input;
   legacy_build[3] = "-d"; legacy_build[4] = index; legacy_build[5] = NULL;

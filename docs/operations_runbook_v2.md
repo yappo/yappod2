@@ -17,9 +17,8 @@ write_token = "replace-with-at-least-16-bytes"
 ```
 
 ```sh
-yappod_core --index /srv/yappod/index --config /srv/yappod/application.toml --port 18401
-yappod_front --index /srv/yappod/index --core-host 127.0.0.1 \
-  --config /srv/yappod/application.toml --port 18400 --core-port 18401
+yappod_core --config /srv/yappod/config.toml
+yappod_front --config /srv/yappod/config.toml
 ```
 
 停止時はfrontをロードバランサから外し、`/health/ready`への新規probeを止めてからfront、coreの
@@ -34,7 +33,7 @@ yappod_front --index /srv/yappod/index --core-host 127.0.0.1 \
 
 ready responseにはmanifest `generation`、segment数、embedding状態、compaction状態を含みます。
 probeごとに全component checksumを再計算しません。全検証は
-`yappo_makeindex verify --index /srv/yappod/index`を監視またはcronから実行します。
+`yappo_makeindex verify --config /srv/yappod/config.toml`を監視またはcronから実行します。
 index破損やcore不通時もlivenessは`200`のまま、readinessだけが`503`になります。ロードバランサは
 `/health/ready`、process supervisorは`/health/live`を使用してください。
 
@@ -78,7 +77,7 @@ hardware で採取した release benchmark に従って固定します。
 確認します。compactionはwriter lockでupdateと直列化されます。
 
 ```sh
-yappo_compact --index /srv/yappod/index
+yappo_compact --config /srv/yappod/config.toml
 curl -fsS http://127.0.0.1:18400/health/ready
 curl -fsS http://127.0.0.1:18400/metrics | grep yappod_v2_compaction
 ```

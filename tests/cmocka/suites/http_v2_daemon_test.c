@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <cmocka.h>
 #include "test_env.h"
 #include "test_fs.h"
@@ -148,8 +149,10 @@ static void test_front_core_atomic_nrt_updates(void **state) {
 }
 
 static void test_write_token_protects_daemon_ingest(void **state) {
-  context_t *ctx=*state; char *response; const char *body =
+  context_t *ctx=*state; char *response; char path[PATH_MAX]; const char *body =
     "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-secure\",\"body\":\"secureword\",\"vectors\":[[1,0]]}]}";
+  assert_int_equal(ytest_path_join(path,sizeof(path),ctx->run,"core.log"),0);assert_int_equal(access(path,F_OK),0);
+  assert_int_equal(ytest_path_join(path,sizeof(path),ctx->run,"front.log"),0);assert_int_equal(access(path,F_OK),0);
   response=post(ctx,"/v2/documents:batch",body);
   assert_non_null(strstr(response,"401 Unauthorized"));free(response);
   response=post_authorized(ctx,"/v2/documents:batch",body,"Bearer wrong-token");

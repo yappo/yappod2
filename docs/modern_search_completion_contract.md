@@ -79,10 +79,10 @@ GET  /metrics
 
 ```text
 yappo_makeindex prepare --config config.toml --input documents.ndjson --output passages.ndjson
-yappo_makeindex build --config config.toml --input documents.ndjson --index <dir>
-yappo_makeindex update --input operations.ndjson --index <dir>
-search --index <dir> --mode lexical|vector|hybrid --query <text>
-yappo_compact --index <dir>
+yappo_makeindex build --config config.toml --input documents.ndjson
+yappo_makeindex update --config config.toml --input operations.ndjson
+search --config config.toml --mode lexical|vector|hybrid --query <text>
+yappo_compact --config config.toml
 ```
 
 canonical入力はNDJSONとし、現行TSVは明示指定された入力adapterとしてだけ残します。

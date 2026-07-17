@@ -258,7 +258,8 @@ export async function loadWebConfig(path = defaultConfigPath()): Promise<WebConf
     throw new Error(`invalid shared config: ${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
   onlyKeys(root, [
-    "schema_version", "collection_id", "input", "output", "prepare", "embedding", "usage_log",
+    "schema_version", "format_version", "collection_id", "index", "tokenizer", "chunking",
+    "vector", "metadata", "input", "output", "prepare", "embedding", "usage_log",
     "build", "extract", "formatters", "daemon", "web", "llm", "mock",
   ], "config");
   const configDir = dirname(path);
@@ -267,10 +268,11 @@ export async function loadWebConfig(path = defaultConfigPath()): Promise<WebConf
   const usageLogPath = usageLog.path === undefined
     ? undefined
     : resolve(configDir, requiredString(usageLog.path, "usage_log.path"));
-  const build = optionalTable(root.build, "build");
-  const indexDirectory = build.index_directory === undefined
+  const index = optionalTable(root.index, "index");
+  onlyKeys(index, ["directory"], "index");
+  const indexDirectory = index.directory === undefined
     ? undefined
-    : resolve(configDir, requiredString(build.index_directory, "build.index_directory"));
+    : resolve(configDir, requiredString(index.directory, "index.directory"));
   return {
     daemon: daemonConfig(root.daemon, configDir),
     web: webServerConfig(root.web),

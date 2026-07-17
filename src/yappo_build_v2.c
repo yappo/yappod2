@@ -1,6 +1,7 @@
 #include "yappo_build_v2.h"
 
 #include "yappo_config_v2.h"
+#include "yappo_application_config.h"
 #include "yappo_ingest.h"
 #include "yappo_manifest_v2.h"
 #include "yappo_update_v2.h"
@@ -17,33 +18,6 @@
 static int join_path(char *output, size_t capacity, const char *left, const char *right) {
   int written = snprintf(output, capacity, "%s/%s", left, right);
   return written < 0 || (size_t)written >= capacity ? -1 : 0;
-}
-
-static int copy_file(const char *source, const char *destination) {
-  unsigned char buffer[65536];
-  int input = -1, output = -1, status = -1;
-  input = open(source, O_RDONLY);
-  if (input < 0) return -1;
-  output = open(destination, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (output < 0) goto done;
-  for (;;) {
-    ssize_t count = read(input, buffer, sizeof(buffer));
-    size_t offset = 0U;
-    if (count < 0) { if (errno == EINTR) continue; goto done; }
-    if (count == 0) break;
-    while (offset < (size_t)count) {
-      ssize_t written = write(output, buffer + offset, (size_t)count - offset);
-      if (written < 0) { if (errno == EINTR) continue; goto done; }
-      if (written == 0) goto done;
-      offset += (size_t)written;
-    }
-  }
-  if (fsync(output) != 0) goto done;
-  status = 0;
-done:
-  if (input >= 0 && close(input) != 0) status = -1;
-  if (output >= 0 && close(output) != 0) status = -1;
-  return status;
 }
 
 static int remove_tree(const char *path) {
@@ -166,18 +140,16 @@ static int ingest_stream(const char *input_path, const char *index_dir,
   return status;
 }
 
-static int build_index(const char *config_path, const char *input_path,
+static int build_index(const YAP_APPLICATION_CONFIG *application, const char *input_path,
                        const char *index_dir, uint64_t *generation, size_t *accepted,
                        char *error, size_t error_size) {
-  YAP_V2_CONFIG config;
+  const YAP_V2_CONFIG *config = &application->index_config;
   YAP_V2_MANIFEST manifest;
   struct stat info;
   char *temporary;
   char copied_config[4096], manifest_path[4096], segments_path[4096];
   size_t length;
   int status = YAP_V2_IO_ERROR;
-  status = YAP_V2_config_load(config_path, &config, error, error_size);
-  if (status != YAP_V2_OK) return status;
   if (lstat(index_dir, &info) == 0 || errno != ENOENT) {
     (void)snprintf(error, error_size, "index path already exists");
     return YAP_V2_CONFLICT;
@@ -191,13 +163,15 @@ static int build_index(const char *config_path, const char *input_path,
       join_path(copied_config, sizeof(copied_config), temporary, "config.toml") != 0 ||
       join_path(manifest_path, sizeof(manifest_path), temporary, "manifest.json") != 0 ||
       join_path(segments_path, sizeof(segments_path), temporary, "segments") != 0 ||
-      copy_file(config_path, copied_config) != 0 || mkdir(segments_path, 0700) != 0) {
+      mkdir(segments_path, 0700) != 0) {
     (void)snprintf(error, error_size, "cannot initialize index: %s", strerror(errno));
     goto done;
   }
+  status = YAP_V2_config_save(copied_config, config, error, error_size);
+  if (status != YAP_V2_OK) goto done;
   YAP_V2_manifest_init(&manifest);
   manifest.generation = 1U;
-  status = YAP_V2_config_fingerprint(&config, manifest.config_fingerprint);
+  status = YAP_V2_config_fingerprint(config, manifest.config_fingerprint);
   if (status == YAP_V2_OK) status = YAP_V2_manifest_save_atomic(manifest_path, &manifest);
   YAP_V2_manifest_free(&manifest);
   if (status == YAP_V2_OK)
@@ -218,7 +192,8 @@ done:
 }
 
 int YAP_V2_build_main(int argc, char **argv) {
-  const char *config_path = NULL, *input_path = NULL, *index_dir = NULL;
+  const char *config_path = NULL, *input_path = NULL, *index_option = NULL;
+  YAP_APPLICATION_CONFIG application;
   uint64_t generation = 0U;
   size_t accepted = 0U;
   char error[256] = {0};
@@ -227,17 +202,22 @@ int YAP_V2_build_main(int argc, char **argv) {
     const char **target;
     if (strcmp(argv[i], "--config") == 0) target = &config_path;
     else if (strcmp(argv[i], "--input") == 0) target = &input_path;
-    else if (strcmp(argv[i], "--index") == 0) target = &index_dir;
+    else if (strcmp(argv[i], "--index") == 0) target = &index_option;
     else { fprintf(stderr, "Unknown build option: %s\n", argv[i]); return EXIT_FAILURE; }
     if (++i >= argc) { fputs("Missing build option value\n", stderr); return EXIT_FAILURE; }
     *target = argv[i];
   }
-  if (config_path == NULL || input_path == NULL || index_dir == NULL) {
-    fputs("Usage: yappo_makeindex build --config CONFIG --input documents.ndjson "
-          "--index INDEX_DIR\n", stderr);
+  if (config_path == NULL || input_path == NULL || index_option != NULL) {
+    fputs("Usage: yappo_makeindex build --config CONFIG --input documents.ndjson\n", stderr);
     return EXIT_FAILURE;
   }
-  status = build_index(config_path, input_path, index_dir, &generation, &accepted,
+  status = YAP_application_config_load(config_path, &application, error, sizeof(error));
+  if (status != YAP_V2_OK) {
+    fprintf(stderr, "Config error: %s\n", error);
+    return EXIT_FAILURE;
+  }
+  status = build_index(&application, input_path, application.index_directory,
+                       &generation, &accepted,
                        error, sizeof(error));
   if (status != YAP_V2_OK) {
     fprintf(stderr, "Build failed: %s (%s)\n", error, YAP_V2_status_string(status));

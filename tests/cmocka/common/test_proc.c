@@ -247,15 +247,15 @@ static int launch_core_daemon(const char *bin_path, const char *index_dir, int c
 
   ytest_cmd_result_init(&result);
   argv_core[0] = (char *)bin_path;
-  argv_core[1] = "--index";
-  argv_core[2] = (char *)index_dir;
-  argv_core[3] = "--port";
-  argv_core[4] = core_port_str;
   if (config_path != NULL) {
-    argv_core[5] = "--config";
-    argv_core[6] = (char *)config_path;
-    argv_core[7] = NULL;
+    argv_core[1] = "--config";
+    argv_core[2] = (char *)config_path;
+    argv_core[3] = NULL;
   } else {
+    argv_core[1] = "--index";
+    argv_core[2] = (char *)index_dir;
+    argv_core[3] = "--port";
+    argv_core[4] = core_port_str;
     argv_core[5] = NULL;
   }
 
@@ -296,19 +296,19 @@ static int launch_front_daemon(const char *bin_path, const char *index_dir, cons
 
   ytest_cmd_result_init(&result);
   argv_front[0] = (char *)bin_path;
-  argv_front[1] = "--index";
-  argv_front[2] = (char *)index_dir;
-  argv_front[3] = "--core-host";
-  argv_front[4] = (char *)server;
-  argv_front[5] = "--port";
-  argv_front[6] = front_port_str;
-  argv_front[7] = "--core-port";
-  argv_front[8] = core_port_str;
   if (config_path != NULL) {
-    argv_front[9] = "--config";
-    argv_front[10] = (char *)config_path;
-    argv_front[11] = NULL;
+    argv_front[1] = "--config";
+    argv_front[2] = (char *)config_path;
+    argv_front[3] = NULL;
   } else {
+    argv_front[1] = "--index";
+    argv_front[2] = (char *)index_dir;
+    argv_front[3] = "--core-host";
+    argv_front[4] = (char *)server;
+    argv_front[5] = "--port";
+    argv_front[6] = front_port_str;
+    argv_front[7] = "--core-port";
+    argv_front[8] = core_port_str;
     argv_front[9] = NULL;
   }
 
@@ -327,6 +327,45 @@ static int launch_front_daemon(const char *bin_path, const char *index_dir, cons
   return 0;
 }
 
+static int write_application_config(const char *path, const char *index_dir,
+                                    const char *run_dir, int core_port, int front_port,
+                                    const char *policy_path) {
+  char index_config_path[PATH_MAX];
+  char *index_config = NULL, *policy = NULL, *policy_fields = NULL;
+  size_t index_bytes = 0U, policy_bytes = 0U;
+  FILE *file = NULL;
+  int status = -1;
+  if (ytest_path_join(index_config_path, sizeof(index_config_path), index_dir,
+                      "config.toml") != 0 ||
+      ytest_read_file(index_config_path, &index_config, &index_bytes) != 0)
+    goto done;
+  if (policy_path != NULL) {
+    if (ytest_read_file(policy_path, &policy, &policy_bytes) != 0) goto done;
+    policy_fields = strstr(policy, "[daemon]");
+    if (policy_fields != NULL) {
+      policy_fields = strchr(policy_fields, '\n');
+      if (policy_fields != NULL) policy_fields++;
+    }
+  }
+  file = fopen(path, "w");
+  if (file == NULL ||
+      fprintf(file, "schema_version=1\nindex.directory='%s'\n", index_dir) < 0 ||
+      fwrite(index_config, 1U, index_bytes, file) != index_bytes ||
+      fprintf(file, "\n[daemon]\nrun_directory='%s'\ncore_host='127.0.0.1'\n"
+                    "core_port=%d\nfront_host='127.0.0.1'\nfront_port=%d\n",
+              run_dir, core_port, front_port) < 0 ||
+      (policy_fields != NULL && fputs(policy_fields, file) < 0) || fclose(file) != 0) {
+    file = NULL;
+    goto done;
+  }
+  file = NULL;
+  status = 0;
+done:
+  if (file != NULL) fclose(file);
+  free(index_config); free(policy);
+  return status;
+}
+
 int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char *build_dir,
                                          const char *index_dir, const char *run_dir,
                                          const char *config_path) {
@@ -334,6 +373,7 @@ int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char
   char front_bin[PATH_MAX];
   char core_pid_path[PATH_MAX];
   char front_pid_path[PATH_MAX];
+  char application_config_path[PATH_MAX];
   int attempt;
   int last_errno = EADDRINUSE;
 
@@ -356,6 +396,8 @@ int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char
 
   if (ytest_path_join(core_bin, sizeof(core_bin), build_dir, "yappod_core") != 0 ||
       ytest_path_join(front_bin, sizeof(front_bin), build_dir, "yappod_front") != 0 ||
+      ytest_path_join(application_config_path, sizeof(application_config_path), stack->run_dir,
+                      "application.toml") != 0 ||
       ytest_path_join(core_pid_path, sizeof(core_pid_path), stack->run_dir, "core.pid") != 0 ||
       ytest_path_join(front_pid_path, sizeof(front_pid_path), stack->run_dir, "front.pid") !=
         0) {
@@ -401,13 +443,20 @@ int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char
     fprintf(stderr, "[TEST] daemon attempt=%d core_port=%d front_port=%d\n", attempt + 1,
             stack->core_port, stack->front_port);
 
-    if (launch_core_daemon(core_bin, index_dir, stack->core_port, stack->run_dir,
-                           config_path) == 0 &&
+    if (config_path != NULL &&
+        write_application_config(application_config_path, index_dir, stack->run_dir,
+                                 stack->core_port, stack->front_port, config_path) != 0)
+      return -1;
+
+    if (launch_core_daemon(core_bin, index_dir, stack->core_port,
+                           config_path == NULL ? stack->run_dir : index_dir,
+                           config_path == NULL ? NULL : application_config_path) == 0 &&
         ytest_read_pid_file(stack->run_dir, "core.pid", 100, 20, &stack->core_pid) == 0 &&
         kill(stack->core_pid, 0) == 0 &&
         ytest_wait_for_port(stack->core_port, 50, 100) == 0 &&
         launch_front_daemon(front_bin, index_dir, "127.0.0.1", stack->front_port,
-                            stack->core_port, stack->run_dir, config_path) == 0 &&
+                            stack->core_port, config_path == NULL ? stack->run_dir : index_dir,
+                            config_path == NULL ? NULL : application_config_path) == 0 &&
         ytest_read_pid_file(stack->run_dir, "front.pid", 100, 20, &stack->front_pid) == 0 &&
         kill(stack->front_pid, 0) == 0 &&
         ytest_wait_for_port(stack->front_port, 50, 100) == 0 &&

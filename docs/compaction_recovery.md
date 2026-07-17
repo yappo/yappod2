@@ -7,7 +7,7 @@ ANNを同じgenerationで再生成するため、compaction後もlexical/vector/
 の結果を維持します。
 
 ```sh
-yappo_compact --index /tmp/yappoindex-v2
+yappo_compact --config /path/to/config.toml
 ```
 
 成功時は新generation、live document/passage数、削除したsegment数、新segment IDをJSONで返します。

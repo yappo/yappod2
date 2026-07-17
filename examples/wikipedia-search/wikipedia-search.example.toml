@@ -1,11 +1,25 @@
 schema_version = 1
+format_version = 2
+
+[index]
+directory = "./index"
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = false
+
+[metadata]
+filterable_fields = ["language", "source"]
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
 input = "./data/documents.ndjson"
-index_config = "./config.toml"
-hybrid_index_config = "./config.vector.toml"
-index_directory = "./index"
 
 [daemon]
 run_directory = "./run"

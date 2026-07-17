@@ -1,4 +1,5 @@
 #include "yappo_http_v2.h"
+#include "yappo_application_config.h"
 
 #include <errno.h>
 #include <float.h>
@@ -11,6 +12,7 @@
 
 typedef struct {
   const char *index_dir;
+  const char *config_path;
   const char *mode;
   const char *query;
   const char *scope;
@@ -19,7 +21,7 @@ typedef struct {
 } options_t;
 
 static void usage(FILE *output) {
-  fputs("Usage: search --index INDEX_DIR --mode lexical|vector|hybrid "
+  fputs("Usage: search (--config CONFIG | --index INDEX_DIR) --mode lexical|vector|hybrid "
         "[--query TEXT] [--vector N,N,...] [--scope documents|passages] "
         "[--limit 1..100]\n",
         output);
@@ -46,6 +48,7 @@ static int parse_options(int argc, char **argv, options_t *options) {
     const char **target = NULL;
     if (strcmp(name, "--help") == 0 || strcmp(name, "-h") == 0) return 1;
     if (strcmp(name, "--index") == 0) target = &options->index_dir;
+    else if (strcmp(name, "--config") == 0) target = &options->config_path;
     else if (strcmp(name, "--mode") == 0) target = &options->mode;
     else if (strcmp(name, "--query") == 0) target = &options->query;
     else if (strcmp(name, "--scope") == 0) target = &options->scope;
@@ -57,7 +60,7 @@ static int parse_options(int argc, char **argv, options_t *options) {
     if (++i >= argc) return -1;
     *target = argv[i];
   }
-  if (options->index_dir == NULL || options->mode == NULL ||
+  if ((options->index_dir == NULL) == (options->config_path == NULL) || options->mode == NULL ||
       (strcmp(options->mode, "lexical") != 0 && strcmp(options->mode, "vector") != 0 &&
        strcmp(options->mode, "hybrid") != 0) ||
       (strcmp(options->scope, "documents") != 0 && strcmp(options->scope, "passages") != 0) ||
@@ -112,12 +115,22 @@ static char *make_request(const options_t *options, size_t *request_bytes) {
 
 int main(int argc, char **argv) {
   options_t options;
+  YAP_APPLICATION_CONFIG application;
+  char config_error[256] = {0};
   char *request, *response = NULL;
   size_t request_bytes = 0U, response_bytes = 0U;
   int parsed, http_status = 0;
   parsed = parse_options(argc, argv, &options);
   if (parsed == 1) { usage(stdout); return EXIT_SUCCESS; }
   if (parsed != 0) { usage(stderr); return EXIT_FAILURE; }
+  if (options.config_path != NULL) {
+    if (YAP_application_config_load(options.config_path, &application, config_error,
+                                    sizeof(config_error)) != YAP_V2_OK) {
+      fprintf(stderr, "Config error: %s\n", config_error);
+      return EXIT_FAILURE;
+    }
+    options.index_dir = application.index_directory;
+  }
   request = make_request(&options, &request_bytes);
   if (request == NULL) {
     fputs("Invalid query vector\n", stderr);

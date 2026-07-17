@@ -135,8 +135,6 @@ class Settings:
     vector_dir: Optional[Path]
     embedding: Optional[EmbeddingConfig]
     yappo_makeindex: Optional[Path]
-    index_config: Optional[Path]
-    hybrid_index_config: Optional[Path]
     index_dir: Optional[Path]
     usage_log_path: Optional[Path]
     config_fingerprint: str
@@ -371,6 +369,7 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
     prepare_table = _expect_table(data.get("prepare"), "prepare")
     embedding_table = _expect_table(data.get("embedding"), "embedding")
     build_table = _expect_table(data.get("build"), "build")
+    index_table = _expect_table(data.get("index"), "index")
     usage_log_table = _expect_table(data.get("usage_log"), "usage_log")
     root = _resolve(config_dir, input_table.get("root"), "input.root")
     output_dir = _resolve(config_dir, output_table.get("directory"), "output.directory")
@@ -487,13 +486,13 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
         config_dir, embedding_table.get("directory"), "embedding.directory"
     )
     index_dir = _optional_resolve(
-        config_dir, build_table.get("index_directory"), "build.index_directory"
+        config_dir, index_table.get("directory"), "index.directory"
     )
     stage_directories = {
         "output.directory": output_dir,
         "prepare.directory": passage_dir,
         "embedding.directory": vector_dir,
-        "build.index_directory": index_dir,
+        "index.directory": index_dir,
     }
     configured_directories = [
         (name, path) for name, path in stage_directories.items() if path is not None
@@ -545,12 +544,6 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
         embedding=embedding,
         yappo_makeindex=_optional_resolve(
             config_dir, build_table.get("yappo_makeindex"), "build.yappo_makeindex"
-        ),
-        index_config=_optional_resolve(
-            config_dir, build_table.get("index_config"), "build.index_config"
-        ),
-        hybrid_index_config=_optional_resolve(
-            config_dir, build_table.get("hybrid_index_config"), "build.hybrid_index_config"
         ),
         index_dir=index_dir,
         usage_log_path=usage_log_path,
@@ -1282,11 +1275,11 @@ def _file_sha256_for_manifest(path: Path) -> str:
         raise LocalFilesError(f"cannot checksum {path}: {error.message}") from error
 
 
-def _prepare_fingerprint(settings: Settings, index_config: Path) -> str:
+def _prepare_fingerprint(settings: Settings, application_config: Path) -> str:
     digest = hashlib.sha256()
     digest.update(settings.config_fingerprint.encode("ascii"))
     digest.update(b"\0prepare\0")
-    digest.update(_file_sha256_for_manifest(index_config).encode("ascii"))
+    digest.update(_file_sha256_for_manifest(application_config).encode("ascii"))
     return digest.hexdigest()
 
 
@@ -1324,7 +1317,7 @@ def _consume_passage_fifo(
 
 def _run_prepare_shard(
     yappo_makeindex: Path,
-    index_config: Path,
+    application_config: Path,
     document_shard: Path,
     stage: Path,
     ordinal: int,
@@ -1355,7 +1348,7 @@ def _run_prepare_shard(
                         str(yappo_makeindex),
                         "prepare",
                         "--config",
-                        str(index_config),
+                        str(application_config),
                         "--input",
                         str(document_shard),
                         "--output",
@@ -1400,12 +1393,10 @@ def prepare_passages(settings: Settings) -> Dict[str, Any]:
         raise LocalFilesError("prepare.directory is required")
     if settings.yappo_makeindex is None:
         raise LocalFilesError("build.yappo_makeindex is required")
-    if settings.index_config is None:
-        raise LocalFilesError("build.index_config is required for prepare")
     if not settings.yappo_makeindex.is_file() or not os.access(settings.yappo_makeindex, os.X_OK):
         raise LocalFilesError(f"yappo_makeindex is not executable: {settings.yappo_makeindex}")
-    if not settings.index_config.is_file():
-        raise LocalFilesError(f"index config does not exist: {settings.index_config}")
+    if not settings.config_path.is_file():
+        raise LocalFilesError(f"application config does not exist: {settings.config_path}")
     if settings.passage_dir.exists():
         raise LocalFilesError(f"passage directory already exists: {settings.passage_dir}")
     documents_manifest, document_shards = _load_documents_manifest(settings)
@@ -1420,7 +1411,7 @@ def prepare_passages(settings: Settings) -> Dict[str, Any]:
         for ordinal, document_shard in enumerate(document_shards, 1):
             _run_prepare_shard(
                 settings.yappo_makeindex,
-                settings.index_config,
+                settings.config_path,
                 document_shard,
                 stage,
                 ordinal,
@@ -1434,7 +1425,7 @@ def prepare_passages(settings: Settings) -> Dict[str, Any]:
             "stage": "prepare",
             "target": "rag",
             "collection_id": settings.collection_id,
-            "config_fingerprint": _prepare_fingerprint(settings, settings.index_config),
+            "config_fingerprint": _prepare_fingerprint(settings, settings.config_path),
             "source_manifest_sha256": _file_sha256_for_manifest(
                 settings.output_dir / "manifest.json"
             ),
@@ -1471,9 +1462,7 @@ def _load_passage_manifest(settings: Settings) -> Tuple[Dict[str, Any], List[Pat
         raise LocalFilesError("passage manifest schema or stage does not match")
     if value.get("target") != "rag" or value.get("collection_id") != settings.collection_id:
         raise LocalFilesError("passage manifest target or collection does not match")
-    if settings.index_config is None:
-        raise LocalFilesError("build.index_config is required")
-    if value.get("config_fingerprint") != _prepare_fingerprint(settings, settings.index_config):
+    if value.get("config_fingerprint") != _prepare_fingerprint(settings, settings.config_path):
         raise LocalFilesError("passage manifest config fingerprint does not match config")
     expected_source = _file_sha256_for_manifest(settings.output_dir / "manifest.json")
     if value.get("source_manifest_sha256") != expected_source:
@@ -1665,32 +1654,21 @@ def _embedding_batch(config: EmbeddingConfig, inputs: Sequence[str]) -> List[Lis
     return [value for value in ordered if value is not None]
 
 
-def _validate_hybrid_index_config(settings: Settings, embedding: EmbeddingConfig) -> str:
-    if settings.hybrid_index_config is None or not settings.hybrid_index_config.is_file():
-        raise LocalFilesError("build.hybrid_index_config is required")
+def _validate_hybrid_application_config(settings: Settings, embedding: EmbeddingConfig) -> str:
+    if not settings.config_path.is_file():
+        raise LocalFilesError("application config is required")
     try:
-        data = tomllib.loads(settings.hybrid_index_config.read_text(encoding="utf-8"))
+        data = tomllib.loads(settings.config_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise LocalFilesError(f"cannot load hybrid index config: {error}") from error
+        raise LocalFilesError(f"cannot load hybrid application config: {error}") from error
     vector = data.get("vector") if isinstance(data, dict) else None
     if not isinstance(vector, dict) or vector.get("enabled") is not True:
-        raise LocalFilesError("hybrid index config must enable vector search")
+        raise LocalFilesError("application config must enable vector search for hybrid build")
     if vector.get("model_id") != embedding.model_id:
         raise LocalFilesError("embedding.model_id must match hybrid vector.model_id")
     if vector.get("dimensions") != embedding.dimensions:
         raise LocalFilesError("embedding.dimensions must match hybrid vector.dimensions")
-    if settings.index_config is None or not settings.index_config.is_file():
-        raise LocalFilesError("build.index_config is required for hybrid passage preparation")
-    try:
-        prepare_data = tomllib.loads(settings.index_config.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise LocalFilesError(f"cannot load prepare index config: {error}") from error
-    for section in ("tokenizer", "chunking"):
-        if prepare_data.get(section) != data.get(section):
-            raise LocalFilesError(
-                f"lexical and hybrid index configs must use the same [{section}] settings"
-            )
-    return _file_sha256_for_manifest(settings.hybrid_index_config)
+    return _file_sha256_for_manifest(settings.config_path)
 
 
 def _verify_checkpoint_shards(directory: Path, descriptors: Any) -> List[Path]:
@@ -1960,12 +1938,12 @@ def embed_documents(settings: Settings) -> Dict[str, Any]:
         raise LocalFilesError("embedding configuration is required")
     if settings.vector_dir.exists():
         raise LocalFilesError(f"vector document directory already exists: {settings.vector_dir}")
-    hybrid_config_sha = _validate_hybrid_index_config(settings, settings.embedding)
+    hybrid_config_sha = _validate_hybrid_application_config(settings, settings.embedding)
     documents_manifest, document_shards = _load_documents_manifest(settings)
     passage_manifest, passage_shards = _load_passage_manifest(settings)
     passage_manifest_path = settings.passage_dir / "manifest.json"  # type: ignore[operator]
     passage_manifest_sha = _file_sha256_for_manifest(passage_manifest_path)
-    chunk_config_sha = _file_sha256_for_manifest(settings.index_config)  # type: ignore[arg-type]
+    chunk_config_sha = _file_sha256_for_manifest(settings.config_path)
     work_dir = settings.vector_dir.parent / f".{settings.vector_dir.name}.work"
     work_dir.mkdir(parents=True, exist_ok=True)
     expected_group_names = {f"input-{ordinal:06d}" for ordinal in range(1, len(document_shards) + 1)}
@@ -2092,16 +2070,13 @@ def _require_build_settings(
         raise LocalFilesError("build target must be lexical, rag, or hybrid")
     if settings.yappo_makeindex is None:
         raise LocalFilesError("build.yappo_makeindex is required")
-    index_config = settings.hybrid_index_config if target == "hybrid" else settings.index_config
-    if index_config is None:
-        name = "build.hybrid_index_config" if target == "hybrid" else "build.index_config"
-        raise LocalFilesError(f"{name} is required")
+    application_config = settings.config_path
     if settings.index_dir is None:
-        raise LocalFilesError("build.index_directory is required")
+        raise LocalFilesError("index.directory is required")
     if not settings.yappo_makeindex.is_file() or not os.access(settings.yappo_makeindex, os.X_OK):
         raise LocalFilesError(f"yappo_makeindex is not executable: {settings.yappo_makeindex}")
-    if not index_config.is_file():
-        raise LocalFilesError(f"index config does not exist: {index_config}")
+    if not application_config.is_file():
+        raise LocalFilesError(f"application config does not exist: {application_config}")
     if settings.index_dir.exists() and not allow_existing:
         raise LocalFilesError(f"index directory already exists: {settings.index_dir}")
     try:
@@ -2109,8 +2084,18 @@ def _require_build_settings(
     except ValueError:
         pass
     else:
-        raise LocalFilesError("build.index_directory must not be inside output.directory")
-    return settings.yappo_makeindex, index_config, settings.index_dir
+        raise LocalFilesError("index.directory must not be inside output.directory")
+    try:
+        config_data = tomllib.loads(application_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise LocalFilesError(f"cannot load application config: {error}") from error
+    vector = config_data.get("vector") if isinstance(config_data, dict) else None
+    vector_enabled = isinstance(vector, dict) and vector.get("enabled") is True
+    if target == "hybrid" and not vector_enabled:
+        raise LocalFilesError("[vector].enabled must be true for hybrid build")
+    if target != "hybrid" and vector_enabled:
+        raise LocalFilesError("[vector].enabled must be false for lexical or rag build")
+    return settings.yappo_makeindex, application_config, settings.index_dir
 
 
 def _stream_document_shards(fifo_path: Path, shard_paths: Sequence[Path], errors: List[BaseException]) -> None:
@@ -2134,8 +2119,20 @@ def _verify_built_index(
     manifest_path = index / "manifest.json"
     if not copied_config.is_file() or not manifest_path.is_file():
         raise LocalFilesError("built index is missing config.toml or manifest.json")
-    if _file_sha256_for_manifest(copied_config) != _file_sha256_for_manifest(source_config):
-        raise LocalFilesError("built index config does not match requested config")
+    try:
+        copied_data = tomllib.loads(copied_config.read_text(encoding="utf-8"))
+        source_data = tomllib.loads(source_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise LocalFilesError(f"cannot compare built application config: {error}") from error
+    for key in ("format_version", "tokenizer", "chunking", "vector"):
+        if copied_data.get(key) != source_data.get(key):
+            raise LocalFilesError("built application config does not match requested index structure")
+    copied_metadata = copied_data.get("metadata", {})
+    source_metadata = source_data.get("metadata", {})
+    if not isinstance(copied_metadata, dict) or not isinstance(source_metadata, dict) or sorted(
+        copied_metadata.get("filterable_fields", [])
+    ) != sorted(source_metadata.get("filterable_fields", [])):
+        raise LocalFilesError("built application config does not match requested index structure")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -2220,7 +2217,7 @@ def _build_source_manifest_path(settings: Settings, target: str) -> Path:
 
 
 def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
-    _yappo_makeindex, index_config, index_dir = _require_build_settings(
+    _yappo_makeindex, application_config, index_dir = _require_build_settings(
         settings, target, allow_existing=True
     )
     state_path = index_dir / BUILD_STATE_FILENAME
@@ -2229,14 +2226,14 @@ def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise LocalFilesError(f"cannot reuse existing index without valid {BUILD_STATE_FILENAME}: {error}") from error
     expected_source_sha = _file_sha256_for_manifest(_build_source_manifest_path(settings, target))
-    expected_config_sha = _file_sha256_for_manifest(index_config)
+    expected_config_sha = _file_sha256_for_manifest(application_config)
     if (
         not isinstance(state, dict)
         or state.get("schema_version") != SCHEMA_VERSION
         or state.get("stage") != "build"
         or state.get("target") != target
         or state.get("source_manifest_sha256") != expected_source_sha
-        or state.get("index_config_sha256") != expected_config_sha
+        or state.get("application_config_sha256") != expected_config_sha
     ):
         raise LocalFilesError("existing index build state does not match requested inputs")
     generation = state.get("generation")
@@ -2250,7 +2247,7 @@ def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
         or accepted <= 0
     ):
         raise LocalFilesError("existing index build state is invalid")
-    _verify_built_index(index_dir, target, generation, accepted, index_config)
+    _verify_built_index(index_dir, target, generation, accepted, application_config)
     return {
         "schema_version": SCHEMA_VERSION,
         "stage": "build",
@@ -2262,11 +2259,11 @@ def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
 
 
 def build_index(settings: Settings, target: str) -> Dict[str, Any]:
-    yappo_makeindex, index_config, index_dir = _require_build_settings(settings, target)
+    yappo_makeindex, application_config, index_dir = _require_build_settings(settings, target)
     if target == "hybrid":
         if settings.vector_dir is None or settings.embedding is None:
             raise LocalFilesError("hybrid build requires embedding.directory and configuration")
-        hybrid_config_sha = _validate_hybrid_index_config(settings, settings.embedding)
+        hybrid_config_sha = _validate_hybrid_application_config(settings, settings.embedding)
         if settings.passage_dir is None:
             raise LocalFilesError("prepare.directory is required")
         passage_manifest_sha = _file_sha256_for_manifest(settings.passage_dir / "manifest.json")
@@ -2283,7 +2280,6 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
             _load_passage_manifest(settings)
     index_dir.parent.mkdir(parents=True, exist_ok=True)
     stage_root = Path(tempfile.mkdtemp(prefix=f".{index_dir.name}.tmp.", dir=index_dir.parent))
-    stage_index = stage_root / "index"
     fifo_path = stage_root / "documents.ndjson.fifo"
     stdout_path = stage_root / "build.stdout"
     stderr_path = stage_root / "build.stderr"
@@ -2316,11 +2312,9 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
                         str(yappo_makeindex),
                         "build",
                         "--config",
-                        str(index_config),
+                        str(application_config),
                         "--input",
                         str(fifo_path),
-                        "--index",
-                        str(stage_index),
                     ],
                     stdin=subprocess.DEVNULL,
                     stdout=stdout_file,
@@ -2378,14 +2372,14 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
         if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
             raise LocalFilesError("yappo_makeindex returned an invalid generation")
         _verify_built_index(
-            stage_index,
+            index_dir,
             target,
             generation,
             accepted,
-            index_config,
+            application_config,
         )
         _write_manifest(
-            stage_index / BUILD_STATE_FILENAME,
+            index_dir / BUILD_STATE_FILENAME,
             {
                 "schema_version": SCHEMA_VERSION,
                 "stage": "build",
@@ -2395,11 +2389,10 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
                 "source_manifest_sha256": _file_sha256_for_manifest(
                     _build_source_manifest_path(settings, target)
                 ),
-                "index_config_sha256": _file_sha256_for_manifest(index_config),
+                "application_config_sha256": _file_sha256_for_manifest(application_config),
             },
         )
-        _fsync_directory(stage_index)
-        os.replace(stage_index, index_dir)
+        _fsync_directory(index_dir)
         _fsync_directory(index_dir.parent)
         return {
             "schema_version": SCHEMA_VERSION,
@@ -2421,7 +2414,7 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
 def _load_vector_manifest(settings: Settings) -> Dict[str, Any]:
     if settings.vector_dir is None or settings.embedding is None:
         raise LocalFilesError("hybrid target requires embedding configuration")
-    hybrid_config_sha = _validate_hybrid_index_config(settings, settings.embedding)
+    hybrid_config_sha = _validate_hybrid_application_config(settings, settings.embedding)
     if settings.passage_dir is None:
         raise LocalFilesError("prepare.directory is required")
     passage_manifest_sha = _file_sha256_for_manifest(settings.passage_dir / "manifest.json")

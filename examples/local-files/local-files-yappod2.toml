@@ -1,5 +1,22 @@
 schema_version = 1
+format_version = 2
 collection_id = "yappod2-source"
+
+[index]
+directory = "./data/yappod2-index"
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = false
+
+[metadata]
+filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [input]
 # This file lives in examples/local-files, so ../.. is the repository root.
@@ -47,9 +64,6 @@ path = "./data/api-usage.jsonl"
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
-index_config = "./config.lexical.toml"
-hybrid_index_config = "./config.hybrid.toml"
-index_directory = "./data/yappod2-index"
 
 [daemon]
 run_directory = "./data/run"

@@ -61,7 +61,7 @@ Google公式は検索queryに`task: search result | query:`、文書に`title: .
 次元数、prompt profileのいずれかを変えた場合は、model IDも変えてindexを作り直してください。
 
 OpenAIを使う場合は`prompt_profile = "plain"`とし、設定した`dimensions`をAPI requestにも送信します。
-`config.vector.toml`の`[vector].dimensions`と`model_id`を同じmodel設定へ合わせてください。
+`wikipedia-search.toml`の`[vector].dimensions`と`model_id`を同じmodel設定へ合わせてください。
 
 ## 1,000件時の計画値
 
@@ -101,14 +101,14 @@ python3 wikipedia_data.py fetch-api \
   --output data/documents.ndjson
 ```
 
-既定のlexical用`config.toml`は変更せず、同梱の`config.vector.toml`を使用します。`model_id`はモデルを自動取得する指定ではなく、
-index互換性を管理する識別子です。モデルvariantを変えたときは`model_id`も変え、indexを作り直します。
+`wikipedia-search.toml`の`[vector].enabled`を`true`にし、`model_id`、`dimensions`、`metric`を設定します。
+`model_id`はindex互換性を管理する識別子です。モデルvariantを変えたときは`model_id`も変え、indexを作り直します。
 
 yappod2自身のchunkerで、embedding対象のpassageを確定します。
 
 ```sh
 ../../build/yappo_makeindex prepare \
-  --config config.vector.toml \
+  --config wikipedia-search.toml \
   --input data/documents.ndjson \
   --output data/passages.ndjson
 ```
@@ -119,17 +119,13 @@ chunkerは改行、半角・全角空白などUnicode空白だけの範囲をpas
 `passages.ndjson`に空白だけのpassageが含まれている場合は、新しい`yappo_makeindex`で上記`prepare`を
 再実行してください。出力ファイルは再生成され、ordinalも文書ごとに0から連続した値になります。
 
-## embedが読む2つのTOML
+## embedが読むTOML
 
-`wikipedia_data.py embed`は、同じ設定値をCLIへ再入力させず、次の2ファイルを読みます。
+`wikipedia_data.py embed`は`wikipedia-search.toml`を読みます。
 
-| 設定ファイル | 読み取る内容 |
-|---|---|
-| `config.vector.toml` | `[vector]`の有効状態、index互換性用`model_id`、vector次元数 |
-| `wikipedia-search.toml` | `[embedding]`のprovider、base URL、実model ID、prompt profile、認証token、timeout、batch size |
-
-標準では`wikipedia_data.py`と同じdirectoryにある上記2ファイルを読みます。別の設定ファイルを使う場合だけ
-`--index-config PATH`と`--config PATH`で変更できます。`[vector].dimensions`と
+`[vector]`からindex互換性用`model_id`とvector次元数を、`[embedding]`からprovider、URL、実model ID、
+prompt profile、認証token、timeout、batch sizeを読みます。別の設定fileは`--config PATH`で指定します。
+`[vector].dimensions`と
 `[embedding].dimensions`、`[vector].model_id`と`[embedding].model_id`が不一致なら、embedding APIを
 呼ぶ前に停止します。`wikipedia-search.toml`の`[llm]`は回答生成用なので、この処理では読みません。
 
@@ -220,7 +216,7 @@ authorization_token_env = "OPENAI_API_KEY"
 path = "./data/api-usage.jsonl"
 ```
 
-`config.vector.toml`の`[vector].model_id`を`text-embedding-3-small-768-v1`、`dimensions`を768へ
+`wikipedia-search.toml`の`[vector].model_id`を`text-embedding-3-small-768-v1`、`dimensions`を768へ
 変更したうえでadapterを実行します。
 
 ```sh
@@ -278,19 +274,20 @@ adapterはproviderの違いを吸収し、次の処理を行います。
 
 ## vector indexを作成する
 
-既存のlexical indexとは別directoryへ作成します。`wikipedia-search.toml`の`[build]`を次のように
-vector入力とindex構造へ向けます。
+既存のlexical indexとは別directoryへ作成します。`wikipedia-search.toml`の入力とindex directoryを
+次のように指定します。
 
 ```toml
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
 input = "./data/documents.vector.ndjson"
-index_config = "./config.vector.toml"
-index_directory = "./data/index-embeddinggemma"
+
+[index]
+directory = "./data/index-embeddinggemma"
 ```
 
 ```sh
-./scripts/build_index.sh --config ./wikipedia-search.toml
+node ../search-web/scripts/stack.mjs build --config ./wikipedia-search.toml
 ```
 
 `build`は既存directoryを上書きしません。config、モデルまたはvectorを変更して再作成する場合は、

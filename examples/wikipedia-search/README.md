@@ -17,16 +17,9 @@ cmake --build build -j
 
 ## 設定file
 
-このsampleでは役割を次の2種類に分けます。
-
-| file | 用途 |
-|---|---|
-| `wikipedia-search.toml` | Wikipedia入力、生成index、embedding、daemon、Web、LLMをまとめたapplication設定 |
-| `config.toml` / `config.vector.toml` | `yappo_makeindex`が読むindex構造設定 |
-
-index構造用TOMLは従来どおり分離します。それ以外のindex生成とWeb起動は同じ
-`wikipedia-search.toml`を`--config`で読みます。port、run directory、timeout、write tokenを
-環境変数で上書きする仕組みはありません。外部APIのsecretだけは`authorization_token_env`で環境変数を参照します。
+`wikipedia-search.toml`にWikipedia入力、index directoryと構造、embedding、daemon、Web、LLMを
+まとめます。`yappo_makeindex`、daemon、Web UIは同じfileを`--config`で読みます。
+外部APIのsecretは`authorization_token_env`で環境変数を参照します。
 
 設定例をcopyして使用します。`wikipedia-search.toml`は`.gitignore`対象です。認証tokenを使う場合は
 このcommit対象外の設定へ直接記述し、所有者だけが読めるpermissionにしてください。
@@ -80,8 +73,8 @@ npm install
 cd ../..
 ```
 
-`wikipedia-search.toml`の`[build].input`、`[build].index_config`、
-`[build].index_directory`を使用します。indexがなければ作成し、有効な既存indexはそのまま利用します。
+`wikipedia-search.toml`の`[build].input`と`[index].directory`を使用します。indexがなければ作成し、
+有効な既存indexはそのまま利用します。
 
 ```sh
 examples/wikipedia-search/scripts/start_demo.sh \
@@ -114,25 +107,23 @@ timeout_ms = 60000
 batch_size = 16
 ```
 
-passageへembeddingを付与する場合も同じapplication設定を渡し、index構造だけ
-`config.vector.toml`として分離します。
+passageへembeddingを付与する場合も同じapplication設定を渡します。`[vector].enabled = true`にし、
+`model_id`、`dimensions`、`metric`を`[embedding]`と一致させます。
 
 ```sh
 python3 examples/wikipedia-search/wikipedia_data.py embed \
   --documents examples/wikipedia-search/data/documents.ndjson \
   --passages examples/wikipedia-search/data/passages.ndjson \
   --output examples/wikipedia-search/data/documents.vector.ndjson \
-  --index-config examples/wikipedia-search/config.vector.toml \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-vector indexをWebで使う場合は`wikipedia-search.toml`の`[build].index_directory`をそのindexへ向けます。
+vector indexをWebで使う場合は`wikipedia-search.toml`の`[index].directory`をそのindexへ向けます。
 BFFは同じ`[embedding]`を使うため、model ID、dimensions、prompt profileの別設定は不要です。
-`[build].input`を生成済み`documents.vector.ndjson`、`[build].index_config`を`config.vector.toml`へ変更してから、
-同じapplication設定でbuildします。
+`[build].input`を生成済み`documents.vector.ndjson`へ変更してから、同じapplication設定でbuildします。
 
 ```sh
-examples/wikipedia-search/scripts/build_index.sh \
+node examples/search-web/scripts/stack.mjs build \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 

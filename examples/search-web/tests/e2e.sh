@@ -33,12 +33,30 @@ mock_port=$4
 
 cat >"$config" <<EOF
 schema_version = 1
+format_version = 2
+
+[index]
+directory = "$tmp_dir/index"
+
+[tokenizer]
+id = "unicode_nfkc_casefold_v2"
+
+[chunking]
+max_chars = 1200
+overlap_chars = 200
+
+[vector]
+enabled = true
+model_id = "yappod-demo-mock"
+dimensions = 3
+metric = "cosine"
+
+[metadata]
+filterable_fields = ["category"]
 
 [build]
 yappo_makeindex = "$repo_root/build/yappo_makeindex"
 input = "$web_dir/tests/fixtures/documents.vector.ndjson"
-index_config = "$web_dir/tests/fixtures/config.vector.toml"
-index_directory = "$tmp_dir/index"
 
 [daemon]
 run_directory = "$tmp_dir/run"

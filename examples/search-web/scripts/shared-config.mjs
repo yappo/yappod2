@@ -42,20 +42,19 @@ export async function loadSharedConfig(path) {
   const root = await loadRawConfig(path);
   const configDir = dirname(path);
   const build = object(root.build ?? {}, "build");
+  const index = object(root.index ?? {}, "index");
   const daemon = object(root.daemon ?? {}, "daemon");
   const web = object(root.web ?? {}, "web");
   const mock = object(root.mock ?? {}, "mock");
-  const indexValue = text(build.index_directory, undefined, "build.index_directory");
-  if (!indexValue) throw new Error("build.index_directory is required to start the Web stack");
+  const indexValue = text(index.directory, undefined, "index.directory");
+  if (!indexValue) throw new Error("index.directory is required to start the Web stack");
   const inputValue = text(build.input, undefined, "build.input");
-  const indexConfigValue = text(build.index_config, undefined, "build.index_config");
   const makeindexValue = text(build.yappo_makeindex, undefined, "build.yappo_makeindex");
   return {
     path,
     indexDirectory: resolve(configDir, indexValue),
     build: {
       input: inputValue === undefined ? undefined : resolve(configDir, inputValue),
-      indexConfig: indexConfigValue === undefined ? undefined : resolve(configDir, indexConfigValue),
       makeindex: makeindexValue === undefined ? undefined : resolve(configDir, makeindexValue),
     },
     daemon: {
