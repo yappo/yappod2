@@ -19,13 +19,18 @@ typedef struct {
   YAP_V2_CHUNK_SEQUENCE chunks;
 } OPERATION_CHUNKS;
 
+static const char *testing_failpoint;
+
 static void set_error(char *error, size_t capacity, const char *message) {
   if (error != NULL && capacity > 0U) (void)snprintf(error, capacity, "%s", message);
 }
 
 static int failpoint(const char *name) {
-  const char *configured = getenv("YAPPOD_V2_UPDATE_FAILPOINT");
-  return configured != NULL && strcmp(configured, name) == 0;
+  return testing_failpoint != NULL && strcmp(testing_failpoint, name) == 0;
+}
+
+void YAP_V2_update_set_failpoint_for_testing(const char *name) {
+  testing_failpoint = name;
 }
 
 static int join_path(char *output, size_t capacity, const char *left, const char *right) {

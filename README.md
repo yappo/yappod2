@@ -165,10 +165,12 @@ curl -sS -H 'Content-Type: application/json' \
 各 score を返します。LLM による回答生成は行いません。HTTP schema は
 [search/RAG HTTP v2](docs/search_rag_http_v2.md)を参照してください。
 
-write endpoint を公開する環境では、16 byte 以上の token を両 daemon に設定してください。
+write endpoint を公開する環境では、共有application TOMLの`[daemon]`へ16 byte以上のtokenを設定し、
+両daemonへ同じ設定fileを渡してください。
 
-```sh
-export YAPPOD_V2_WRITE_TOKEN='replace-with-a-secret-token'
+```toml
+[daemon]
+write_token = "replace-with-a-secret-token"
 ```
 
 更新 request は `Authorization: Bearer ...` が必要になります。deadline、in-flight 上限を含む

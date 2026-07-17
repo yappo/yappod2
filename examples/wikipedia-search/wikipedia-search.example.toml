@@ -1,0 +1,47 @@
+schema_version = 1
+
+[build]
+yappo_makeindex = "../../build/yappo_makeindex"
+input = "./data/documents.ndjson"
+index_config = "./config.toml"
+hybrid_index_config = "./config.vector.toml"
+index_directory = "./index"
+
+[daemon]
+run_directory = "./run"
+core_host = "127.0.0.1"
+core_port = 18401
+front_host = "127.0.0.1"
+front_port = 18400
+max_inflight = 4
+max_inflight_bytes = 4194304
+request_timeout_ms = 5000
+# write_token = "replace-with-16-or-more-characters"
+
+[web]
+host = "127.0.0.1"
+port = 4173
+yappod_timeout_ms = 5000
+
+# RAG回答生成を有効にする場合だけ追加します。
+# [llm]
+# base_url = "http://127.0.0.1:1234/v1"
+# model = "model-identifier"
+# effort = "low"
+# timeout_ms = 30000
+# authorization_token_env = "LLM_API_KEY"
+
+# vector/hybrid indexを使う場合だけ追加します。wikipedia_data.pyとWebが共有します。
+# [embedding]
+# provider = "lmstudio"
+# base_url = "http://127.0.0.1:1234/v1"
+# model = "embedding-model-identifier"
+# model_id = "embeddinggemma-300m-768-local-v1"
+# dimensions = 768
+# prompt_profile = "embeddinggemma"
+# timeout_ms = 60000
+# batch_size = 16
+# authorization_token_env = "EMBEDDING_API_KEY"
+
+[usage_log]
+path = "./data/api-usage.jsonl"

@@ -51,6 +51,22 @@ index_config = "./config.lexical.toml"
 hybrid_index_config = "./config.hybrid.toml"
 index_directory = "./data/yappod2-index"
 
+[daemon]
+run_directory = "./data/run"
+core_host = "127.0.0.1"
+core_port = 18401
+front_host = "127.0.0.1"
+front_port = 18400
+max_inflight = 4
+max_inflight_bytes = 4194304
+request_timeout_ms = 5000
+# write_token = "replace-with-16-or-more-characters"
+
+[web]
+host = "127.0.0.1"
+port = 4173
+yappod_timeout_ms = 5000
+
 [extract]
 max_extracted_bytes = 67108864
 enable_plugins = false

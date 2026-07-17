@@ -296,9 +296,7 @@ def _authorization_token_from_env(table: Mapping[str, Any], name: str) -> Option
             f"{name}.authorization_token is not supported; use {name}.authorization_token_env"
         )
     environment_name = _nonempty_string(
-        table.get("authorization_token_env"),
-        f"{name}.authorization_token_env",
-        required=False,
+        table.get("authorization_token_env"), f"{name}.authorization_token_env", required=False
     )
     if environment_name is None:
         return None
@@ -472,7 +470,12 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
             raise LocalFilesError("embedding.dimensions cannot exceed 65536")
         if embedding.batch_size > 1024:
             raise LocalFilesError("embedding.batch_size cannot exceed 1024")
-    fingerprint_input = raw
+    pipeline_data = dict(data)
+    for runtime_section in ("daemon", "web", "llm", "mock"):
+        pipeline_data.pop(runtime_section, None)
+    fingerprint_input = json.dumps(
+        pipeline_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     if content_match_override is not None:
         fingerprint_input += (
             b"\0cli.content_match=true" if content_match_override else b"\0cli.content_match=false"

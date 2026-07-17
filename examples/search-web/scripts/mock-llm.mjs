@@ -1,0 +1,72 @@
+import { createServer } from "node:http";
+import { configPathFromArgs, loadSharedConfig } from "./shared-config.mjs";
+
+const config = await loadSharedConfig(configPathFromArgs(process.argv.slice(2)));
+const { host, port, model, answer, embeddingDimensions } = config.mock;
+
+if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+  throw new Error("mock LLM must listen on a loopback address");
+}
+
+function send(response, status, body) {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(body));
+}
+
+const server = createServer((request, response) => {
+  if (request.method === "GET" && request.url === "/health") {
+    return send(response, 200, { ready: true });
+  }
+  if (request.method !== "POST" || (request.url !== "/v1/chat/completions" && request.url !== "/v1/embeddings")) {
+    return send(response, 404, { error: { message: "endpoint not found" } });
+  }
+
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 1024 * 1024) request.destroy();
+  });
+  request.on("end", () => {
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return send(response, 400, { error: { message: "invalid JSON" } });
+    }
+    if (request.url === "/v1/embeddings") {
+      if (payload.model !== model || !Array.isArray(payload.input) ||
+          payload.input.length === 0 || payload.input.some((item) => typeof item !== "string" || !item.trim())) {
+        return send(response, 400, { error: { message: "invalid mock embedding request" } });
+      }
+      return send(response, 200, {
+        object: "list",
+        model,
+        data: payload.input.map((_, index) => ({
+          object: "embedding",
+          index,
+          embedding: Array.from({ length: embeddingDimensions }, (_unused, dimension) => dimension === 0 ? 1 : 0),
+        })),
+      });
+    }
+    const userMessage = Array.isArray(payload.messages)
+      ? payload.messages.find((message) => message?.role === "user")
+      : undefined;
+    if (payload.model !== model || typeof userMessage?.content !== "string" || !userMessage.content.includes("[1]")) {
+      return send(response, 400, { error: { message: "invalid mock request" } });
+    }
+    return send(response, 200, {
+      id: "chatcmpl-yappod-demo",
+      object: "chat.completion",
+      model,
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: answer } }],
+    });
+  });
+});
+
+function shutdown() {
+  server.close(() => process.exit(0));
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+server.listen(port, host, () => console.log(`mock LLM is ready: http://${host}:${port}`));

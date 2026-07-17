@@ -26,6 +26,9 @@ int ytest_wait_file_contains(const char *path, const char *needle, int retries, 
 void ytest_stop_pid_if_alive(pid_t pid, int retries, int sleep_ms);
 int ytest_daemon_stack_start(ytest_daemon_stack_t *stack, const char *build_dir,
                              const char *index_dir, const char *run_dir);
+int ytest_daemon_stack_start_with_config(ytest_daemon_stack_t *stack, const char *build_dir,
+                                         const char *index_dir, const char *run_dir,
+                                         const char *config_path);
 int ytest_daemon_stack_alive(const ytest_daemon_stack_t *stack);
 void ytest_daemon_stack_stop(ytest_daemon_stack_t *stack);
 void ytest_daemon_stack_dump_logs(const ytest_daemon_stack_t *stack, FILE *out);

@@ -17,7 +17,8 @@
 #include "yappo_metadata_v2.h"
 #include "yappo_vector_v2.h"
 
-typedef struct { ytest_env_t env; ytest_daemon_stack_t stack; char run[PATH_MAX]; } context_t;
+typedef struct { ytest_env_t env; ytest_daemon_stack_t stack; char run[PATH_MAX]; char policy[PATH_MAX]; } context_t;
+static const char *policy_source = NULL;
 static YAP_V2_BYTES_VIEW view(const char *s) { YAP_V2_BYTES_VIEW v={(const unsigned char *)s,strlen(s)}; return v; }
 static void add(YAP_V2_SEGMENT_DESCRIPTOR *s,const YAP_V2_COMPONENT_DESCRIPTOR *c){assert_int_equal(YAP_V2_segment_descriptor_add_component(s,c),YAP_V2_OK);}
 
@@ -42,27 +43,25 @@ static void make_index(context_t *ctx) {
   YAP_V2_manifest_init(&manifest);manifest.generation=1;assert_int_equal(YAP_V2_config_fingerprint(&config,manifest.config_fingerprint),YAP_V2_OK);assert_int_equal(YAP_V2_manifest_add_segment(&manifest,&descriptor),YAP_V2_OK);assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.json"),0);assert_int_equal(YAP_V2_manifest_save_atomic(path,&manifest),YAP_V2_OK);YAP_V2_manifest_free(&manifest);
 }
 
-static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(ytest_daemon_stack_start(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
-static int teardown(void **state){context_t *ctx=*state;if(ctx){ytest_daemon_stack_stop(&ctx->stack);ytest_env_destroy(&ctx->env);free(ctx);}return 0;}
+static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));FILE *file;const char *config=NULL;if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(policy_source!=NULL){if(ytest_path_join(ctx->policy,sizeof(ctx->policy),ctx->env.tmp_root,"runtime.toml")!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}file=fopen(ctx->policy,"wb");if(file==NULL){ytest_env_destroy(&ctx->env);free(ctx);return -1;}if(fputs(policy_source,file)<0||fclose(file)!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}config=ctx->policy;}if(ytest_daemon_stack_start_with_config(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run,config)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
+static int teardown(void **state){context_t *ctx=*state;if(ctx){ytest_daemon_stack_stop(&ctx->stack);ytest_env_destroy(&ctx->env);free(ctx);}policy_source=NULL;return 0;}
 
 static int setup_write_token(void **state) {
-  if (setenv("YAPPOD_V2_WRITE_TOKEN", "0123456789abcdef-secure", 1) != 0) return -1;
-  if (setup(state) != 0) { (void)unsetenv("YAPPOD_V2_WRITE_TOKEN"); return -1; }
-  return 0;
+  policy_source = "[daemon]\nwrite_token='0123456789abcdef-secure'\n";
+  return setup(state);
 }
 
 static int teardown_write_token(void **state) {
-  int status = teardown(state); (void)unsetenv("YAPPOD_V2_WRITE_TOKEN"); return status;
+  return teardown(state);
 }
 
 static int setup_tiny_memory_limit(void **state) {
-  if (setenv("YAPPOD_V2_MAX_INFLIGHT_BYTES", "1", 1) != 0) return -1;
-  if (setup(state) != 0) { (void)unsetenv("YAPPOD_V2_MAX_INFLIGHT_BYTES"); return -1; }
-  return 0;
+  policy_source = "[daemon]\nmax_inflight_bytes=1\n";
+  return setup(state);
 }
 
 static int teardown_tiny_memory_limit(void **state) {
-  int status = teardown(state); (void)unsetenv("YAPPOD_V2_MAX_INFLIGHT_BYTES"); return status;
+  return teardown(state);
 }
 
 static char *post(context_t *ctx, const char *endpoint, const char *body) {

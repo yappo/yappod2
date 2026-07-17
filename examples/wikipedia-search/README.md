@@ -1,498 +1,170 @@
-# 日本語 Wikipedia 検索サンプル
+# 日本語Wikipedia検索・RAG sample
 
-日本語 Wikipedia の記事を yappod2 の canonical NDJSON に変換し、lexical index、HTTP検索、
-RAG向けpassage取得まで確認するローカル実行用サンプルです。
-
-すぐに試す場合はWikimedia Action APIから既定1,000記事の全文を取得します。全記事を対象にする
-場合は公式XML dumpをダウンロードし、WikiExtractorで平文へ変換します。どちらも最終的には
-同じNDJSON schemaと`config.toml`を使用します。
-
-## 構成
-
-```mermaid
-flowchart TB
-  subgraph source["Wikipediaデータ"]
-    direction LR
-    api["Action API"]
-    dump["XML dump"]
-  end
-
-  subgraph preparation["変換とindex作成"]
-    direction LR
-    extractor["WikiExtractor"]
-    converter["Canonical NDJSON変換"]
-    indexer["yappo_makeindex"]
-  end
-
-  subgraph runtime["検索・取得"]
-    direction LR
-    cli["search CLI"]
-    daemon["yappod"]
-    index["v2 index"]
-  end
-
-  api --> converter
-  dump --> extractor --> converter
-  converter --> indexer --> index
-  index --> cli
-  index --> daemon
-```
-
-このサンプルの既定`config.toml`は、追加のモデルを起動せずに試せるようvectorを無効にしています。
-Web UIはlexical、vector、hybridの3モードに対応し、接続したindexとembedding serverの状態に応じて
-利用可能なモードを表示します。既定の1,000記事をEmbeddingGemmaでvector化し、LM Studioまたは
-Ollamaと組み合わせてvector/hybrid検索を確認する場合は、
-[1,000記事をvector対応にする](docs/vector-search.md)を参照してください。
+日本語Wikipediaの記事をcanonical NDJSONへ変換し、yappod2 indexを作成するsampleです。検索・質問・文書登録の
+Web UIはWikipedia固有実装ではなく、[`../search-web`](../search-web/README.md)の共通applicationを使用します。
 
 ## 必要環境
 
-- yappod2本体のビルドに必要な依存関係
+- repository rootでbuild済みの`yappo_makeindex`、`yappod_core`、`yappod_front`
 - Python 3.9以上
 - Web UIを使う場合はNode.js 22以上とnpm
-- `curl`（daemonのhealth checkとHTTP smokeに使用）
-- 全量dumpを使う場合だけWikiExtractor 3.0.7
-
-リポジトリルートで本体をビルドしてください。
-
-macOS（Homebrew）では、先に本体の依存packageをinstallします。CMakeがHomebrewを検出し、
-各formulaのprefixを依存libraryの探索先へ自動的に追加します。
+- dump変換ではWikiExtractor
+- vector/hybridではLM Studio、Ollama、またはOpenAI互換embedding endpoint
 
 ```sh
-brew install cmake cmocka icu4c libevent curl
-```
-
-リポジトリルートでのbuildコマンドはmacOSとLinuxで共通です。
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-## 小規模データを取得する
+## 設定file
 
-以下は日本の歴史、自然科学、情報技術、芸術など20トピックを順に検索し、重複を除いた記事の
-本文全体を最大1,000件保存します。検索結果はまとめて取得しますが、全文plain textはAction APIの
-制約により1記事ずつ逐次取得します。Wikimediaの要求に従った識別可能なUser-Agentを送信します。
+このsampleでは役割を次の2種類に分けます。
+
+| file | 用途 |
+|---|---|
+| `wikipedia-search.toml` | Wikipedia入力、生成index、embedding、daemon、Web、LLMをまとめたapplication設定 |
+| `config.toml` / `config.vector.toml` | `yappo_makeindex`が読むindex構造設定 |
+
+index構造用TOMLは従来どおり分離します。それ以外のindex生成とWeb起動は同じ
+`wikipedia-search.toml`を`--config`で読みます。port、run directory、timeout、write tokenを
+環境変数で上書きする仕組みはありません。外部APIのsecretだけは`authorization_token_env`で環境変数を参照します。
+
+設定例をcopyして使用します。`wikipedia-search.toml`は`.gitignore`対象です。認証tokenを使う場合は
+このcommit対象外の設定へ直接記述し、所有者だけが読めるpermissionにしてください。
 
 ```sh
-cd examples/wikipedia-search
-python3 wikipedia_data.py fetch-api \
+cp examples/wikipedia-search/wikipedia-search.example.toml \
+  examples/wikipedia-search/wikipedia-search.toml
+```
+
+## Action APIから記事を取得
+
+既定ではtopicを分散させながら最大1,000記事を取得します。出力は1行1 operationのcanonical NDJSONです。
+
+```sh
+python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
   --limit 1000 \
-  --output data/documents.ndjson
+  --output examples/wikipedia-search/data/documents.ndjson
 ```
 
-対象を絞る場合は`--topic`を複数指定できます。
+User-Agentを変更する場合は環境変数ではなく`--user-agent`を指定します。
 
 ```sh
-python3 wikipedia_data.py fetch-api \
-  --topic 検索エンジン \
-  --topic 自然言語処理 \
-  --limit 100 \
-  --output data/search-documents.ndjson
+python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
+  --user-agent 'my-project/1.0 (contact@example.com)' \
+  --limit 1000 \
+  --output examples/wikipedia-search/data/documents.ndjson
 ```
 
-組織や個人の連絡先を含むUser-Agentへ変更する場合は`WIKIMEDIA_USER_AGENT`を設定してください。
-
-## 全量dumpを変換する
-
-日本語Wikipediaの全量XMLは数GBあります。`latest`の実サイズは更新ごとに変わるため、開始前に
-[公式directory index](https://dumps.wikimedia.org/jawiki/latest/)で確認してください。展開結果と
-indexには圧縮ファイルより大きな空き容量が必要です。
-
-まずdumpと公式SHA-1 checksumを取得します。中断後に同じコマンドを実行すると`.part`から再開します。
+## dumpを変換
 
 ```sh
-python3 wikipedia_data.py download-dump --output-dir data/dump
+python3 examples/wikipedia-search/wikipedia_data.py download-dump \
+  --output-dir examples/wikipedia-search/data/dump
 ```
 
-専用virtual environmentへ固定versionのWikiExtractorを導入し、JSON linesへ平文化します。
+WikiExtractorのJSON Lines出力をcanonical NDJSONへ変換します。
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install 'wikiextractor==3.0.7'
-.venv/bin/python -m wikiextractor.WikiExtractor \
-  data/dump/jawiki-latest-pages-articles-multistream.xml.bz2 \
-  --json \
-  --processes 4 \
-  --output data/extracted
+python3 examples/wikipedia-search/wikipedia_data.py convert-dump \
+  --input examples/wikipedia-search/data/wikiextractor.jsonl \
+  --output examples/wikipedia-search/data/documents.ndjson
 ```
 
-WikiExtractor出力をcanonical NDJSONへ変換します。動作確認だけなら`--limit 10000`のように
-上限を指定できます。全量変換では`--limit`を省略します。
+## lexical indexとWeb UIを一括起動
+
+最初にWeb依存関係をinstallします。
 
 ```sh
-python3 wikipedia_data.py convert-dump \
-  --input data/extracted \
-  --output data/documents.ndjson
-```
-
-## Indexを作成して検索する
-
-`build`は既存indexを上書きしません。作り直す場合は、必要なindexでないことを確認してから利用者が
-明示的に古いdirectoryを削除してください。
-
-```sh
-./scripts/build_index.sh data/documents.ndjson ./index
-
-../../build/search \
-  --index ./index \
-  --mode lexical \
-  --query 日本の歴史
-```
-
-別の場所へindexを作る場合は第2引数で指定します。
-
-## HTTP検索とRAG用passage取得
-
-daemonは`run/`にPIDとlogを保存します。daemon用port rangeは`18400`–`18409`で、
-標準ではfrontが`18400`、coreが`18401`を使用します。Web UIは従来どおり`4173`です。
-
-```sh
-./scripts/start_daemons.sh ./index
-./scripts/smoke.sh 日本
-```
-
-個別に確認する場合は次のrequestを使用します。
-
-```sh
-curl -sS -H 'Content-Type: application/json' \
-  --data '{"query":"日本","mode":"lexical","scope":"documents","limit":5}' \
-  http://127.0.0.1:18400/v2/search
-
-curl -sS -H 'Content-Type: application/json' \
-  --data '{"query":"日本","mode":"lexical","limit":5,"max_passages_per_document":2,"max_context_bytes":16384}' \
-  http://127.0.0.1:18400/v2/retrieve
-```
-
-`/v2/retrieve`は`context`と、記事URL・title・本文offset・scoreを持つ`citations`を返します。
-確認後はdaemonを停止します。
-
-```sh
-./scripts/stop_daemons.sh
-```
-
-portを変更する場合は、起動・smoke・停止で同じ環境変数を使用してください。
-
-```sh
-YAPPOD_CORE_PORT=11086 YAPPOD_FRONT_PORT=11080 ./scripts/start_daemons.sh ./index
-YAPPOD_FRONT_PORT=11080 ./scripts/smoke.sh 日本
-./scripts/stop_daemons.sh
-```
-
-## Web UI
-
-Web UIはTypeScript、Fastify BFF、React/Viteで構成されています。BrowserはyappodやLLMへ直接接続せず、
-検索、readiness確認、文書登録、引用付きRAGをBFF経由で行います。daemonの接続先、write token、
-LLM API keyはBFF processだけが保持し、Browserへ返すHTMLやJSONには含めません。
-
-```mermaid
-flowchart TB
-  browser["Browser"]
-
-  subgraph application["Web application"]
-    direction LR
-    ui["React UI"]
-    bff["Fastify BFF"]
-  end
-
-  subgraph services["Runtime services"]
-    direction LR
-    front["yappod_front"]
-    embedding["Embedding server"]
-    llm["OpenAI-compatible LLM"]
-  end
-
-  subgraph search["Search data"]
-    direction LR
-    core["yappod_core"]
-    index["Wikipedia index"]
-  end
-
-  browser --> ui --> bff
-  bff --> front --> core --> index
-  bff --> embedding
-  bff --> llm
-```
-
-図はBrowser、Web application、Runtime services、Search dataの4段に分けています。検索の主経路と
-embedding・LLMへの分岐を中央にまとめ、横長・縦長のどちらにも偏らない構成です。
-
-### 一括起動
-
-index、core、front、production BFF/UIをまとめて起動できます。最初にWeb依存関係を導入してください。
-
-```sh
-cd examples/wikipedia-search/web
+cd examples/search-web
 npm install
-
-cd ..
-export YAPPOD_WRITE_TOKEN='replace-with-16-or-more-characters'
-./scripts/start_demo.sh data/documents.ndjson ./index
+cd ../..
 ```
 
-第1引数はcanonical NDJSON、第2引数はindex directoryです。第2引数に有効なindexがある場合はそのまま
-利用します。indexが存在しない場合だけ第1引数から新規作成し、既存directoryは上書きしません。
-起動時にWeb UIをproduction buildし、標準では`http://127.0.0.1:4173`で配信します。
-
-RAGの一巡だけを外部LLMなしで確認する場合は、loopbackだけで待ち受ける決定的なmockを有効にします。
-このmockは接続確認用であり、質問内容に応じた回答品質を評価するものではありません。
+`wikipedia-search.toml`の`[build].input`、`[build].index_config`、
+`[build].index_directory`を使用します。indexがなければ作成し、有効な既存indexはそのまま利用します。
 
 ```sh
-YAPPOD_DEMO_MOCK_LLM=1 \
-  ./scripts/start_demo.sh data/documents.ndjson ./index
+examples/wikipedia-search/scripts/start_demo.sh \
+  --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-実LLMを利用する場合は`YAPPOD_DEMO_MOCK_LLM`を指定せず、後述の`web/config.toml`を作成して
-起動します。確認後はWeb、mock LLM、front、coreをまとめて停止します。
+標準URLは`http://127.0.0.1:4173`です。停止時も同じ設定を指定します。
 
 ```sh
-./scripts/stop_demo.sh
+examples/wikipedia-search/scripts/stop_demo.sh \
+  --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-PIDとlogは標準で`run/`に保存します。起動失敗時は起動済みprocessを自動停止します。問題が残る場合は
-`run/*.error`と`run/*.log`を確認してから`stop_demo.sh`を再実行してください。processが動作中のまま
-PID fileだけを削除しないでください。停止は最初にSIGTERMを送り、5秒以内に終了しないprocessだけを
-SIGKILLへ切り替えます。
+PIDとlogは`[daemon].run_directory`に保存します。portやlisten addressは`[daemon]`と`[web]`で変更します。
 
-| 一括起動用環境変数 | 既定値 | 用途 |
-|---|---|---|
-| `YAPPOD_RUN_DIR` | `./run` | PIDとlogの保存先 |
-| `YAPPOD_CORE_PORT` | `18401` | coreの内部port |
-| `YAPPOD_FRONT_PORT` | `18400` | frontのHTTP port |
-| `YAPPOD_WEB_HOST` | `127.0.0.1` | production BFF/UIのlisten address |
-| `YAPPOD_WEB_PORT` | `4173` | production BFF/UIのport |
-| `YAPPOD_DEMO_MOCK_LLM` | `0` | `1`の場合だけlocal mock LLMを起動 |
-| `YAPPOD_MOCK_LLM_HOST` | `127.0.0.1` | mock LLMのlisten address。loopbackのみ許可 |
-| `YAPPOD_MOCK_LLM_PORT` | `1234` | mock LLMのport |
+## vector/hybrid index
 
-### 開発起動
-
-最初に依存関係を導入します。
-
-```sh
-cd examples/wikipedia-search/web
-npm install
-```
-
-文書登録を利用する場合は16文字以上のtokenを設定し、同じ値をdaemonとBFFへ渡します。検索だけを
-確認する場合はtokenを省略できます。
-
-```sh
-cd examples/wikipedia-search
-export YAPPOD_WRITE_TOKEN='replace-with-16-or-more-characters'
-YAPPOD_V2_WRITE_TOKEN="$YAPPOD_WRITE_TOKEN" ./scripts/start_daemons.sh ./index
-
-cd web
-npm run dev
-```
-
-Browserで`http://127.0.0.1:5173`を開きます。Viteは`/api`だけを`127.0.0.1:4173`のBFFへ転送します。
-検索画面は1ページ50件を取得し、「続きを読み込む」も50件単位です。質問画面のRAGは最大20 passage、
-context上限32 KiBで取得します。
-
-### 引用付きRAG
-
-質問画面は選択したlexical、vector、hybridモードで`/v2/retrieve`からpassageを取得し、
-`web/config.toml`の`[llm]`が設定されている場合だけOpenAI-compatibleな`POST /chat/completions`へ
-質問と参照資料を送ります。
-
-`web/config.toml`はWeb BFFが外部model serverへ接続するための設定ファイルです。index構造を定義する
-`examples/wikipedia-search/config.toml`や`config.vector.toml`とは別のファイルです。次の2セクションは独立しており、
-利用する機能のセクションだけを残せます。
-
-| セクション | 使用する機能 | 省略した場合 |
-|---|---|---|
-| `[llm]` | 取得した参照資料に基づく回答生成 | 質問画面に参照資料だけを表示 |
-| `[embedding]` | vector/hybrid検索、vector RAG、vector indexへの文書登録 | lexical検索だけを使用 |
-
-`web/config.toml`にはtoken本体ではなく、tokenを保持する環境変数名だけを書きます。設定例をコピーし、
-使わないセクションを削除してからmodel identifierなどを編集します。`start_demo.sh`とproductionの
-`npm start`はこのファイルを自動的に読み込みます。
-
-```sh
-cd examples/wikipedia-search/web
-cp config.example.toml config.toml
-```
-
-LM Studioを標準の1234番portで利用する例です。
-
-```toml
-[llm]
-base_url = "http://127.0.0.1:1234/v1"
-model = "LM Studioが受け付けるmodel identifier"
-effort = "low"
-timeout_ms = 30000
-# LM StudioでAPI token認証を有効にした場合だけ設定します。
-authorization_token_env = "LLM_API_TOKEN"
-```
-
-| `[llm]`設定 | 必須 | 用途 |
-|---|---|---|
-| `base_url` | はい | OpenAI-compatible APIの`/v1`を含むbase URL |
-| `model` | はい | Chat Completionsの`model`へそのまま渡すidentifier |
-| `effort` | いいえ | Chat Completionsの`reasoning_effort`へ渡す値 |
-| `authorization_token_env` | いいえ | Bearer tokenを保持する環境変数名 |
-| `timeout_ms` | いいえ | LLM応答timeout。既定は`30000`、範囲は`1000`–`600000` |
-
-`authorization_token_env`を指定した場合、その環境変数が未定義または空ならserver起動時に停止します。
-平文の`authorization_token`は拒否します。BFFはtoken、base URL、modelをBrowserへ返しません。
-設定変更後はWeb processを再起動してください。認証を使わない場合はこの行を削除できます。
-
-production一括起動の場合はサンプルdirectoryから通常どおり起動します。
-
-```sh
-cd examples/wikipedia-search
-YAPPOD_WRITE_TOKEN='replace-with-16-or-more-characters' \
-  ./scripts/start_demo.sh data/documents.ndjson ./index
-```
-
-LLMを設定しない場合も質問画面は利用でき、取得contextと参照資料を表示します。LLM失敗時も同様に
-参照資料を残します。生成回答はplain textとして扱い、`[1]`形式の参照番号が取得済みcitationの範囲内に
-あり、少なくとも1件使われている場合だけ表示します。範囲外参照や参照なしの回答は採用しません。
-質問画面には「LLM server設定済み」または「未設定（参照資料のみ表示）」を表示します。
-
-BFFはChat Completionsの`messages` requestと`choices[0].message.content` responseを使用します。
-LM Studioのmodel identifierと互換endpointは
-[LM Studio Chat Completions](https://lmstudio.ai/docs/developer/openai-compat/chat-completions)を確認してください。
-別の互換serverでは、そのserverが`reasoning_effort`を受け付けるかを確認してください。
-
-### vector embedding
-
-意味検索、hybrid検索、vector indexへの文書登録には`web/config.toml`の`[embedding]`を使用します。
-vector index自体の作成方法とEmbeddingGemmaをLM Studio/Ollamaで動かす準備は、
-[1000記事向けvector index構築手順](docs/vector-search.md)を先に確認してください。`[embedding]`を省略した場合は
-lexical検索だけが有効で、embedding serverへの接続は行いません。
-
-LM Studioを利用する例です。`model`にはLM Studioがembedding endpointで受け付けるmodel identifierを指定します。
+詳細は[vector検索手順](docs/vector-search.md)を参照してください。embeddingはindex生成とWebで同じsectionを
+共有します。
 
 ```toml
 [embedding]
 provider = "lmstudio"
 base_url = "http://127.0.0.1:1234/v1"
-# endpoint_url = "http://127.0.0.1:1234/v1/embeddings" # base_urlとは排他的
-model = "LM Studioに表示されたEmbeddingGemmaのmodel identifier"
-index_model_id = "embeddinggemma-300m-768-local-v1"
+model = "LM Studioのmodel identifier"
+model_id = "embeddinggemma-300m-768-local-v1"
 dimensions = 768
-profile = "embeddinggemma"
-timeout_ms = 60000
-batch_size = 16
-# API token認証を有効にした場合だけ設定します。
-# authorization_token_env = "EMBEDDING_API_TOKEN"
-```
-
-Ollamaを利用する場合は接続先とmodelを次のように変更します。
-
-```toml
-[embedding]
-provider = "ollama"
-base_url = "http://127.0.0.1:11434"
-model = "embeddinggemma"
-index_model_id = "embeddinggemma-300m-768-local-v1"
-dimensions = 768
-profile = "embeddinggemma"
+prompt_profile = "embeddinggemma"
 timeout_ms = 60000
 batch_size = 16
 ```
 
-| `[embedding]`設定 | 必須 | 用途 |
-|---|---|---|
-| `provider` | はい | `lmstudio`、`ollama`、`openai`。呼び出すembedding API形式を選択 |
-| `base_url` / `endpoint_url` | どちらか一方 | base URLにはprovider別pathを追加。完全endpointはそのまま使用 |
-| `model` | はい | embedding APIへ渡すmodel identifier。index作成時と同じmodelを使用 |
-| `index_model_id` | いいえ | `config.vector.toml`の`vector.model_id`。指定時はindexのreadiness情報との一致を検証 |
-| `dimensions` | いいえ | vectorの次元数。既定は`768`で、indexの`vector.dimensions`と一致させる |
-| `profile` | いいえ | query/documentへ付けるprompt形式。既定は`embeddinggemma`、独自promptが不要なら`plain` |
-| `authorization_token_env` | いいえ | Bearer tokenを保持する環境変数名 |
-| `timeout_ms` | いいえ | embedding応答timeout。既定は`60000`、範囲は`1000`–`600000` |
-| `batch_size` | いいえ | 文書登録時に一度にembeddingするpassage数。既定は`16`、範囲は`1`–`1024` |
-
-OpenAIの`text-embedding-3-small`を使う場合は次のように設定します。OpenAI providerでは`dimensions`を
-embedding requestにも含めます。`config.vector.toml`の`[vector].model_id`と`dimensions`も同じ値へ
-変更してからindexを作成してください。
-
-```toml
-[embedding]
-provider = "openai"
-endpoint_url = "https://api.openai.com/v1/embeddings"
-model = "text-embedding-3-small"
-index_model_id = "text-embedding-3-small-768-v1"
-dimensions = 768
-profile = "plain"
-timeout_ms = 60000
-batch_size = 16
-authorization_token_env = "OPENAI_API_KEY"
-
-[usage_log]
-path = "./data/api-usage.jsonl"
-```
-
-`[llm]`と`[embedding]`は独立しており、回答生成modelとembedding modelは別々に指定できます。
-`usage_log.path`は設定file基準で解決し、成功したembedding/chat requestごとにUTC日時、source、service、
-operation、provider、model、API応答の`usage`（未返却時は`null`）をJSONLへappendします。prompt、token、
-vector、回答本文、認証情報、endpointは記録しません。ログ書き込み失敗はstderrへwarningを出して処理を
-続け、課金済みrequestを再送しません。
-
-HTTPSは常に許可します。HTTPを使えるのは`localhost`、IPv4 loopback `127.0.0.0/8`、RFC 1918、IPv6
-loopback `::1`、RFC 4193 ULAだけです。その他のhostnameとliteral IPはHTTPS必須で、DNS解決によるprivate
-判定は行いません。OpenAI互換Bearer認証が対象であり、Azure固有の`api-key`認証は対象外です。
-設定変更後はWeb processを再起動してください。
-
-### production build
+passageへembeddingを付与する場合も同じapplication設定を渡し、index構造だけ
+`config.vector.toml`として分離します。
 
 ```sh
-cd examples/wikipedia-search/web
-npm run build
-npm start
+python3 examples/wikipedia-search/wikipedia_data.py embed \
+  --documents examples/wikipedia-search/data/documents.ndjson \
+  --passages examples/wikipedia-search/data/passages.ndjson \
+  --output examples/wikipedia-search/data/documents.vector.ndjson \
+  --index-config examples/wikipedia-search/config.vector.toml \
+  --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-productionではFastifyがbuild済みUIも配信します。標準URLは`http://127.0.0.1:4173`です。
-
-| 環境変数 | 既定値 | 用途 |
-|---|---|---|
-| `YAPPOD_URL` | `http://127.0.0.1:18400` | BFFから接続するfront URL |
-| `YAPPOD_WRITE_TOKEN` | 未設定 | 文書登録時だけBFFがBearer headerへ設定 |
-| `YAPPOD_TIMEOUT_MS` | `5000` | BFFからdaemonへのtimeout |
-| `HOST` | `127.0.0.1` | BFFのlisten address |
-| `PORT` | `4173` | BFFのlisten port |
-
-画面を実装する前に定義した主要タスク、状態、低精度wireframe、heuristic reviewは
-[UX設計](docs/ux-design.md)を参照してください。
-
-### Web UIのテスト
+vector indexをWebで使う場合は`wikipedia-search.toml`の`[build].index_directory`をそのindexへ向けます。
+BFFは同じ`[embedding]`を使うため、model ID、dimensions、prompt profileの別設定は不要です。
+`[build].input`を生成済み`documents.vector.ndjson`、`[build].index_config`を`config.vector.toml`へ変更してから、
+同じapplication設定でbuildします。
 
 ```sh
-cd examples/wikipedia-search/web
+examples/wikipedia-search/scripts/build_index.sh \
+  --config examples/wikipedia-search/wikipedia-search.toml
+```
+
+## RAGと文書登録
+
+`[llm]`がなければ質問画面は取得した参照資料だけを表示します。設定した場合はOpenAI-compatibleな
+Chat Completionsへ質問とcitationを送り、`[1]`形式の参照番号を検証してから回答を表示します。
+
+```toml
+[llm]
+base_url = "http://127.0.0.1:1234/v1"
+model = "model-identifier"
+effort = "low"
+timeout_ms = 30000
+# authorization_token_env = "LLM_API_KEY"
+```
+
+文書登録を認証する場合は`[daemon].write_token`へ16文字以上のtokenを設定します。core、front、BFFは同じ
+設定を読むため、tokenの二重設定はありません。
+
+## テスト
+
+```sh
+python3 -m unittest discover \
+  -s examples/wikipedia-search/tests \
+  -p 'test_*.py'
+
+cd examples/search-web
 npm run typecheck
 npm test
 npm run build
 npm run test:e2e
 ```
 
-`test:e2e`はfixtureからvector対応の一時indexを作り、core、front、mock embedding/LLM、production BFF/UIを起動します。
-3モード検索、BFF経由のvector付き単一文書登録、登録後の再検索、vector RAG、`[1]`付きmock回答、全process停止を
-検証します。外部networkや実LLM API keyは使用しません。
-
-## テスト
-
-fixtureを使うため、通常テストはWikimediaへ接続しません。
-
-```sh
-python3 -m unittest discover -s tests -p 'test_*.py'
-ctest --test-dir ../../build --output-on-failure
-```
-
-## データ利用時の注意
-
-Wikipedia本文はCC BY-SA等の条件で提供されています。再配布や公開サービスへの利用時は、記事ごとの
-原URLを保持し、Wikipedia contributorsへの帰属、適用ライセンス、変更の有無を利用形態に応じて
-表示してください。このサンプルは原記事URLをcanonical documentへ保存します。
-
-- [Wikimedia dump](https://dumps.wikimedia.org/jawiki/latest/)
-- [MediaWiki Search API](https://www.mediawiki.org/wiki/API%3ASearch/ja)
-- [TextExtracts](https://www.mediawiki.org/wiki/Extension%3ATextExtracts)
-- [Wikimedia API Usage Guidelines](https://foundation.wikimedia.org/wiki/Policy%3AWikimedia_Foundation_API_Usage_Guidelines)
-- [Wikimedia User-Agent Policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy)
-- [WikiExtractor](https://github.com/attardi/wikiextractor)
-
-APIから大量取得するときはWikimediaのrate limit指示に従ってください。制限を別User-Agentや並列接続で
-回避してはいけません。
+Web E2Eは一時設定fileだけでport、mock、tokenを設定し、環境変数や外部networkを使用しません。

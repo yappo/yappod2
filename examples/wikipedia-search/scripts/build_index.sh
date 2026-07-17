@@ -2,17 +2,9 @@
 set -eu
 
 example_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-repo_root=$(CDPATH= cd -- "$example_dir/../.." && pwd)
-input=${1:-"$example_dir/data/documents.ndjson"}
-index=${2:-"$example_dir/index"}
-
-if [ -e "$index" ]; then
-  echo "index path already exists: $index" >&2
-  echo "Choose a new path or remove the old sample index explicitly." >&2
-  exit 1
+web_dir=$(CDPATH= cd -- "$example_dir/../search-web" && pwd)
+if [ "${1:-}" = "--config" ] && [ "$#" -eq 2 ]; then
+  exec node "$web_dir/scripts/stack.mjs" build --config "$2"
 fi
-
-"$repo_root/build/yappo_makeindex" build \
-  --config "$example_dir/config.toml" \
-  --input "$input" \
-  --index "$index"
+echo "Usage: $0 --config PATH" >&2
+exit 1

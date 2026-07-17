@@ -186,9 +186,9 @@ static void test_update_split_is_atomic_and_cleans_failed_segments(void **state)
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0); create_index(&env);
   YAP_V2_segment_planner_set_payload_limit_for_testing(300U);
-  assert_int_equal(setenv("YAPPOD_V2_UPDATE_FAILPOINT", "after_first_segment", 1), 0);
+  YAP_V2_update_set_failpoint_for_testing("after_first_segment");
   document = execute(&env, YAP_V2_HTTP_INGEST, batch, 503); yyjson_doc_free(document);
-  assert_int_equal(unsetenv("YAPPOD_V2_UPDATE_FAILPOINT"), 0);
+  YAP_V2_update_set_failpoint_for_testing(NULL);
   assert_int_equal(manifest_generation(&env, &segments), 1U); assert_int_equal(segments, 1U);
   assert_int_equal(segment_directory_count(&env), 1U);
   document = execute(&env, YAP_V2_HTTP_INGEST, batch, 200);
@@ -380,7 +380,7 @@ static void run_crashing_compaction(ytest_env_t *env, const char *point) {
   assert_true(child >= 0);
   if (child == 0) {
     YAP_V2_COMPACTION_RESULT result; char error[256] = {0};
-    (void)setenv("YAPPOD_V2_COMPACTION_FAILPOINT", point, 1);
+    YAP_V2_compaction_set_failpoint_for_testing(point);
     (void)YAP_V2_compact(env->tmp_root, &result, error, sizeof(error)); _exit(99);
   }
   assert_int_equal(waitpid(child, &child_status, 0), child);

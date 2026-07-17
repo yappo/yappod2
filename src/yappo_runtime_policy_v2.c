@@ -1,12 +1,12 @@
 #include "yappo_runtime_policy_v2.h"
 
-#include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+
+#include <toml.h>
 
 #define YAP_V2_DEFAULT_MAX_INFLIGHT 4U
 #define YAP_V2_DEFAULT_MAX_INFLIGHT_BYTES (4U * 1024U * 1024U)
@@ -17,19 +17,6 @@ static void set_error(char *error, size_t capacity, const char *message) {
   if (error != NULL && capacity > 0U) (void)snprintf(error, capacity, "%s", message);
 }
 
-static int parse_size_env(const char *name, size_t default_value, size_t maximum,
-                          size_t *output, char *error, size_t error_size) {
-  const char *value = getenv(name); char *end = NULL; unsigned long long parsed;
-  if (value == NULL) { *output = default_value; return YAP_V2_OK; }
-  errno = 0; parsed = strtoull(value, &end, 10);
-  if (errno != 0 || end == value || *end != '\0' || parsed == 0U || parsed > maximum ||
-      parsed > SIZE_MAX) {
-    set_error(error, error_size, "runtime limit environment variable is invalid");
-    return YAP_V2_INVALID_FORMAT;
-  }
-  *output = (size_t)parsed; return YAP_V2_OK;
-}
-
 void YAP_V2_runtime_policy_init(YAP_V2_RUNTIME_POLICY *policy) {
   if (policy == NULL) return;
   memset(policy, 0, sizeof(*policy)); policy->max_inflight = YAP_V2_DEFAULT_MAX_INFLIGHT;
@@ -37,35 +24,82 @@ void YAP_V2_runtime_policy_init(YAP_V2_RUNTIME_POLICY *policy) {
   policy->request_timeout_ms = YAP_V2_DEFAULT_TIMEOUT_MS;
 }
 
-int YAP_V2_runtime_policy_load_env(YAP_V2_RUNTIME_POLICY *policy, char *error, size_t error_size) {
-  const char *token; size_t timeout; int status;
+static int read_size(toml_table_t *table, const char *key, size_t maximum, size_t *output,
+                     char *error, size_t error_size) {
+  toml_datum_t value = toml_int_in(table, key);
+  if (!value.ok) {
+    if (toml_key_exists(table, key)) {
+      set_error(error, error_size, "daemon runtime limit must be an integer");
+      return YAP_V2_INVALID_FORMAT;
+    }
+    return YAP_V2_OK;
+  }
+  if (value.u.i <= 0 || (uint64_t)value.u.i > maximum || (uint64_t)value.u.i > SIZE_MAX) {
+    set_error(error, error_size, "daemon runtime limit is out of range");
+    return YAP_V2_INVALID_FORMAT;
+  }
+  *output = (size_t)value.u.i;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_runtime_policy_load_config(YAP_V2_RUNTIME_POLICY *policy, const char *config_path,
+                                      char *error, size_t error_size) {
+  FILE *file;
+  toml_table_t *root = NULL, *daemon;
+  toml_datum_t token;
+  char parse_error[256] = {0};
+  size_t timeout;
+  int status;
   if (policy == NULL) return YAP_V2_INVALID_ARGUMENT;
   YAP_V2_runtime_policy_init(policy);
-  status = parse_size_env("YAPPOD_V2_MAX_INFLIGHT", policy->max_inflight, 1024U,
-                          &policy->max_inflight, error, error_size);
+  if (config_path == NULL) return YAP_V2_OK;
+  file = fopen(config_path, "r");
+  if (file == NULL) {
+    set_error(error, error_size, "cannot open daemon config");
+    return YAP_V2_IO_ERROR;
+  }
+  root = toml_parse_file(file, parse_error, (int)sizeof(parse_error));
+  (void)fclose(file);
+  if (root == NULL) {
+    set_error(error, error_size, parse_error[0] != '\0' ? parse_error : "invalid daemon config");
+    return YAP_V2_INVALID_FORMAT;
+  }
+  daemon = toml_table_in(root, "daemon");
+  if (daemon == NULL) { toml_free(root); return YAP_V2_OK; }
+  status = read_size(daemon, "max_inflight", 1024U, &policy->max_inflight,
+                     error, error_size);
   if (status == YAP_V2_OK)
-    status = parse_size_env("YAPPOD_V2_MAX_INFLIGHT_BYTES", policy->max_inflight_bytes,
-                            1024U * 1024U * 1024U, &policy->max_inflight_bytes, error, error_size);
+    status = read_size(daemon, "max_inflight_bytes", 1024U * 1024U * 1024U,
+                       &policy->max_inflight_bytes, error, error_size);
   timeout = policy->request_timeout_ms;
   if (status == YAP_V2_OK)
-    status = parse_size_env("YAPPOD_V2_REQUEST_TIMEOUT_MS", timeout, YAP_V2_MAX_TIMEOUT_MS,
-                            &timeout, error, error_size);
-  if (status != YAP_V2_OK) return status;
+    status = read_size(daemon, "request_timeout_ms", YAP_V2_MAX_TIMEOUT_MS, &timeout,
+                       error, error_size);
+  if (status != YAP_V2_OK) { toml_free(root); return status; }
   policy->request_timeout_ms = (uint32_t)timeout;
-  token = getenv("YAPPOD_V2_WRITE_TOKEN");
-  if (token != NULL) {
-    size_t i, length = strlen(token);
+  token = toml_string_in(daemon, "write_token");
+  if (!token.ok && toml_key_exists(daemon, "write_token")) {
+    set_error(error, error_size, "daemon.write_token must be a string");
+    toml_free(root);
+    return YAP_V2_INVALID_FORMAT;
+  }
+  if (token.ok) {
+    size_t i, length = strlen(token.u.s);
     if (length < 16U || length > YAP_V2_WRITE_TOKEN_MAX_BYTES) {
-      set_error(error, error_size, "YAPPOD_V2_WRITE_TOKEN must contain 16 to 255 bytes");
+      set_error(error, error_size, "daemon.write_token must contain 16 to 255 bytes");
+      free(token.u.s); toml_free(root);
       return YAP_V2_INVALID_FORMAT;
     }
     for (i = 0U; i < length; i++)
-      if ((unsigned char)token[i] <= 0x20U || (unsigned char)token[i] == 0x7fU) {
-        set_error(error, error_size, "YAPPOD_V2_WRITE_TOKEN contains whitespace or control bytes");
+      if ((unsigned char)token.u.s[i] <= 0x20U || (unsigned char)token.u.s[i] == 0x7fU) {
+        set_error(error, error_size, "daemon.write_token contains whitespace or control bytes");
+        free(token.u.s); toml_free(root);
         return YAP_V2_INVALID_FORMAT;
       }
-    memcpy(policy->write_token, token, length + 1U); policy->write_token_bytes = length;
+    memcpy(policy->write_token, token.u.s, length + 1U); policy->write_token_bytes = length;
+    free(token.u.s);
   }
+  toml_free(root);
   return YAP_V2_OK;
 }
 

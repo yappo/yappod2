@@ -5,18 +5,21 @@
 
 ## 起動と停止
 
-coreを先に起動し、frontを後から起動します。書き込みHTTP APIを利用する環境では、両processへ
-同じruntime環境変数を渡してください。
+coreを先に起動し、frontを後から起動します。両processへ同じapplication TOMLを渡します。
+
+```toml
+# /srv/yappod/application.toml
+[daemon]
+max_inflight = 16
+max_inflight_bytes = 16777216
+request_timeout_ms = 5000
+write_token = "replace-with-at-least-16-bytes"
+```
 
 ```sh
-export YAPPOD_V2_WRITE_TOKEN='replace-with-at-least-16-bytes'
-export YAPPOD_V2_MAX_INFLIGHT=16
-export YAPPOD_V2_MAX_INFLIGHT_BYTES=16777216
-export YAPPOD_V2_REQUEST_TIMEOUT_MS=5000
-
-yappod_core --index /srv/yappod/index --port 18401
+yappod_core --index /srv/yappod/index --config /srv/yappod/application.toml --port 18401
 yappod_front --index /srv/yappod/index --core-host 127.0.0.1 \
-  --port 18400 --core-port 18401
+  --config /srv/yappod/application.toml --port 18400 --core-port 18401
 ```
 
 停止時はfrontをロードバランサから外し、`/health/ready`への新規probeを止めてからfront、coreの

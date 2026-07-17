@@ -69,10 +69,11 @@ static uint64_t next_request_id = 1U;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s --index INDEX_DIR --core-host HOST [--port PORT] "
+          "Usage: %s --index INDEX_DIR --core-host HOST [--config CONFIG] [--port PORT] "
           "[--core-port PORT]\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --core-host HOST   yappod_core host (required)\n"
+          "  --config CONFIG    Shared application TOML (optional)\n"
           "  --port PORT        HTTP port (default: %d)\n"
           "  --core-port PORT   Internal frame port (default: %d)\n",
           program, DEFAULT_FRONT_PORT, DEFAULT_CORE_PORT);
@@ -598,7 +599,7 @@ static void *run_worker(void *opaque) {
 }
 
 int main(int argc, char **argv) {
-  const char *index_dir = NULL, *core_host = NULL;
+  const char *index_dir = NULL, *core_host = NULL, *config_path = NULL;
   int port = DEFAULT_FRONT_PORT, core_port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0}, probe_error[256] = {0};
   YAP_V2_OPERATIONAL_STATE state;
@@ -610,8 +611,10 @@ int main(int argc, char **argv) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0) {
-      const char **target = strcmp(argv[i], "--index") == 0 ? &index_dir : &core_host;
+    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0 ||
+        strcmp(argv[i], "--config") == 0) {
+      const char **target = strcmp(argv[i], "--index") == 0 ? &index_dir :
+                            strcmp(argv[i], "--core-host") == 0 ? &core_host : &config_path;
       if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
       *target = argv[i];
     } else if (strcmp(argv[i], "--port") == 0 || strcmp(argv[i], "--core-port") == 0) {
@@ -633,7 +636,8 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
-  if (YAP_V2_runtime_policy_load_env(&runtime_policy, policy_error, sizeof(policy_error)) !=
+  if (YAP_V2_runtime_policy_load_config(&runtime_policy, config_path, policy_error,
+                                        sizeof(policy_error)) !=
         YAP_V2_OK ||
       YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
       YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {
