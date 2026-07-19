@@ -3,7 +3,7 @@ format_version = 2
 collection_id = "yappod2-source"
 
 [index]
-directory = "./data/yappod2-index"
+directory = "../data/local-files/yappod2-index"
 
 [tokenizer]
 id = "unicode_nfkc_casefold_v2"
@@ -34,22 +34,20 @@ exclude = [
   "**/.deps/**",
   "**/__pycache__/**",
   "**/node_modules/**",
-  "examples/local-files/data/**",
-  "examples/wikipedia-search/index/**",
-  "examples/wikipedia-search/data/**",
+  "examples/data/**",
 ]
 follow_symlinks = false
 
 [output]
-directory = "./data/yappod2-documents"
+directory = "../data/local-files/yappod2-documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
 [prepare]
-directory = "./data/yappod2-passages"
+directory = "../data/local-files/yappod2-passages"
 
 [embedding]
-directory = "./data/yappod2-vectors"
+directory = "../data/local-files/yappod2-vectors"
 provider = "lmstudio"
 base_url = "http://127.0.0.1:1234/v1"
 model = "text-embedding-embeddinggemma-300m"
@@ -60,13 +58,13 @@ timeout_ms = 60000
 prompt_profile = "embeddinggemma"
 
 [usage_log]
-path = "./data/api-usage.jsonl"
+path = "../data/local-files/api-usage.jsonl"
 
 [build]
 yappo_makeindex = "../../build/yappo_makeindex"
 
 [daemon]
-run_directory = "./data/run"
+run_directory = "../data/local-files/run"
 core_host = "127.0.0.1"
 core_port = 18401
 front_host = "127.0.0.1"

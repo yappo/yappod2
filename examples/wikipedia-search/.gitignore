@@ -1,6 +1,3 @@
-data/
-index/
-run/
 wikipedia-search.toml
 .venv/
 __pycache__/
