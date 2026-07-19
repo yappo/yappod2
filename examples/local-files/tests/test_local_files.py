@@ -1038,6 +1038,21 @@ class LocalFilesTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.base.glob(".output.tmp.*")), [])
 
+    def test_main_reports_config_path_and_recovery_steps(self):
+        stderr = io.StringIO()
+        with mock.patch.object(local_files.sys, "stderr", stderr):
+            status = local_files.main([
+                "all", "--config", str(self.config), "--target", "hybrid",
+            ])
+
+        message = stderr.getvalue()
+        self.assertEqual(status, 1)
+        self.assertIn("local-files: error: 'all' command failed", message)
+        self.assertIn("Reason: cannot load config", message)
+        self.assertIn("Config: {}".format(self.config.resolve()), message)
+        self.assertIn("How to fix:", message)
+        self.assertIn("local-files.toml", message)
+
 
 if __name__ == "__main__":
     unittest.main()

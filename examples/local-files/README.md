@@ -161,8 +161,21 @@ python3 local_files.py build --config local-files.toml --target hybrid
 python3 local_files.py all --config local-files.toml --target hybrid
 ```
 
-各commandは成功時にsummary JSONをstdoutへ1行出力し、失敗理由をstderrへ出して非0で終了します。
-stageを個別実行する場合も、前stageのmanifestとshard checksumを検証してから処理します。
+各commandは成功時にsummary JSONをstdoutへ1行出力し、失敗時は次の形式をstderrへ出して非0で終了します。
+
+```text
+local-files: error: 'all' command failed
+Reason: cannot load config /path/to/local-files.toml: No such file or directory
+Config: /path/to/local-files.toml
+How to fix:
+  1. Check that the --config file exists and is readable: /path/to/local-files.toml
+  2. Compare it with examples/local-files/local-files.toml.
+  3. Run `python3 examples/local-files/local_files.py all --help` to review this command's inputs.
+```
+
+`Reason`だけでなく、確認対象のpathと次に行う操作を表示します。未知のPython例外を調査する場合は、
+`YAPPOD_EXAMPLE_DEBUG=1`を付けて同じcommandを再実行するとtracebackを確認できます。stageを個別実行する場合も、
+前stageのmanifestとshard checksumを検証してから処理します。
 
 ## 必要環境
 

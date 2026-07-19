@@ -145,6 +145,7 @@ export function backgroundStartupError(service, status, pid, timeoutMs, healthUr
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: "inherit", ...options });
+  if (result.error) throw new Error(`cannot run ${command}: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${command} failed with status ${result.status ?? "unknown"}`);
 }
 
@@ -248,16 +249,25 @@ async function start(config) {
 
     if (config.mock.enabled) {
       info("Starting mock LLM");
+      const mockErrorPath = resolve(config.daemon.runDirectory, "mock-llm.error");
       const mockPid = startBackground(
         process.execPath, [resolve(webDir, "scripts/mock-llm.mjs"), "--config", config.path], webDir,
         resolve(config.daemon.runDirectory, "mock-llm.log"),
-        resolve(config.daemon.runDirectory, "mock-llm.error"),
+        mockErrorPath,
       );
       writeFileSync(pidPath(config, "mock-llm"), `${mockPid}\n`, { mode: 0o600 });
-      if (!await waitFor(async () => {
-        try { return (await fetch(`http://${config.mock.host}:${config.mock.port}/health`)).ok; }
-        catch { return false; }
-      })) throw new Error("mock LLM did not become ready");
+      const mockHealthUrl = `http://${config.mock.host}:${config.mock.port}/health`;
+      const mockStatus = await waitForBackgroundReady(async (remainingMs) => {
+        try {
+          return (await fetch(mockHealthUrl, {
+            signal: AbortSignal.timeout(Math.min(1000, remainingMs)),
+          })).ok;
+        } catch { return false; }
+      }, mockPid, config.web.startupTimeoutMs);
+      if (mockStatus !== "ready") {
+        throw backgroundStartupError(
+          "mock LLM", mockStatus, mockPid, config.web.startupTimeoutMs, mockHealthUrl, mockErrorPath);
+      }
       info(`mock LLM is ready (PID ${mockPid})`);
     }
 
@@ -289,6 +299,71 @@ async function start(config) {
   }
 }
 
+function commandLine(configPath, command) {
+  const quotedPath = configPath.includes(" ") ? JSON.stringify(configPath) : configPath;
+  return `node examples/search-web/scripts/stack.mjs ${command} --config ${quotedPath}`;
+}
+
+function actionList(error, command, configPath) {
+  const reason = error instanceof Error ? error.message : String(error);
+  const lower = reason.toLowerCase();
+  const actions = [];
+  if (lower.includes("enoent") || lower.includes("no such file") || lower.includes("cannot read")) {
+    actions.push(`Check that the --config file and every reported path exist and are readable: ${configPath}`);
+    actions.push("Compare the configuration with examples/search-web/config.example.toml.");
+  } else if (["must be", "must use", "must not", "is required", "unknown key", "invalid shared config", "must contain"]
+    .some((token) => lower.includes(token))) {
+    actions.push(`Correct the named setting in ${configPath}.`);
+    actions.push("Compare the affected section with examples/search-web/config.example.toml.");
+  } else if (lower.includes("index path already exists")) {
+    actions.push(`To use the existing index, run \`${commandLine(configPath, "start")}\` instead of build.`);
+    actions.push("To rebuild, set index.directory to an unused path or preserve and remove the old generated index first.");
+  } else if (lower.includes("not a valid index")) {
+    actions.push(`Check that ${configPath} points index.directory to a directory containing manifest.json.`);
+    actions.push("Set index.directory to an unused path to build a new index; do not mix files from different builds.");
+  } else if (lower.includes("yappod binaries not found") || lower.includes("cannot run")) {
+    actions.push("Run `cmake --build build -j` at the repository root.");
+    actions.push(`Check command paths in ${configPath}, then retry.`);
+  } else if (lower.includes("dependencies not found")) {
+    actions.push("Run `npm install` in examples/search-web.");
+    actions.push("Re-run the same stack command after installation succeeds.");
+  } else if (lower.includes("already running")) {
+    actions.push(`Stop the existing stack with \`${commandLine(configPath, "stop")}\`.`);
+    actions.push("If it belongs to another configuration, change the daemon and web ports before retrying.");
+  } else if (lower.includes("pid file") || lower.includes("sigkill")) {
+    actions.push("Inspect the reported PID and process command before changing the PID file.");
+    actions.push(`After confirming process ownership, retry \`${commandLine(configPath, command || "start")}\`.`);
+  } else if (["did not start", "did not become ready", "exited before", "eaddrinuse", "address already in use"]
+    .some((token) => lower.includes(token))) {
+    actions.push("Read the error log path shown above; its final lines contain the startup failure.");
+    actions.push(`Check daemon.core_port, daemon.front_port, web.port, and startup_timeout_ms in ${configPath}.`);
+  } else if (lower.includes("failed with status")) {
+    actions.push("Read the preceding command output; it contains the failing build or service diagnostic.");
+    actions.push("Fix that command first, then re-run the same stack command.");
+  } else if (["permission denied", "eacces", "read-only"].some((token) => lower.includes(token))) {
+    actions.push("Check the reported path's parent directory permissions and the configured listen ports.");
+  }
+  actions.push("Run `node examples/search-web/scripts/stack.mjs build|start|stop --config PATH` to review the command form.");
+  return actions;
+}
+
+export function formatStackError(error, { command, configPath, unexpected = false } = {}) {
+  const reason = error instanceof Error ? (error.message || error.name) : String(error);
+  const operation = ["build", "start", "stop"].includes(command) ? command : "run";
+  const lines = [
+    `search-web: error: cannot ${operation} the example stack`,
+    `Reason: ${reason}`,
+  ];
+  if (configPath) lines.push(`Config: ${configPath}`);
+  lines.push("How to fix:");
+  actionList(error, command, configPath ?? "the path passed to --config")
+    .forEach((action, index) => lines.push(`  ${index + 1}. ${action}`));
+  if (unexpected) {
+    lines.push("  Debug: re-run with YAPPOD_EXAMPLE_DEBUG=1 to include the JavaScript stack trace.");
+  }
+  return lines.join("\n");
+}
+
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const config = await loadSharedConfig(configPathFromArgs(rest));
@@ -302,7 +377,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     await main();
   } catch (error) {
-    console.error(`[error] ${error instanceof Error ? error.message : String(error)}`);
+    if (process.env.YAPPOD_EXAMPLE_DEBUG === "1" && error instanceof Error) {
+      console.error(error.stack ?? error.message);
+    } else {
+      const args = process.argv.slice(2);
+      const configIndex = args.indexOf("--config");
+      const configPath = configIndex >= 0 && args[configIndex + 1]
+        ? resolve(args[configIndex + 1])
+        : undefined;
+      console.error(formatStackError(error, {
+        command: args[0],
+        configPath,
+        unexpected: true,
+      }));
+    }
     process.exitCode = 1;
   }
 }

@@ -90,6 +90,25 @@ examples/wikipedia-search/scripts/stop_demo.sh \
 
 PIDとlogは`[daemon].run_directory`に保存します。portやlisten addressは`[daemon]`と`[web]`で変更します。
 
+## エラーからの復旧
+
+data取得、dump変換、embedding、index/Web起動の各scriptは、失敗した操作、原因、対象path、修正手順をstderrへ
+表示します。例えば存在しないWikiExtractor出力を指定すると、`--input`の実pathと、先にdata準備が必要なことを
+表示します。
+
+```text
+wikipedia-data: error: 'convert-dump' command failed
+Reason: WikiExtractor input does not exist: /path/to/wikiextractor.jsonl
+Input: /path/to/wikiextractor.jsonl
+Output: /path/to/documents.ndjson
+How to fix:
+  1. Confirm that the input exists and is readable: /path/to/wikiextractor.jsonl
+  2. Run the preceding data preparation step if this file has not been generated yet.
+```
+
+未知のPython/JavaScript例外を調査する場合は、`YAPPOD_EXAMPLE_DEBUG=1`を付けて同じcommandを再実行すると
+tracebackまたはstack traceを確認できます。
+
 ## vector/hybrid index
 
 詳細は[vector検索手順](docs/vector-search.md)を参照してください。embeddingはindex生成とWebで同じsectionを

@@ -76,7 +76,20 @@ examples/search-web/scripts/start.sh \
 設定した`[web].host`と`port`をBrowserで開きます。標準は`http://127.0.0.1:4173`です。
 launcherがWebの起動を待つ時間は`[web].startup_timeout_ms`で指定します。標準は8000msです。
 `[web].yappod_timeout_ms`は起動待ちではなく、起動後にWebから`yappod_front`へ送るrequestのtimeoutです。
-起動に失敗した場合、launcherは`[daemon].run_directory/web.error`の末尾をエラーとして表示します。
+起動に失敗した場合、launcherは失敗した操作、原因、使用したconfig、修正手順を表示します。Webまたはmock LLMが
+readyにならなかった場合は、`[daemon].run_directory`にある対応する`.error` logの末尾とhealth check URLも表示します。
+
+```text
+search-web: error: cannot start the example stack
+Reason: Web application exited before becoming ready (PID 123)
+Config: /path/to/application.toml
+How to fix:
+  1. Read the error log path shown above; its final lines contain the startup failure.
+  2. Check daemon.core_port, daemon.front_port, web.port, and startup_timeout_ms in /path/to/application.toml.
+```
+
+launcherやWeb server自体の未知のJavaScript例外を調査する場合は、`YAPPOD_EXAMPLE_DEBUG=1`を付けて再実行すると
+stack traceを確認できます。
 
 ```sh
 examples/search-web/scripts/stop.sh \

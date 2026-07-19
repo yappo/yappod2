@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { backgroundStartupError, reconcilePidFile, waitForBackgroundReady } from "./stack.mjs";
+import {
+  backgroundStartupError,
+  formatStackError,
+  reconcilePidFile,
+  waitForBackgroundReady,
+} from "./stack.mjs";
 import { loadSharedConfig } from "./shared-config.mjs";
 
 const directories = [];
@@ -95,5 +100,19 @@ describe("search Web stack startup", () => {
     expect(error.message).toContain("startup timeout: web.startup_timeout_ms = 30000");
     expect(error.message).toContain(`error log: ${errorPath}`);
     expect(error.message).toContain("configuration failed: invalid key");
+  });
+
+  it("reports the failed operation, config, and exact recovery command", () => {
+    const configPath = "/tmp/example config.toml";
+    const message = formatStackError(
+      new Error(`index path already exists: /tmp/index`),
+      { command: "build", configPath },
+    );
+    expect(message).toContain("search-web: error: cannot build the example stack");
+    expect(message).toContain(`Config: ${configPath}`);
+    expect(message).toContain("How to fix:");
+    expect(message).toContain(
+      'node examples/search-web/scripts/stack.mjs start --config "/tmp/example config.toml"',
+    );
   });
 });

@@ -15,6 +15,7 @@ import mimetypes
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -36,8 +37,11 @@ except ModuleNotFoundError:  # Python 3.9-3.10
         import tomli as tomllib  # type: ignore[no-redef]
     except ModuleNotFoundError:
         print(
-            "local-files: TOML parser is unavailable; run "
-            "python3 -m pip install -r examples/local-files/requirements-core.txt",
+            "local-files: error: required Python package is not installed\n"
+            "Reason: Python 3.9 and 3.10 require the 'tomli' package to read TOML.\n"
+            "How to fix:\n"
+            "  1. Run `python3 -m pip install -r examples/local-files/requirements-core.txt`.\n"
+            "  2. Re-run the same local-files command.",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -72,6 +76,22 @@ TIKA_SUFFIXES = {".doc", ".ppt", ".key", ".pages", ".numbers"}
 
 class LocalFilesError(Exception):
     """Fatal configuration or pipeline error."""
+
+
+class FriendlyArgumentParser(argparse.ArgumentParser):
+    """Argument parser that tells the user how to recover from invalid input."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        help_command = f"{self.prog} --help"
+        self.exit(
+            2,
+            "local-files: error: invalid command arguments\n"
+            f"Reason: {message}\n"
+            "How to fix:\n"
+            f"  1. Run `{help_command}` to see the accepted arguments.\n"
+            "  2. Correct the command and try again.\n",
+        )
 
 
 class FileFailure(Exception):
@@ -2475,11 +2495,108 @@ def run_all(settings: Settings, target: str) -> Dict[str, Any]:
     return result
 
 
+def _local_files_error_actions(
+    reason: str, args: argparse.Namespace, settings: Optional[Settings]
+) -> List[str]:
+    lower = reason.lower()
+    actions: List[str] = []
+    config_path = args.config.expanduser().resolve()
+    if "cannot load config" in lower:
+        actions.extend((
+            f"Check that the --config file exists and is readable: {config_path}",
+            "Compare it with examples/local-files/local-files.toml.",
+        ))
+    elif any(token in lower for token in (
+        "must be", "is required", "cannot exceed", "unknown key", "not supported",
+        "must contain", "must specify", "must match", "config does not exist",
+        "config root", "schema_version", " pattern ", "formatter ", "formatters.",
+        "extract.tika_command", "configuration mismatch",
+    )):
+        actions.extend((
+            f"Correct the named key in {config_path}.",
+            "Compare the affected section with examples/local-files/local-files.toml.",
+        ))
+    elif "environment variable" in lower:
+        match = re.search(r"environment variable ([A-Za-z_][A-Za-z0-9_]*)", reason)
+        variable = match.group(1) if match else "the variable named by authorization_token_env"
+        actions.extend((
+            f"Set {variable} to the service token in the current shell.",
+            f"Keep only the variable name, not the token, in {config_path}.",
+        ))
+    elif any(token in lower for token in ("embedding", "http ", "request failed", "timed out")):
+        actions.extend((
+            f"Check [embedding] endpoint, provider, model, and dimensions in {config_path}.",
+            "Confirm that the embedding service is running and reachable, then retry.",
+        ))
+    elif "yappo_makeindex" in lower:
+        actions.extend((
+            "Run `cmake --build build -j --target yappo_makeindex` at the repository root.",
+            f"Check [build].yappo_makeindex in {config_path} and review the preceding command output.",
+        ))
+    elif any(token in lower for token in (
+        "already exists", "does not match", "manifest", "checksum", "verification failed",
+        "cannot reuse", "build state", "input snapshot", "shard", "checkpoint", "journal",
+        "prepared passage",
+    )):
+        actions.extend((
+            "Do not mix generated artifacts from different inputs or configurations.",
+            "Move or remove only the generated stage directories after preserving anything needed, then rerun.",
+        ))
+    elif any(token in lower for token in ("input", "source file", "no successful", "no files")):
+        root = settings.root if settings is not None else "the configured input.root"
+        actions.extend((
+            f"Check that input.root is readable and contains matching files: {root}",
+            f"Review input.include and input.exclude in {config_path}.",
+        ))
+    elif any(token in lower for token in ("cannot stat", "cannot scan", "cannot read")):
+        actions.extend((
+            "Check that every path named in Reason exists and is readable by the current user.",
+            f"Review the input and generated directory paths in {config_path}.",
+        ))
+    elif "cannot split utf-8 body" in lower:
+        actions.append(f"Increase output.body_max_bytes in {config_path} so one UTF-8 character can fit.")
+    elif any(token in lower for token in ("permission denied", "read-only", "cannot write", "cannot create")):
+        actions.append("Check the reported path's parent directory and its read/write permissions.")
+
+    script_path = Path(__file__).resolve()
+    try:
+        script_name = str(script_path.relative_to(Path.cwd()))
+    except ValueError:
+        script_name = str(script_path)
+    help_command = shlex.join((sys.executable, script_name, args.command, "--help"))
+    actions.append(f"Run `{help_command}` to review this command's inputs.")
+    return actions
+
+
+def _format_local_files_error(
+    error: BaseException, args: argparse.Namespace, settings: Optional[Settings], unexpected: bool = False
+) -> str:
+    reason = str(error) or error.__class__.__name__
+    lines = [
+        f"local-files: error: {args.command!r} command failed",
+        f"Reason: {reason}",
+        f"Config: {args.config.expanduser().resolve()}",
+    ]
+    if settings is not None:
+        lines.append(f"Input root: {settings.root}")
+        lines.append(f"Output directory: {settings.output_dir}")
+    lines.append("How to fix:")
+    for index, action in enumerate(_local_files_error_actions(reason, args, settings), 1):
+        lines.append(f"  {index}. {action}")
+    if unexpected:
+        lines.append(
+            "  Debug: re-run with YAPPOD_EXAMPLE_DEBUG=1 to include the Python traceback."
+        )
+    return "\n".join(lines)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = FriendlyArgumentParser(
         description="Convert local files and build a yappod2 index."
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=FriendlyArgumentParser
+    )
 
     def add_content_options(command_parser: argparse.ArgumentParser) -> None:
         content_group = command_parser.add_mutually_exclusive_group()
@@ -2535,6 +2652,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
+    settings: Optional[Settings] = None
     try:
         if args.command == "convert":
             settings = load_settings(args.config, args.content_match)
@@ -2554,7 +2672,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             raise LocalFilesError(f"unsupported command: {args.command}")
     except LocalFilesError as error:
-        print(f"local-files: {error}", file=sys.stderr)
+        print(_format_local_files_error(error, args, settings), file=sys.stderr)
+        return 1
+    except Exception as error:
+        if os.environ.get("YAPPOD_EXAMPLE_DEBUG") == "1":
+            raise
+        print(_format_local_files_error(error, args, settings, unexpected=True), file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
