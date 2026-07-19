@@ -1,62 +1,13 @@
-# yappod search Web UI
+# Yappod2検索Web UI
 
-任意のyappod2 indexを検索・質問・更新する共通Web UIです。TypeScript、Fastify BFF、React/Viteで構成し、
-lexical、vector、hybrid検索、引用付きRAG、単一文書登録に対応します。Wikipedia固有の実装ではなく、
-`examples/wikipedia-search`と`examples/local-files`の双方から同じapplicationを使用します。
+search-webは、Yappod2の索引をブラウザーから検索・質問・更新するための共通Web UIです。FastifyのBFFと
+React/Viteの画面で構成し、local-filesとWikipediaのどちらの索引にも接続できます。
 
-## 共有設定
+## 必要な環境
 
-index生成adapterとWeb stackは同じapplication TOMLを`--config PATH`で読みます。
-
-主なsectionは次のとおりです。
-
-| section | 利用者 | 用途 |
-|---|---|---|
-| `[index]`、`[tokenizer]`、`[chunking]`、`[vector]`、`[metadata]` | C CLI・index生成 | index directoryとindex構造 |
-| `[build]` | index生成・launcher | binaryと入力 |
-| `[embedding]` | index生成・BFF | provider、model、model ID、次元、prompt、token |
-| `[usage_log]` | index生成・BFF | API usage log |
-| `[daemon]` | core・front・launcher・BFF | PID/log、port、runtime limit、write token |
-| `[web]` | BFF・launcher | listen先とyappod timeout |
-| `[llm]` | BFF | RAG回答生成model |
-| `[mock]` | test/demoのみ | local mock LLM/embedding server |
-
-設定例は[`config.example.toml`](config.example.toml)です。外部APIのsecretはTOMLへ直書きせず、`authorization_token_env`にtokenを保持する環境変数名を
-指定します。daemonの`write_token`は共有設定へ記述します。`config.toml`は`.gitignore`対象です。
-index、PID、log、API usage logなどの生成物は`examples/data/`配下に保存します。
-
-embedding設定の名前は全処理で共通です。
-
-```toml
-[embedding]
-provider = "lmstudio"
-base_url = "http://127.0.0.1:1234/v1"
-model = "text-embedding-embeddinggemma-300m"
-model_id = "embeddinggemma-300m-768-local-v1"
-dimensions = 768
-prompt_profile = "embeddinggemma"
-timeout_ms = 60000
-batch_size = 16
-```
-
-RAG回答生成を有効にする場合は、OpenAI-compatibleなChat Completionsを設定します。
-
-```toml
-[llm]
-base_url = "http://127.0.0.1:1234/v1"
-model = "model-identifier"
-effort = "low"
-max_tokens = 8192
-timeout_ms = 30000
-# authorization_token_env = "LLM_API_KEY"
-```
-
-`max_tokens`は生成token数の上限で、未指定時は8192です。1から131072まで指定でき、上限まで必ず生成する
-ものではありません。reasoningを有効にするproviderでは内部思考も上限を消費する場合があります。
-
-## 起動と停止
-
-依存関係とC binaryを準備します。
+- リポジトリのルートでビルドした`yappod_core`と`yappod_front`が必要です。
+- Node.js 22以上とnpmが必要です。
+- 検索対象の有効なv2索引が必要です。
 
 ```sh
 cmake --build build -j
@@ -65,19 +16,81 @@ npm install
 cd ../..
 ```
 
-有効な`[index].directory`を持つ設定を指定して、core、front、production BFF/UIをまとめて起動します。
-launcherは既存indexを上書きしません。
+## 設定
+
+search-web、デーモン、索引作成用の変換プログラムは同じアプリケーション用TOMLを読みます。設定例は
+[`config.example.toml`](config.example.toml)です。local-filesやWikipediaでは、それぞれのサンプルが用意する
+TOMLをそのまま指定できます。
 
 ```sh
 examples/search-web/scripts/start.sh \
   --config examples/local-files/local-files-yappod2.toml
 ```
 
-設定した`[web].host`と`port`をBrowserで開きます。標準は`http://127.0.0.1:4173`です。
-launcherがWebの起動を待つ時間は`[web].startup_timeout_ms`で指定します。標準は8000msです。
-`[web].yappod_timeout_ms`は起動待ちではなく、起動後にWebから`yappod_front`へ送るrequestのtimeoutです。
-起動に失敗した場合、launcherは失敗した操作、原因、使用したconfig、修正手順を表示します。Webまたはmock LLMが
-readyにならなかった場合は、`[daemon].run_directory`にある対応する`.error` logの末尾とhealth check URLも表示します。
+主な設定は次のとおりです。
+
+| セクション | 用途 |
+|---|---|
+| `[index]` | 接続する索引ディレクトリです。 |
+| `[daemon]` | coreとfrontのアドレス、PID、ログ、処理上限です。 |
+| `[web]` | BFFのアドレスと各種タイムアウトです。 |
+| `[embedding]` | 検索文から検索ベクトルを生成する接続先です。 |
+| `[llm]` | RAGの回答を生成する接続先です。 |
+| `[usage_log]` | embeddingとLLMの利用量を記録するパスです。 |
+| `[mock]` | テストとデモに使うローカルの模擬サービスです。 |
+
+全キーは[設定リファレンス](../../docs/configuration.md)を参照してください。
+
+## 起動
+
+起動スクリプトはcore、front、配布用にビルドしたBFFと画面を起動し、ヘルスチェックが成功するまで待ちます。索引が
+存在しない場合に作成する構成もありますが、有効な既存索引は上書きしません。
+
+```sh
+examples/search-web/scripts/start.sh --config /path/to/application.toml
+```
+
+既定のURLは`http://127.0.0.1:4173`です。`[web].startup_timeout_ms`は起動完了を待つ時間、
+`yappod_timeout_ms`は起動後にBFFがfrontの応答を待つ時間です。
+
+## 検索
+
+語句による検索はベクトルを持たない索引でも利用できます。ベクトル検索と複合検索では、索引にベクトル用
+コンポーネントがあり、`[embedding]`が索引と同じ`model_id`と`dimensions`で検索ベクトルを生成できる必要があります。
+
+画面の検索結果にはタイトル、URLまたはローカルパス、抜粋を表示します。詳細表示ではgeneration、文書ID、各スコアを
+確認できます。続きを取得するときはBFFがfrontのカーソルをそのまま利用します。
+
+## 質問とRAG
+
+質問画面は`/v2/retrieve`から本文断片と出典を取得します。`[llm]`がなければ参照資料だけを表示し、設定されている
+場合はBFFがOpenAI互換Chat Completionsへ回答生成を依頼します。
+
+回答中の`[1]`などの番号は、取得した参照資料と一致する場合だけ表示します。LLM接続、設定、空の回答、タイムアウトの
+確認方法は[LLM連携](docs/llm-integration.md)を参照してください。
+
+## 文書登録
+
+文書登録は`/v2/passages:prepare`でパッセージを作り、必要ならBFFでembeddingを生成してから
+`/v2/documents:batch`へ送ります。`[daemon].write_token`がある場合はBFFも同じ設定からトークンを読みます。
+
+登録内容は現在の索引だけに反映されます。local-filesやWikipediaの元データへは戻らないため、一連の処理で索引を
+再作成すると手動登録分は失われます。
+
+## 停止
+
+起動時と同じ設定ファイルを指定します。
+
+```sh
+examples/search-web/scripts/stop.sh --config /path/to/application.toml
+```
+
+PIDとログは`[daemon].run_directory`にあります。停止スクリプトはPIDが対象プロセスを指すことを確認してから停止します。
+
+## 起動できない場合
+
+起動失敗時は、失敗した操作、原因、設定パス、修正手順、ヘルスチェックURL、エラーログの末尾を標準エラー出力へ
+表示します。まず表示された`.error`を確認してください。
 
 ```text
 search-web: error: cannot start the example stack
@@ -88,62 +101,18 @@ How to fix:
   2. Check daemon.core_port, daemon.front_port, web.port, and startup_timeout_ms in /path/to/application.toml.
 ```
 
-launcherやWeb server自体の未知のJavaScript例外を調査する場合は、`YAPPOD_EXAMPLE_DEBUG=1`を付けて再実行すると
-stack traceを確認できます。
+英語のエラー本文は実装が出力する文字列です。意味と追加の確認手順は
+[サンプルの問題解決](../troubleshooting.md)を参照してください。
 
-```sh
-examples/search-web/scripts/stop.sh \
-  --config examples/local-files/local-files-yappod2.toml
-```
-
-`[daemon].run_directory`には`core.pid`、`front.pid`、`web.pid`と各logを保存します。同じ設定で二重起動した
-場合は生存中のprocessを検出して起動を拒否します。強制終了などで残ったPID fileや、PIDが別processへ
-再利用されたPID fileは`[warn]`を表示して削除します。PIDの参照先を確認できない場合は、別processを
-誤って停止しないよう`[error]`で処理を中止します。
-
-## local-files index
-
-local-filesのapplication TOMLは収集、embedding、index生成、Web起動で共有します。
-
-```sh
-examples/local-files/.venv/bin/python \
-  examples/local-files/local_files.py all \
-  --config examples/local-files/local-files-yappod2.toml \
-  --target lexical
-
-examples/search-web/scripts/start.sh \
-  --config examples/local-files/local-files-yappod2.toml
-```
-
-local-files文書はURLを持たず、titleにroot相対pathを保存します。UIはpathをリンクなしで表示し、URL付き文書
-だけを外部リンクにします。lexical indexでも検索とlexical RAGを利用できます。vector/hybridではindex生成時と
-同じ`[embedding]`をBFFも読むため、model ID・次元・promptの二重設定はありません。
-
-文書登録を使う場合は`[daemon].write_token`へ16文字以上のtokenを設定します。手動登録は現在のindexだけを
-更新し、local-filesの入力fileや生成shardへは逆流しません。pipelineでindexを再生成すると手動登録分は失われます。
-
-## Wikipedia index
-
-Wikipedia sampleは`wikipedia-search.example.toml`をcopyした
-`examples/wikipedia-search/wikipedia-search.toml`を共有設定として使用します。
-
-```sh
-examples/wikipedia-search/scripts/start_demo.sh \
-  --config examples/wikipedia-search/wikipedia-search.toml
-```
-
-indexがなければ`[build].input`と同じapplication設定から作成し、存在する場合はそのまま起動します。
-停止も同じ設定を指定します。
-
-## 開発とテスト
-
-開発時は`config.example.toml`を`config.toml`へcopyし、接続するindexとportを編集します。
+## 開発
 
 ```sh
 cd examples/search-web
 cp config.example.toml config.toml
 npm run dev
 ```
+
+変更後は次を実行します。
 
 ```sh
 npm run typecheck
@@ -152,7 +121,5 @@ npm run build
 npm run test:e2e
 ```
 
-E2Eは設定fileに一時port、mock、tokenを記述し、外部networkや環境変数を使わずにcore、front、BFF/UIを
-起動します。URL付きWikipedia形式文書と、URLなしlocal-files形式文書の両方を確認します。
-
-画面のtask、状態設計、wireframeは[UX設計](docs/ux-design.md)を参照してください。
+E2Eは一時ポートと模擬サービスを使い、外部ネットワークへ接続しません。画面の情報設計は
+[UX設計](docs/ux-design.md)を参照してください。
