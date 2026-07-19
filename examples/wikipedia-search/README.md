@@ -137,9 +137,14 @@ Chat Completionsへ質問とcitationを送り、`[1]`形式の参照番号を検
 base_url = "http://127.0.0.1:1234/v1"
 model = "model-identifier"
 effort = "low"
+max_tokens = 8192
 timeout_ms = 30000
 # authorization_token_env = "LLM_API_KEY"
 ```
+
+`max_tokens`はChat Completionsへ送る生成token数の上限で、既定値は8192です。値は1から131072まで
+指定できます。上限まで必ず生成する指定ではなく、modelが回答を完了すればその時点で停止します。reasoningを
+有効にするproviderでは内部思考もこの上限を消費する場合があるため、長いcontextでは回答本文の分も含めて設定します。
 
 文書登録を認証する場合は`[daemon].write_token`へ16文字以上のtokenを設定します。core、front、BFFは同じ
 設定を読むため、tokenの二重設定はありません。

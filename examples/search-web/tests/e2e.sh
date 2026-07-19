@@ -77,6 +77,7 @@ yappod_timeout_ms = 5000
 base_url = "http://127.0.0.1:$mock_port/v1"
 model = "yappod-demo-mock"
 effort = "low"
+max_tokens = 8192
 timeout_ms = 30000
 
 [embedding]

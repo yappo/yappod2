@@ -6,6 +6,7 @@ export interface LlmClientOptions {
   baseUrl: string;
   model: string;
   effort?: string;
+  maxTokens: number;
   authorizationToken?: string;
   timeoutMs: number;
   usageLog?: UsageLogger;
@@ -43,6 +44,7 @@ export class OpenAICompatibleClient {
         body: JSON.stringify({
           model: this.options.model,
           ...(this.options.effort ? { reasoning_effort: this.options.effort } : {}),
+          max_tokens: this.options.maxTokens,
           messages: [{
             role: "system",
             content: [

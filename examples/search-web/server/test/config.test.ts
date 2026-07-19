@@ -80,13 +80,14 @@ batch_size = 8
     await expect(loadWebConfig(invalid)).rejects.toThrow("embedding.provider must be lmstudio, ollama, or openai");
   });
 
-  it("loads model, effort, timeout and authorization token from the named environment variable", async () => {
+  it("loads model, effort, output limit, timeout and authorization token from the named environment variable", async () => {
     process.env.YAPPOD_TEST_LLM_TOKEN = "server-secret";
     const path = await configFile(`
 [llm]
 base_url = "http://127.0.0.1:1234/v1"
 model = "local-model"
 effort = "low"
+max_tokens = 16384
 authorization_token_env = "YAPPOD_TEST_LLM_TOKEN"
 timeout_ms = 45000
 `);
@@ -95,10 +96,19 @@ timeout_ms = 45000
         baseUrl: "http://127.0.0.1:1234/v1",
         model: "local-model",
         effort: "low",
+        maxTokens: 16384,
         authorizationToken: "server-secret",
         timeoutMs: 45000,
       },
     });
+  });
+
+  it("defaults the LLM output limit to 8192 and rejects invalid limits", async () => {
+    const defaults = await configFile("[llm]\nbase_url='http://localhost:1234/v1'\nmodel='m'\n");
+    await expect(loadWebConfig(defaults)).resolves.toMatchObject({ llm: { maxTokens: 8192 } });
+
+    const invalid = await configFile("[llm]\nbase_url='http://localhost:1234/v1'\nmodel='m'\nmax_tokens=0\n");
+    await expect(loadWebConfig(invalid)).rejects.toThrow("llm.max_tokens must be an integer from 1 to 131072");
   });
 
   it("rejects unknown keys and incomplete LLM settings", async () => {
