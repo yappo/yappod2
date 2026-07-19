@@ -1,45 +1,53 @@
-Yappod2 installation
-====================
+# Yappod2のインストール
 
-Requirements
-------------
+## 必要なソフトウェア
 
-- CMake 3.20 or newer
-- C and C++ compiler
-- cmocka
-- ICU4C
-- libcurl
-- libevent
+- CMake 3.20以上が必要です。
+- CおよびC++コンパイラーが必要です。
+- cmocka、ICU4C、libcurl、libeventが必要です。
 
-Berkeley DB and zlib are not used by the v2 product.
+Berkeley DBとzlibは、現在のv2製品では使用しません。tomlc99、yyjson、USearchはCMakeが版を固定した
+ソースコードを取得してビルドします。
 
-Build and test
---------------
+## macOS
 
-On macOS, install the dependencies with Homebrew. CMake detects Homebrew and
-adds the installed formula prefixes to its dependency search paths:
+Homebrewで依存ライブラリをインストールします。
 
-    brew install cmake cmocka icu4c libevent curl
+```sh
+brew install cmake cmocka icu4c libevent curl
+```
 
-Homebrew is queried read-only. CMake does not install formulae or repair
-previous dependency results in an existing cache. The build commands are the
-same on every platform:
+CMakeはHomebrewのインストール先を参照しますが、パッケージを自動でインストールしたり、既存のCMake
+キャッシュを修復したりしません。
 
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build -j
-    ctest --test-dir build --output-on-failure
+## Ubuntu
 
-Install
--------
+```sh
+sudo apt-get update
+sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev \
+  libcurl4-openssl-dev libevent-dev
+```
 
-    cmake --install build --prefix "$HOME/yappod2"
+## ビルドとテスト
 
-Installed executables are:
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
 
-- `yappo_makeindex`: prepare canonical input, build an index, or publish updates
-- `search`: run lexical, vector, or hybrid search against a v2 index
-- `yappo_compact`: compact live records and collect orphan segments
-- `yappod_core`: serve the internal v2 frame protocol
-- `yappod_front`: serve the v2 HTTP API
+## インストール
 
-See README.md for a clean-checkout indexing and search example.
+```sh
+cmake --install build --prefix "$HOME/yappod2"
+```
+
+次の実行ファイルがインストールされます。
+
+- `yappo_makeindex`は入力変換、索引作成、更新、検証を行います。
+- `search`は索引を直接検索します。
+- `yappo_compact`は有効なレコードを新しいセグメントへまとめます。
+- `yappod_core`は内部検索プロトコルを提供します。
+- `yappod_front`はHTTP APIを提供します。
+
+索引の作成から検索までの手順は[README](README.md)を参照してください。

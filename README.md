@@ -1,29 +1,43 @@
 # Yappod2
 
-Yappod2 は、単一ノード向けの UTF-8 検索基盤です。immutable segment と atomic manifest を
-使い、BM25F lexical 検索、HNSW vector 検索、RRF hybrid 検索、RAG 向け passage 取得、
-NRT upsert/delete、compaction を提供します。正式な index 形式は v2 のみです。
-Berkeley DB 形式、旧検索 protocol、旧 CLI/API との互換性はありません。旧 index は元文書から
-再索引してください。
+Yappod2は、1台のサーバーで動作する全文検索エンジンです。UTF-8の文書を索引へ登録し、
+語句による検索、ベクトルによる類似検索、両者を組み合わせた検索を利用できます。
+検索結果から引用可能な本文断片を取得できるため、RAGの検索部分にも利用できます。
 
-## 必要環境
+索引は作成後に変更しないセグメントと、世代管理されたmanifestで構成します。文書の追加・更新・削除は新しい
+generationとして公開され、検索処理には公開前または公開後の完全な状態だけが見えます。
 
-- CMake 3.20 以上
-- C/C++ compiler
-- cmocka、ICU4C、libcurl、libevent
-- CMake が取得・固定する tomlc99、yyjson、USearch の source dependency
+## 主な機能
 
-macOS:
+- BM25Fによる語彙検索
+- USearch HNSWと全件走査によるベクトル検索
+- Reciprocal Rank Fusion（RRF）による複合検索
+- 文書単位とパッセージ単位の検索
+- メタデータフィルター、フレーズ検索、カーソルによる続きの取得
+- RAG向けの本文断片と出典情報の取得
+- NDJSONによる文書の追加、更新、削除
+- 変更しないセグメントのコンパクションと破損検証
+- `yappod_front`が提供するHTTP APIとPrometheus形式のメトリクス
+
+正式な索引形式はv2だけです。Berkeley DBを使った旧索引、旧検索プロトコル、旧コマンドとの互換性は
+ありません。旧索引を利用している場合は、元文書から新しい索引を作成してください。
+
+## 必要な環境
+
+- CMake 3.20以上
+- CおよびC++コンパイラー
+- cmocka
+- ICU4C
+- libcurl
+- libevent
+
+macOSではHomebrewで依存ライブラリをインストールできます。
 
 ```sh
 brew install cmake cmocka icu4c libevent curl
 ```
 
-macOSではCMakeがHomebrewを検出し、ICU4C、libevent、curlのinstall prefixを依存libraryの
-探索先へ追加します。Homebrewに対する操作はprefixの参照だけで、formulaのinstallや既存の
-CMake cacheの修復は行いません。
-
-Ubuntu:
+Ubuntuでは次のパッケージをインストールします。
 
 ```sh
 sudo apt-get update
@@ -31,25 +45,71 @@ sudo apt-get install -y cmake g++ libcmocka-dev libicu-dev \
   libcurl4-openssl-dev libevent-dev
 ```
 
-## Clean checkout から検索まで
+## ビルドとテスト
+
+リポジトリのルートディレクトリで実行します。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
 
-rm -rf examples/index
+インストールする場合は次のように実行します。
+
+```sh
+cmake --install build --prefix "$HOME/yappod2"
+```
+
+依存関係とインストール内容は[インストール手順](INSTALL)で説明しています。
+
+## 最初の索引を作成する
+
+まず、語句による検索だけを使う小さな索引を作成します。設定例では索引を
+`examples/index-lexical`へ作成します。
+
+```sh
+./build/yappo_makeindex build \
+  --config examples/config.lexical.toml \
+  --input examples/documents.lexical.ndjson
+```
+
+成功すると、索引ディレクトリに`config.toml`、`manifest.json`、`segments/`が作成されます。
+出力先がすでに存在する場合は上書きしません。
+
+```sh
+./build/search \
+  --config examples/config.lexical.toml \
+  --mode lexical \
+  --query "modern search"
+```
+
+`--scope documents`が既定値です。パッセージ単位で検索する場合は`--scope passages`を指定します。
+`--limit`には1から100までを指定でき、既定値は10です。
+
+## ベクトルを使った検索
+
+`examples/config.toml`は3次元の動作確認用ベクトルを使う設定です。入力NDJSONの`vectors`には、
+文書をチャンクへ分割した後のパッセージ順でベクトルを指定します。
+
+```sh
 ./build/yappo_makeindex build \
   --config examples/config.toml \
   --input examples/documents.ndjson
+```
 
-./build/search \
-  --config examples/config.toml \
-  --mode lexical \
-  --query "modern search"
+類似検索では、索引と同じ次元の検索ベクトルを渡します。
+
+```sh
 ./build/search \
   --config examples/config.toml \
   --mode vector \
-  --vector "0,1,0"
+  --vector "1,0,0"
+```
+
+語句とベクトルの両方を使う場合は次のように実行します。
+
+```sh
 ./build/search \
   --config examples/config.toml \
   --mode hybrid \
@@ -57,130 +117,110 @@ rm -rf examples/index
   --vector "1,0,0"
 ```
 
-`build` の出力先は存在していない path である必要があります。入力または index 作成に失敗した
-場合、完成していない出力先は公開されません。
+Yappod2の検索APIは、検索文を外部のembeddingサービスへ送信しません。実際のアプリケーションでは、
+索引作成時と同じモデルから検索ベクトルを生成して渡してください。search-webでは
+`[embedding]`を設定すると、この処理をBFFが担当します。
 
-## Index 設定と canonical 入力
+設定ファイルで`[vector].enabled = true`へ変更しても、既存の語彙索引にベクトルは追加されません。
+ベクトルを含むNDJSONを用意し、新しいディレクトリへ索引を作成する必要があります。詳しくは
+[設定リファレンス](docs/configuration.md)を参照してください。
 
-同じapplication `config.toml`をindex生成、検索、compaction、daemon起動で使用します。
-`[index].directory`、tokenizer、chunking、vector、metadata、daemon設定を保持します。indexには
-index構造に必要なsectionだけが`index/config.toml`として保存されます。
+## 設定ファイル
 
-標準入力は 1 行 1 operation の NDJSON です。
+`yappo_makeindex`、`search`、`yappo_compact`、`yappod_core`、`yappod_front`は、同じアプリケーション用
+TOMLを`--config`で読みます。主なセクションは次のとおりです。
+
+| セクション | 用途 |
+|---|---|
+| `[index]` | 索引ディレクトリを指定します。 |
+| `[tokenizer]`、`[chunking]` | 文字列の正規化とパッセージ分割を指定します。 |
+| `[vector]` | 索引へ保存するベクトルの互換条件を指定します。 |
+| `[metadata]` | 検索時に絞り込み可能なメタデータのフィールドを指定します。 |
+| `[daemon]` | coreとfrontの接続先、PID、ログ、処理上限を指定します。 |
+| `[embedding]` | サンプルが利用するembedding APIへの接続を指定します。 |
+| `[web]`、`[llm]` | search-webと回答生成サービスを指定します。 |
+
+相対パスは設定ファイルがあるディレクトリを基準に解決します。各キーの型、既定値、範囲、利用する
+プログラムは[設定リファレンス](docs/configuration.md)にまとめています。
+
+## 正式な入力NDJSON
+
+正式な入力は、1行に1操作を書くUTF-8のNDJSONです。
 
 ```json
-{"operation":"upsert","id":"doc-1","url":"https://example.test/1","title":"Title","body":"Body","metadata":{"language":"ja"},"vectors":[[0.1,0.2,0.3]]}
+{"operation":"upsert","id":"doc-1","url":"https://example.test/1","title":"検索入門","body":"検索対象となる本文です。","metadata":{"language":"ja"}}
+{"operation":"delete","id":"doc-2"}
 ```
 
-precomputed vector は chunk 後の passage 順に指定します。TSV を使う場合は明示的な adapter で
-canonical NDJSON に変換します。
+`upsert`では`id`と`body`が必須です。`url`、`title`、`metadata`、`updated_at_unix_ms`は省略できます。
+ベクトル対応索引では、生成されるパッセージ数と同じ数の`vectors`が必要です。入力形式の詳細は
+[索引作成](docs/indexing.md)を参照してください。
 
-```sh
-./build/yappo_makeindex prepare \
-  --config config.toml \
-  --input documents.tsv \
-  --input-format tsv \
-  --output documents.ndjson
-```
-
-入力 schema の詳細は [canonical ingest](docs/canonical_ingest.md)、index の on-disk 契約は
-[v2 index contract](docs/index_v2_contract.md)を参照してください。
-
-## 更新と compaction
-
-最大 100 operation の batch を一つの generation として atomic に反映します。
+## 索引を更新する
 
 ```sh
 ./build/yappo_makeindex update \
-  --config examples/config.toml \
+  --config examples/config.lexical.toml \
   --input operations.ndjson
-
-./build/yappo_compact --config examples/config.toml
 ```
 
-同一 document ID は新しい segment が優先され、delete tombstone は古い record を隠します。
-compaction は live record だけを新しい segment に書き、manifest 公開後に orphan を回収します。
-詳細は [manifest/NRT](docs/manifest_nrt.md) と
-[compaction/recovery](docs/compaction_recovery.md)を参照してください。
+1回の更新では最大100操作を不可分に公開します。同じ文書IDを更新すると新しいセグメントが優先され、
+削除操作は古い文書を検索結果から隠します。
 
-## Index の全検証
-
-全 component の checksum と内部構造を手動で検証します。成功時は終了コード `0`、失敗時は
-非 `0` なので cron や監視から実行できます。
+不要になった古いレコードをまとめる場合はコンパクションを実行します。
 
 ```sh
-./build/yappo_makeindex verify --config examples/config.toml
+./build/yappo_compact --config examples/config.lexical.toml
 ```
 
-検索時にはこの全検証を実行しません。実施タイミングの仕様は
-[index validation](doc/index-validation.md)を参照してください。
+## 索引を検証する
 
-## HTTP daemon
-
-core を先に、front を後に起動します。両 process は background 化し、`[daemon].run_directory`に
-PID と log を作成します。
-daemon用には`18400`–`18409`を予約し、現在はfrontが`18400`、coreが`18401`を使用します。
+コンポーネントの大きさ、チェックサム、内部構造をすべて確認する場合は次を実行します。
 
 ```sh
-/path/to/yappod2/build/yappod_core --config /path/to/config.toml
-/path/to/yappod2/build/yappod_front --config /path/to/config.toml
+./build/yappo_makeindex verify --config examples/config.lexical.toml
 ```
 
-公開 endpoint:
+通常の検索では毎回この全検証を行いません。起動時と手動検証の違いは
+[索引の更新と保守](docs/index-lifecycle.md)で説明しています。
 
-```text
-POST /v2/search
-POST /v2/retrieve
-POST /v2/documents:batch
-GET  /health/live
-GET  /health/ready
-GET  /metrics
+## HTTP APIを起動する
+
+`yappod_core`を先に起動し、その後で`yappod_front`を起動します。両プログラムはデーモンとして動作し、
+`[daemon].run_directory`へPIDとログを保存します。
+
+```sh
+./build/yappod_core --config examples/config.lexical.toml
+./build/yappod_front --config examples/config.lexical.toml
 ```
 
-検索例:
+既定ではfrontが`127.0.0.1:18400`、coreが`127.0.0.1:18401`を使用します。
 
 ```sh
 curl -sS -H 'Content-Type: application/json' \
-  --data '{"query":"modern search","vector":[1,0,0],"mode":"hybrid","scope":"documents","limit":20}' \
+  --data '{"query":"modern search","mode":"lexical","scope":"documents","limit":10}' \
   http://127.0.0.1:18400/v2/search
 ```
 
-RAG 用 passage 取得例:
+公開HTTP APIは[`yappod_front` APIリファレンス](docs/yappod-front-api.md)、front/core間の通信は
+[`yappod_core`内部プロトコル](docs/yappod-core-protocol.md)で説明しています。
 
-```sh
-curl -sS -H 'Content-Type: application/json' \
-  --data '{"query":"grounded context","vector":[0,1,0],"mode":"hybrid","limit":10,"max_passages_per_document":2,"max_context_bytes":32768}' \
-  http://127.0.0.1:18400/v2/retrieve
-```
+## サンプル
 
-`/v2/retrieve` は passage 本文、source document metadata、元文書内 offset、context 内 offset、
-各 score を返します。LLM による回答生成は行いません。HTTP schema は
-[search/RAG HTTP v2](docs/search_rag_http_v2.md)を参照してください。
+| サンプル | 用途 |
+|---|---|
+| [`examples/local-files`](examples/local-files/README.md) | 手元の文書やソースコードを収集して検索します。 |
+| [`examples/wikipedia-search`](examples/wikipedia-search/README.md) | 日本語Wikipediaから検索・RAG用索引を作成します。 |
+| [`examples/search-web`](examples/search-web/README.md) | 索引を検索・質問・更新するWeb UIを起動します。 |
 
-write endpoint を公開する環境では、共有application TOMLの`[daemon]`へ16 byte以上のtokenを設定し、
-両daemonへ同じ設定fileを渡してください。
+選び方と必要な準備は[サンプル一覧](examples/README.md)を参照してください。
 
-```toml
-[daemon]
-write_token = "replace-with-a-secret-token"
-```
+## 困ったときは
 
-更新 request は `Authorization: Bearer ...` が必要になります。deadline、in-flight 上限を含む
-全設定は [runtime limits and security](docs/runtime_limits_security.md)、起動・監視・障害対応は
-[operations runbook](docs/operations_runbook_v2.md)を参照してください。
+- 設定を読み込めない場合は、相対パス、必須セクション、未知のキーを確認してください。
+- ベクトル検索に失敗する場合は、索引の`model_id`、`dimensions`、`metric`と検索ベクトルを確認してください。
+- デーモンが起動しない場合は、`[daemon].run_directory`にある`.error`と`.log`を確認してください。
+- サンプルのエラーには`Reason`と`How to fix`が表示されます。詳しくは
+  [サンプルの問題解決](examples/troubleshooting.md)を参照してください。
 
-## Test、install、release gate
-
-```sh
-ctest --test-dir build --output-on-failure
-cmake --install build --prefix /tmp/yappod2-install
-```
-
-CTest は全検索 mode、RAG retrieval、atomic update、compaction/crash recovery、HTTP daemon、
-ANN Recall@10、hybrid nDCG@10、並行検索/更新を検証します。CI は Ubuntu/macOS build、全 CTest、
-ASan/UBSan、parser fuzz、install 後の再索引と検索 smoke を実行します。
-
-100 万 document、300 万 passage、768 dimension の性能受入れは専用 corpus と基準 hardware 上で
-別途実行します。小規模 CI の結果で代替しません。手順と閾値は
-[quality/performance/reliability gate](docs/quality_performance_reliability_v2.md)、製品全体の判定条件は
-[modern search completion contract](docs/modern_search_completion_contract.md)を参照してください。
+文書全体の案内は[ドキュメント一覧](docs/README.md)にあります。
