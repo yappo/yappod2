@@ -1,37 +1,28 @@
-# 日本語Wikipedia検索・RAG sample
+# 日本語WikipediaをYappod2で検索する
 
-日本語Wikipediaの記事をcanonical NDJSONへ変換し、yappod2 indexを作成するsampleです。検索・質問・文書登録の
-Web UIはWikipedia固有実装ではなく、[`../search-web`](../search-web/README.md)の共通applicationを使用します。
+このサンプルは、日本語Wikipediaの記事を正式な入力NDJSONへ変換し、Yappod2の索引を作成します。検索、質問、
+文書登録には共通の[search-web](../search-web/README.md)を利用します。
 
-## 必要環境
+## 必要な環境
 
-- repository rootでbuild済みの`yappo_makeindex`、`yappod_core`、`yappod_front`
-- Python 3.9以上
-- Web UIを使う場合はNode.js 22以上とnpm
-- dump変換ではWikiExtractor
-- vector/hybridではLM Studio、Ollama、またはOpenAI互換embedding endpoint
+- ビルド済みの`yappo_makeindex`、`yappod_core`、`yappod_front`が必要です。
+- Python 3.9以上が必要です。
+- Web UIにはNode.js 22以上とnpmが必要です。
+- ダンプ変換にはWikiExtractorが必要です。
+- embeddingにはLM Studio、Ollama、またはOpenAI互換エンドポイントが必要です。
 
 ```sh
 cmake --build build -j
-```
-
-## 設定file
-
-`wikipedia-search.toml`にWikipedia入力、index directoryと構造、embedding、daemon、Web、LLMを
-まとめます。`yappo_makeindex`、daemon、Web UIは同じfileを`--config`で読みます。
-外部APIのsecretは`authorization_token_env`で環境変数を参照します。
-
-設定例をcopyして使用します。`wikipedia-search.toml`は`.gitignore`対象です。認証tokenを使う場合は
-このcommit対象外の設定へ直接記述し、所有者だけが読めるpermissionにしてください。
-
-```sh
 cp examples/wikipedia-search/wikipedia-search.example.toml \
   examples/wikipedia-search/wikipedia-search.toml
 ```
 
-## Action APIから記事を取得
+相対パスは`wikipedia-search.toml`があるディレクトリを基準に解決します。外部APIのトークンは
+`authorization_token_env`から環境変数を参照します。
 
-既定ではtopicを分散させながら最大1,000記事を取得します。出力は1行1 operationのcanonical NDJSONです。
+## Action APIから記事を取得する
+
+次のコマンドは話題を分散させながら最大1000記事を取得し、正式な入力NDJSONへ保存します。
 
 ```sh
 python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
@@ -39,23 +30,19 @@ python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
   --output examples/data/wikipedia-search/documents.ndjson
 ```
 
-User-Agentを変更する場合は環境変数ではなく`--user-agent`を指定します。
+Wikimediaへ送るUser-Agentを変更する場合は`--user-agent`を指定します。連絡先を含む、自分の利用目的に合った値を
+使ってください。ネットワークまたはHTTPエラーが発生した場合、途中結果を完成済みファイルとして公開しません。
 
-```sh
-python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
-  --user-agent 'my-project/1.0 (contact@example.com)' \
-  --limit 1000 \
-  --output examples/data/wikipedia-search/documents.ndjson
-```
+## ダンプを変換する
 
-## dumpを変換
+ダンプを取得します。
 
 ```sh
 python3 examples/wikipedia-search/wikipedia_data.py download-dump \
   --output-dir examples/data/wikipedia-search/dump
 ```
 
-WikiExtractorのJSON Lines出力をcanonical NDJSONへ変換します。
+チェックサムを確認した後、WikiExtractorのJSON Linesを正式な入力NDJSONへ変換します。
 
 ```sh
 python3 examples/wikipedia-search/wikipedia_data.py convert-dump \
@@ -63,62 +50,41 @@ python3 examples/wikipedia-search/wikipedia_data.py convert-dump \
   --output examples/data/wikipedia-search/documents.ndjson
 ```
 
-## lexical indexとWeb UIを一括起動
+入力不足、不正なJSON、空のデータ集合、重複IDを検出した場合は出力を公開しません。
 
-最初にWeb依存関係をinstallします。
+## 語句で検索する索引を作る
 
-```sh
-cd examples/search-web
-npm install
-cd ../..
-```
-
-`wikipedia-search.toml`の`[build].input`と`[index].directory`を使用します。indexがなければ作成し、
-有効な既存indexはそのまま利用します。
+初期設定では`[vector].enabled = false`です。`[build].input`が取得済みNDJSONを指していることを確認します。
 
 ```sh
-examples/wikipedia-search/scripts/start_demo.sh \
+node examples/search-web/scripts/stack.mjs build \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-標準URLは`http://127.0.0.1:4173`です。停止時も同じ設定を指定します。
+CLIから検索できます。
 
 ```sh
-examples/wikipedia-search/scripts/stop_demo.sh \
-  --config examples/wikipedia-search/wikipedia-search.toml
+./build/search \
+  --config examples/wikipedia-search/wikipedia-search.toml \
+  --mode lexical \
+  --query "検索エンジン"
 ```
 
-PIDとlogは`[daemon].run_directory`に保存します。portやlisten addressは`[daemon]`と`[web]`で変更します。
+## embeddingを付ける
 
-## エラーからの復旧
-
-data取得、dump変換、embedding、index/Web起動の各scriptは、失敗した操作、原因、対象path、修正手順をstderrへ
-表示します。例えば存在しないWikiExtractor出力を指定すると、`--input`の実pathと、先にdata準備が必要なことを
-表示します。
-
-```text
-wikipedia-data: error: 'convert-dump' command failed
-Reason: WikiExtractor input does not exist: /path/to/wikiextractor.jsonl
-Input: /path/to/wikiextractor.jsonl
-Output: /path/to/documents.ndjson
-How to fix:
-  1. Confirm that the input exists and is readable: /path/to/wikiextractor.jsonl
-  2. Run the preceding data preparation step if this file has not been generated yet.
-```
-
-未知のPython/JavaScript例外を調査する場合は、`YAPPOD_EXAMPLE_DEBUG=1`を付けて同じcommandを再実行すると
-tracebackまたはstack traceを確認できます。
-
-## vector/hybrid index
-
-詳細は[vector検索手順](docs/vector-search.md)を参照してください。embeddingはindex生成とWebで同じsectionを
-共有します。
+ベクトル検索を利用する場合は、`[vector]`と`[embedding]`を完全に設定します。
 
 ```toml
+[vector]
+enabled = true
+model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+metric = "cosine"
+
 [embedding]
 provider = "lmstudio"
 base_url = "http://127.0.0.1:1234/v1"
-model = "LM Studioのmodel identifier"
+model = "text-embedding-embeddinggemma-300m"
 model_id = "embeddinggemma-300m-768-local-v1"
 dimensions = 768
 prompt_profile = "embeddinggemma"
@@ -126,8 +92,19 @@ timeout_ms = 60000
 batch_size = 16
 ```
 
-passageへembeddingを付与する場合も同じapplication設定を渡します。`[vector].enabled = true`にし、
-`model_id`、`dimensions`、`metric`を`[embedding]`と一致させます。
+`vector.model_id`は索引との互換性を確認するYappod2側の識別子、`embedding.model`は接続先へ送る実際のモデル名です。
+`model_id`と`dimensions`は両セクションで一致させます。
+
+まず、取得済みの文書を索引と同じ設定でパッセージへ分割します。出力先は未作成である必要があります。
+
+```sh
+./build/yappo_makeindex prepare \
+  --config examples/wikipedia-search/wikipedia-search.toml \
+  --input examples/data/wikipedia-search/documents.ndjson \
+  --output examples/data/wikipedia-search/passages.ndjson
+```
+
+次に、文書とパッセージを同じ処理結果のままembeddingへ渡します。
 
 ```sh
 python3 examples/wikipedia-search/wikipedia_data.py embed \
@@ -137,36 +114,47 @@ python3 examples/wikipedia-search/wikipedia_data.py embed \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-vector indexをWebで使う場合は`wikipedia-search.toml`の`[index].directory`をそのindexへ向けます。
-BFFは同じ`[embedding]`を使うため、model ID、dimensions、prompt profileの別設定は不要です。
-`[build].input`を生成済み`documents.vector.ndjson`へ変更してから、同じapplication設定でbuildします。
+変換プログラムは文書とパッセージのID、`ordinal`、件数、`dimensions`、有限値、レスポンス内の順序を検証します。
+`[build].input`を生成した`documents.vector.ndjson`へ変更し、既存索引とは別の`[index].directory`へ索引を作成します。
 
 ```sh
 node examples/search-web/scripts/stack.mjs build \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-## RAGと文書登録
+設定だけを変えて既存の語彙索引をベクトル対応へ変換することはできません。
 
-`[llm]`がなければ質問画面は取得した参照資料だけを表示します。設定した場合はOpenAI-compatibleな
-Chat Completionsへ質問とcitationを送り、`[1]`形式の参照番号を検証してから回答を表示します。
+## Web UIを起動する
 
-```toml
-[llm]
-base_url = "http://127.0.0.1:1234/v1"
-model = "model-identifier"
-effort = "low"
-max_tokens = 8192
-timeout_ms = 30000
-# authorization_token_env = "LLM_API_KEY"
+```sh
+cd examples/search-web
+npm install
+cd ../..
+
+examples/wikipedia-search/scripts/start_demo.sh \
+  --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-`max_tokens`はChat Completionsへ送る生成token数の上限で、既定値は8192です。値は1から131072まで
-指定できます。上限まで必ず生成する指定ではなく、modelが回答を完了すればその時点で停止します。reasoningを
-有効にするproviderでは内部思考もこの上限を消費する場合があるため、長いcontextでは回答本文の分も含めて設定します。
+既定のURLは`http://127.0.0.1:4173`です。索引がない場合は`[build].input`から作成し、有効な既存索引は
+そのまま利用します。
 
-文書登録を認証する場合は`[daemon].write_token`へ16文字以上のtokenを設定します。core、front、BFFは同じ
-設定を読むため、tokenの二重設定はありません。
+```sh
+examples/wikipedia-search/scripts/stop_demo.sh \
+  --config examples/wikipedia-search/wikipedia-search.toml
+```
+
+## RAG回答を利用する
+
+`[llm]`がなければ、質問画面は取得した参照資料だけを表示します。設定するとBFFがOpenAI互換Chat Completionsへ
+回答生成を依頼します。設定と問題の確認は[LLM連携](../search-web/docs/llm-integration.md)を参照してください。
+
+## 問題が発生した場合
+
+データ取得、ダンプ変換、embedding、索引作成、Web起動は、失敗した操作、原因、対象パス、修正手順を標準エラー出力へ
+表示します。英語のエラー本文は実装が出力する文字列で、追加の説明は
+[サンプルの問題解決](../troubleshooting.md)にあります。
+
+未知のPython例外を調べる場合だけ、同じコマンドへ`YAPPOD_EXAMPLE_DEBUG=1`を付けます。
 
 ## テスト
 
@@ -174,12 +162,4 @@ timeout_ms = 30000
 python3 -m unittest discover \
   -s examples/wikipedia-search/tests \
   -p 'test_*.py'
-
-cd examples/search-web
-npm run typecheck
-npm test
-npm run build
-npm run test:e2e
 ```
-
-Web E2Eは一時設定fileだけでport、mock、tokenを設定し、環境変数や外部networkを使用しません。
