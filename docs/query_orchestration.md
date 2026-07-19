@@ -1,7 +1,0 @@
-# v2 query orchestration
-
-`YAP_V2_query_execute`はacquire済みの一つのsearch snapshotと、同じsegment順で開いたlexical、vector、metadata readerを受け取ります。`lexical`、`vector`、`hybrid`の各modeと、`documents`、`passages`の各scopeを同じ実行経路で扱います。
-
-各segmentのlexical/vector候補にはmetadata filterとsnapshotのlatest-wins visibilityを適用します。vector passageをdocument scopeで返す場合は親document IDへ集約し、同じdocumentの複数passageは最大vector scoreを保持します。segment横断候補をraw scoreで決定的に並べた後、rank-based RRFで融合します。結果にはlexical、vector、fused scoreとsegment/object ordinalを残します。
-
-query textのembedding生成はembedding providerの責務です。呼び出し側はsnapshotのconfigと同じmodel/dimensionのquery vectorを渡します。filterを使うsegmentには同じgenerationのmetadata readerが必須です。返却されるID viewはsnapshot/segment readerから借用されるため、hitを利用し終えるまでsnapshotと各readerをcloseしてはいけません。
