@@ -164,7 +164,7 @@ static void test_cli_update_and_strict_batch_schema(void **state) {
   assert_int_equal(ytest_path_join(executable, sizeof(executable), env.build_dir, "yappo_makeindex"), 0);
   assert_int_equal(ytest_path_join(application, sizeof(application), env.tmp_root, "application.toml"), 0);
   assert_true(snprintf(source, sizeof(source),
-    "schema_version=1\nformat_version=2\nindex.directory='%s'\n[tokenizer]\nid='unicode_nfkc_cf_v1'\n[chunking]\nmax_chars=5\noverlap_chars=0\n[vector]\nenabled=true\nmodel_id='test-2d'\ndimensions=2\nmetric='cosine'\n[metadata]\nfilterable_fields=['category']\n[daemon]\nrun_directory='%s/run'\ncore_host='127.0.0.1'\ncore_port=18401\nfront_host='127.0.0.1'\nfront_port=18400\n",
+    "format_version=2\nindex.directory='%s'\n[tokenizer]\nid='unicode_nfkc_cf_v1'\n[chunking]\nmax_chars=5\noverlap_chars=0\n[vector]\nenabled=true\nmodel_id='test-2d'\ndimensions=2\nmetric='cosine'\n[metadata]\nfilterable_fields=['category']\n[daemon]\nrun_directory='%s/run'\ncore_host='127.0.0.1'\ncore_port=18401\nfront_host='127.0.0.1'\nfront_port=18400\n",
     env.tmp_root, env.tmp_root) > 0);
   assert_int_equal(ytest_write_file(application, source, strlen(source)), 0);
   argv[0] = executable; argv[1] = "update"; argv[2] = "--input"; argv[3] = input;

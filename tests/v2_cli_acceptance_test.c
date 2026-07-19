@@ -14,7 +14,6 @@
 #include "test_fs.h"
 
 static const char config_text[] =
-  "schema_version=1\n"
   "format_version=2\n"
   "[index]\n"
   "directory=\"./index\"\n"

@@ -18,7 +18,7 @@ if(NOT result EQUAL 0)
   message(FATAL_ERROR "cmake install failed")
 endif()
 
-file(WRITE "${config}" "schema_version=1\nformat_version=2\nindex.directory='${index}'\n[tokenizer]\nid='unicode_nfkc_casefold_v2'\n[chunking]\nmax_chars=1200\noverlap_chars=200\n[vector]\nenabled=false\n[metadata]\nfilterable_fields=[]\n[daemon]\nrun_directory='${work}/run'\ncore_host='127.0.0.1'\ncore_port=18401\nfront_host='127.0.0.1'\nfront_port=18400\n")
+file(WRITE "${config}" "format_version=2\nindex.directory='${index}'\n[tokenizer]\nid='unicode_nfkc_casefold_v2'\n[chunking]\nmax_chars=1200\noverlap_chars=200\n[vector]\nenabled=false\n[metadata]\nfilterable_fields=[]\n[daemon]\nrun_directory='${work}/run'\ncore_host='127.0.0.1'\ncore_port=18401\nfront_host='127.0.0.1'\nfront_port=18400\n")
 file(WRITE "${input}" "{\"operation\":\"upsert\",\"id\":\"installed\",\"url\":\"https://example.test/installed\",\"title\":\"Installed\",\"body\":\"installed config smoke\",\"metadata\":{}}\n")
 
 execute_process(

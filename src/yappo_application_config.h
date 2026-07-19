@@ -11,7 +11,6 @@
 #define YAP_APPLICATION_HOST_BYTES 256U
 
 typedef struct {
-  uint32_t schema_version;
   YAP_V2_CONFIG index_config;
   char index_directory[YAP_APPLICATION_PATH_BYTES];
   char run_directory[YAP_APPLICATION_PATH_BYTES];

@@ -355,8 +355,8 @@ def load_settings(config_path: Path, content_match_override: Optional[bool] = No
         raise LocalFilesError(f"cannot load config {config_path}: {error}") from error
     if not isinstance(data, dict):
         raise LocalFilesError("config root must be a TOML table")
-    if data.get("schema_version", SCHEMA_VERSION) != SCHEMA_VERSION:
-        raise LocalFilesError(f"schema_version must be {SCHEMA_VERSION}")
+    if "schema_version" in data:
+        raise LocalFilesError("schema_version is not supported in application TOML")
     collection_id = data.get("collection_id")
     if not isinstance(collection_id, str) or not COLLECTION_PATTERN.fullmatch(collection_id):
         raise LocalFilesError("collection_id must match [A-Za-z0-9._-]{1,32}")

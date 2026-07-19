@@ -95,6 +95,8 @@ timeout_ms = 45000
   });
 
   it("rejects unknown keys and incomplete LLM settings", async () => {
+    const removedSchemaVersion = await configFile("schema_version=1\n");
+    await expect(loadWebConfig(removedSchemaVersion)).rejects.toThrow("unknown key: schema_version");
     const unknown = await configFile("[llm]\nbase_url='http://localhost:1234/v1'\nmodel='m'\ntokne='x'\n");
     await expect(loadWebConfig(unknown)).rejects.toThrow("unknown key: tokne");
     const incomplete = await configFile("[llm]\nbase_url='http://localhost:1234/v1'\n");
