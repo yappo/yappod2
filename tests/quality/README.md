@@ -1,17 +1,14 @@
-# v2 search quality and load tooling
+# 検索品質と負荷の確認
 
-This directory contains deterministic v2 quality, ANN recall, daemon reliability, and load tools.
-Committed corpora are deliberately small regression guards; they are not substitutes for the
-release reference benchmark.
+このディレクトリには、検索品質、ANNの再現率、デーモンの信頼性、負荷を決定的に確認する道具があります。
+リポジトリへ含める小さなテスト資料は回帰検出用であり、リリース時の大規模な基準試験を代替しません。
 
-CTest registers:
+CTestには次が登録されています。
 
-- `v2_search_quality`: lexical/vector/hybrid nDCG@10 and Recall@10
-- `ann_v2`: HNSW Recall@10 against exact ground truth
-- `v2_daemon_reliability`: concurrent search/update, P95, RSS, and latest-generation visibility
-- `search_quality_metrics`: metric implementation contracts
-
-Run the gates locally:
+- `v2_search_quality`は各検索方式のnDCG@10とRecall@10を確認します。
+- `ann_v2`は全件走査を正解としてHNSWのRecall@10を確認します。
+- `v2_daemon_reliability`は検索と更新の並行実行、P95、RSS、最新generationの可視性を確認します。
+- `search_quality_metrics`は品質指標の計算規則を確認します。
 
 ```sh
 cmake --build build -j
@@ -20,7 +17,6 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-`v2_load_probe` runs against an externally started daemon and is intentionally not a CTest smoke.
-The authoritative 1M-document procedure, hardware profile, thresholds, and evidence requirements
-are documented in
-[`docs/quality_performance_reliability_v2.md`](../../docs/quality_performance_reliability_v2.md).
+`v2_load_probe`は外部で起動したデーモンへリクエストを送り、通常のCTestには含めません。大規模試験では
+ハードウェア、データ集合、検索文、事前実行、同時実行数を固定し、結果と実行条件を一緒に保存してください。概要は
+[開発と品質確認](../../docs/development.md)を参照してください。
