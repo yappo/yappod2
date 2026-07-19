@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { backgroundStartupError, waitForBackgroundReady } from "./stack.mjs";
+import { backgroundStartupError, reconcilePidFile, waitForBackgroundReady } from "./stack.mjs";
 import { loadSharedConfig } from "./shared-config.mjs";
 
 const directories = [];
@@ -18,6 +18,58 @@ function temporaryDirectory() {
 }
 
 describe("search Web stack startup", () => {
+  it("removes invalid and dead PID files with warnings", () => {
+    const directory = temporaryDirectory();
+    const invalidPath = join(directory, "core.pid");
+    const deadPath = join(directory, "front.pid");
+    const warnings = [];
+    writeFileSync(invalidPath, "not-a-pid\n");
+    writeFileSync(deadPath, "12345\n");
+
+    expect(reconcilePidFile(invalidPath, "core", { warn: (message) => warnings.push(message) }))
+      .toEqual({ state: "removed-invalid" });
+    expect(reconcilePidFile(deadPath, "front", {
+      isAlive: () => false,
+      warn: (message) => warnings.push(message),
+    })).toEqual({ state: "removed-dead", pid: 12345 });
+    expect(warnings[0]).toContain("Removed stale PID file for yappod_core");
+    expect(warnings[0]).toContain("does not contain a positive integer PID");
+    expect(warnings[1]).toContain("PID 12345 is not running");
+  });
+
+  it("keeps a PID file for the expected running service", () => {
+    const directory = temporaryDirectory();
+    const path = join(directory, "core.pid");
+    writeFileSync(path, "12345\n");
+    expect(reconcilePidFile(path, "core", {
+      isAlive: () => true,
+      commandForPid: () => `${resolve(process.cwd(), "../..", "build/yappod_core")} --config config.toml`,
+    })).toEqual({ state: "running", pid: 12345 });
+  });
+
+  it("does not treat a reused PID as the stack service", () => {
+    const directory = temporaryDirectory();
+    const path = join(directory, "web.pid");
+    const warnings = [];
+    writeFileSync(path, "12345\n");
+    expect(reconcilePidFile(path, "web", {
+      isAlive: () => true,
+      commandForPid: () => "/usr/bin/unrelated-process",
+      warn: (message) => warnings.push(message),
+    })).toEqual({ state: "removed-reused", pid: 12345 });
+    expect(warnings[0]).toContain("PID 12345 belongs to another process");
+  });
+
+  it("fails safely when a running PID cannot be identified", () => {
+    const directory = temporaryDirectory();
+    const path = join(directory, "front.pid");
+    writeFileSync(path, "12345\n");
+    expect(() => reconcilePidFile(path, "front", {
+      isAlive: () => true,
+      commandForPid: () => null,
+    })).toThrow(`Cannot verify the process referenced by yappod_front PID file: ${path}`);
+  });
+
   it("loads a configurable startup timeout", async () => {
     const directory = temporaryDirectory();
     const path = join(directory, "config.toml");

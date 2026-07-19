@@ -69,7 +69,9 @@ examples/search-web/scripts/stop.sh \
 ```
 
 `[daemon].run_directory`には`core.pid`、`front.pid`、`web.pid`と各logを保存します。同じ設定で二重起動した
-場合は既存PID fileを検出して停止します。
+場合は生存中のprocessを検出して起動を拒否します。強制終了などで残ったPID fileや、PIDが別processへ
+再利用されたPID fileは`[warn]`を表示して削除します。PIDの参照先を確認できない場合は、別processを
+誤って停止しないよう`[error]`で処理を中止します。
 
 ## local-files index
 

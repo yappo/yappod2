@@ -13,14 +13,97 @@ function pidPath(config, name) {
   return resolve(config.daemon.runDirectory, `${name}.pid`);
 }
 
-function readPid(path) {
-  if (!existsSync(path)) return null;
-  const value = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-  return Number.isSafeInteger(value) && value > 0 ? value : null;
+const serviceNames = {
+  core: "yappod_core",
+  front: "yappod_front",
+  web: "Web application",
+  "mock-llm": "mock LLM",
+};
+
+const serviceCommandMarkers = {
+  core: resolve(repoRoot, "build/yappod_core"),
+  front: resolve(repoRoot, "build/yappod_front"),
+  web: resolve(webDir, "server/dist/index.js"),
+  "mock-llm": resolve(webDir, "scripts/mock-llm.mjs"),
+};
+
+function info(message) {
+  console.log(`[info] ${message}`);
+}
+
+function warn(message) {
+  console.warn(`[warn] ${message}`);
+}
+
+function readPidRecord(path) {
+  if (!existsSync(path)) return { state: "missing" };
+  let source;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch (error) {
+    throw new Error(`Cannot read PID file: ${path}: ${error.message}`);
+  }
+  if (!/^[1-9][0-9]*\s*$/.test(source)) return { state: "invalid" };
+  const pid = Number(source.trim());
+  return Number.isSafeInteger(pid) ? { state: "valid", pid } : { state: "invalid" };
 }
 
 function alive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function processCommand(pid) {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+  if (result.error || result.status !== 0 || !result.stdout.trim()) return null;
+  return result.stdout.trim();
+}
+
+function removeStalePid(path, service, reason, warnMessage) {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    throw new Error(`Cannot remove stale PID file for ${service}: ${path}: ${error.message}`);
+  }
+  warnMessage(`Removed stale PID file for ${service}: ${path} (${reason})`);
+}
+
+export function reconcilePidFile(path, name, dependencies = {}) {
+  const service = serviceNames[name];
+  const marker = serviceCommandMarkers[name];
+  if (!service || !marker) throw new Error(`Unknown stack service: ${name}`);
+  const isAlive = dependencies.isAlive ?? alive;
+  const commandForPid = dependencies.commandForPid ?? processCommand;
+  const warnMessage = dependencies.warn ?? warn;
+  const record = readPidRecord(path);
+  if (record.state === "missing") return record;
+  if (record.state === "invalid") {
+    removeStalePid(path, service, "file does not contain a positive integer PID", warnMessage);
+    return { state: "removed-invalid" };
+  }
+  if (!isAlive(record.pid)) {
+    removeStalePid(path, service, `PID ${record.pid} is not running`, warnMessage);
+    return { state: "removed-dead", pid: record.pid };
+  }
+  const command = commandForPid(record.pid);
+  if (command === null) {
+    throw new Error(
+      `Cannot verify the process referenced by ${service} PID file: ${path} (PID ${record.pid})`);
+  }
+  if (!command.includes(marker)) {
+    removeStalePid(path, service, `PID ${record.pid} belongs to another process`, warnMessage);
+    return { state: "removed-reused", pid: record.pid };
+  }
+  return { state: "running", pid: record.pid };
+}
+
+function runningPid(path) {
+  const record = readPidRecord(path);
+  return record.state === "valid" && alive(record.pid) ? record.pid : null;
 }
 
 async function waitFor(check, attempts = 80) {
@@ -96,22 +179,27 @@ function buildIndex(config) {
 
 async function stopPid(config, name) {
   const path = pidPath(config, name);
-  const pid = readPid(path);
-  if (pid === null) return;
-  if (alive(pid)) {
-    process.kill(pid, "SIGTERM");
-    const stopped = await waitFor(() => !alive(pid), 50);
-    if (!stopped) {
-      process.kill(pid, "SIGKILL");
-      await waitFor(() => !alive(pid), 10);
+  const service = serviceNames[name];
+  const record = reconcilePidFile(path, name);
+  if (record.state !== "running") return false;
+  info(`Stopping ${service} (PID ${record.pid})`);
+  process.kill(record.pid, "SIGTERM");
+  const stopped = await waitFor(() => !alive(record.pid), 50);
+  if (!stopped) {
+    warn(`${service} did not stop after SIGTERM; sending SIGKILL (PID ${record.pid})`);
+    process.kill(record.pid, "SIGKILL");
+    if (!await waitFor(() => !alive(record.pid), 10)) {
+      throw new Error(`${service} is still running after SIGKILL (PID ${record.pid})`);
     }
   }
   if (existsSync(path)) unlinkSync(path);
+  info(`Stopped ${service} (PID ${record.pid})`);
+  return true;
 }
 
 async function stop(config, quiet = false) {
   for (const name of ["web", "mock-llm", "front", "core"]) await stopPid(config, name);
-  if (!quiet) console.log("yappod search stack stopped");
+  if (!quiet) info("yappod search stack stop completed");
 }
 
 async function start(config) {
@@ -132,17 +220,23 @@ async function start(config) {
   mkdirSync(config.daemon.runDirectory, { recursive: true, mode: 0o700 });
   for (const name of ["core", "front", "web", "mock-llm"]) {
     const path = pidPath(config, name);
-    if (existsSync(path)) throw new Error(`PID file already exists: ${path}`);
+    const record = reconcilePidFile(path, name);
+    if (record.state === "running") {
+      throw new Error(
+        `${serviceNames[name]} is already running (PID ${record.pid}; PID file: ${path})`);
+    }
   }
   run("npm", ["run", "build"], { cwd: webDir });
   let started = false;
   try {
+    info("Starting yappod_core");
     run(core, ["--config", config.path]);
     if (!await waitFor(() => {
-      const pid = readPid(pidPath(config, "core"));
-      return pid !== null && alive(pid);
+      return runningPid(pidPath(config, "core")) !== null;
     })) throw new Error("yappod_core did not start");
+    info(`Started yappod_core (PID ${runningPid(pidPath(config, "core"))})`);
 
+    info("Starting yappod_front");
     run(front, ["--config", config.path]);
     if (!await waitFor(async () => {
       try {
@@ -150,8 +244,10 @@ async function start(config) {
         return response.ok;
       } catch { return false; }
     })) throw new Error("yappod_front did not become ready");
+    info(`yappod_front is ready (PID ${runningPid(pidPath(config, "front"))})`);
 
     if (config.mock.enabled) {
+      info("Starting mock LLM");
       const mockPid = startBackground(
         process.execPath, [resolve(webDir, "scripts/mock-llm.mjs"), "--config", config.path], webDir,
         resolve(config.daemon.runDirectory, "mock-llm.log"),
@@ -162,8 +258,10 @@ async function start(config) {
         try { return (await fetch(`http://${config.mock.host}:${config.mock.port}/health`)).ok; }
         catch { return false; }
       })) throw new Error("mock LLM did not become ready");
+      info(`mock LLM is ready (PID ${mockPid})`);
     }
 
+    info("Starting Web application");
     const webErrorPath = resolve(config.daemon.runDirectory, "web.error");
     const webPid = startBackground(
       process.execPath, [resolve(webDir, "server/dist/index.js"), "--config", config.path], webDir,
@@ -185,7 +283,7 @@ async function start(config) {
         "Web application", webStatus, webPid, config.web.startupTimeoutMs, webHealthUrl, webErrorPath);
     }
     started = true;
-    console.log(`yappod search is ready: http://${config.web.host}:${config.web.port}`);
+    info(`yappod search is ready: http://${config.web.host}:${config.web.port}`);
   } finally {
     if (!started) await stop(config, true);
   }
@@ -200,4 +298,11 @@ async function main() {
   else throw new Error("Usage: stack.mjs build|start|stop --config PATH");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(`[error] ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}

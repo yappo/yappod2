@@ -99,7 +99,17 @@ embedding_dimensions = 3
 EOF
 
 node "$web_dir/scripts/stack.mjs" build --config "$config"
-"$web_dir/scripts/start.sh" --config "$config"
+mkdir -p "$tmp_dir/run"
+printf '%s\n' 2147483647 >"$tmp_dir/run/core.pid"
+start_output=$("$web_dir/scripts/start.sh" --config "$config" 2>&1)
+printf '%s\n' "$start_output"
+case "$start_output" in
+  *"[warn] Removed stale PID file for yappod_core:"*) ;;
+  *)
+    echo "start did not report removal of the stale yappod_core PID file" >&2
+    exit 1
+    ;;
+esac
 started=1
 node "$web_dir/tests/e2e.mjs" --config "$config"
 "$web_dir/scripts/stop.sh" --config "$config"
