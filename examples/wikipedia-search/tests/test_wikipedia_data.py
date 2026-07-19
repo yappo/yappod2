@@ -443,6 +443,25 @@ dimensions = 2
                     "embeddinggemma", 2, 16, 10.0, "embeddinggemma",
                 )
 
+    def test_main_reports_missing_input_and_recovery_steps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "missing.jsonl"
+            output = root / "documents.ndjson"
+            stderr = io.StringIO()
+            with mock.patch.object(wikipedia_data.sys, "stderr", stderr):
+                status = wikipedia_data.main([
+                    "convert-dump", "--input", str(source), "--output", str(output),
+                ])
+
+        message = stderr.getvalue()
+        self.assertEqual(status, 1)
+        self.assertIn("wikipedia-data: error: 'convert-dump' command failed", message)
+        self.assertIn("Reason: WikiExtractor input does not exist", message)
+        self.assertIn("Input: {}".format(source.resolve()), message)
+        self.assertIn("How to fix:", message)
+        self.assertIn("preceding data preparation step", message)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 import time
@@ -62,6 +63,22 @@ DEFAULT_TOPICS = (
 
 class WikipediaDataError(Exception):
     """A user-facing failure that should not publish partial output."""
+
+
+class FriendlyArgumentParser(argparse.ArgumentParser):
+    """Argument parser that reports the command needed to inspect valid input."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        help_command = "{} --help".format(self.prog)
+        self.exit(
+            2,
+            "wikipedia-data: error: invalid command arguments\n"
+            "Reason: {}\n"
+            "How to fix:\n"
+            "  1. Run `{}` to see the accepted arguments.\n"
+            "  2. Correct the command and try again.\n".format(message, help_command),
+        )
 
 
 class EmbeddingSettings(NamedTuple):
@@ -821,9 +838,110 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _argument_paths(args: argparse.Namespace) -> List[Tuple[str, Path]]:
+    paths: List[Tuple[str, Path]] = []
+    for name in ("config", "input", "documents", "passages", "output", "output_dir"):
+        value = getattr(args, name, None)
+        if isinstance(value, Path):
+            paths.append((name.replace("_", " ").title(), value.expanduser().resolve()))
+    return paths
+
+
+def _wikipedia_error_actions(reason: str, args: argparse.Namespace) -> List[str]:
+    lower = reason.lower()
+    actions: List[str] = []
+    config = getattr(args, "config", None)
+    if any(token in lower for token in (
+        "toml config", "must contain a [", "unknown key", "must be", "must use", "must not",
+        "must specify",
+    )):
+        config_path = config.expanduser().resolve() if isinstance(config, Path) else DEFAULT_APP_CONFIG
+        actions.extend((
+            f"Correct the named setting in {config_path}.",
+            "Compare it with examples/wikipedia-search/wikipedia-search.example.toml.",
+        ))
+    elif "environment variable" in lower:
+        match = re.search(r"environment variable ([A-Za-z_][A-Za-z0-9_]*)", reason)
+        variable = match.group(1) if match else "the variable named by authorization_token_env"
+        actions.extend((
+            f"Set {variable} to the embedding service token in the current shell.",
+            "Keep only the environment variable name in the TOML configuration.",
+        ))
+    elif any(token in lower for token in ("does not exist", "input directory is empty", "cannot read")):
+        input_paths = [str(path) for name, path in _argument_paths(args) if name in {
+            "Input", "Documents", "Passages"
+        }]
+        target = ", ".join(input_paths) if input_paths else "the path named in Reason"
+        actions.extend((
+            f"Confirm that the input exists and is readable: {target}",
+            "Run the preceding data preparation step if this file has not been generated yet.",
+        ))
+    elif any(token in lower for token in ("embedding", "vector", "passage")):
+        actions.extend((
+            "Check the document and passage paths, then verify their IDs and passage ordinals match.",
+            "Check [embedding] endpoint, model, model_id, and dimensions, and confirm the service is running.",
+        ))
+    elif any(token in lower for token in ("http ", "request failed", "download failed", "timed out")):
+        actions.extend((
+            "Confirm network access and the configured URL, then retry.",
+            "For Wikimedia requests, provide a descriptive --user-agent with contact information.",
+        ))
+    elif "checksum" in lower:
+        actions.extend((
+            "Retry download-dump; incomplete temporary output is not published.",
+            "If the mismatch repeats, verify free disk space and that no proxy is rewriting the download.",
+        ))
+    elif any(token in lower for token in (
+        "invalid json", "invalid utf-8", "canonical", "ordinal", "record must", "no non-empty",
+        "missing a valid", "missing a title", "non-string body",
+    )):
+        if args.command == "convert-dump":
+            actions.extend((
+                "Inspect the reported WikiExtractor JSONL record and correct or regenerate that input.",
+                "Keep one valid JSON object per line with id, url, title, and text fields.",
+            ))
+        elif args.command == "embed":
+            actions.extend((
+                "Regenerate documents and passages from the same source before embedding.",
+                "Do not reorder passage ordinals or mix files from different preparation runs.",
+            ))
+        else:
+            actions.append("Retry with the official Wikimedia endpoint; if it repeats, enable debug output and report the response error.")
+    elif any(token in lower for token in ("permission denied", "read-only", "cannot write", "cannot create")):
+        actions.append("Check the reported output path's parent directory and its write permissions.")
+
+    script_path = Path(__file__).resolve()
+    try:
+        script_name = str(script_path.relative_to(Path.cwd()))
+    except ValueError:
+        script_name = str(script_path)
+    help_command = shlex.join((sys.executable, script_name, args.command, "--help"))
+    actions.append(f"Run `{help_command}` to review this command's inputs.")
+    return actions
+
+
+def _format_wikipedia_error(
+    error: BaseException, args: argparse.Namespace, unexpected: bool = False
+) -> str:
+    reason = str(error) or error.__class__.__name__
+    lines = [
+        "wikipedia-data: error: {!r} command failed".format(args.command),
+        "Reason: {}".format(reason),
+    ]
+    lines.extend("{}: {}".format(name, path) for name, path in _argument_paths(args))
+    lines.append("How to fix:")
+    for index, action in enumerate(_wikipedia_error_actions(reason, args), 1):
+        lines.append("  {}. {}".format(index, action))
+    if unexpected:
+        lines.append("  Debug: re-run with YAPPOD_EXAMPLE_DEBUG=1 to include the Python traceback.")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = FriendlyArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=FriendlyArgumentParser
+    )
 
     api = subparsers.add_parser("fetch-api", help="fetch a small topic-balanced API sample")
     api.add_argument("--api-url", default=DEFAULT_API_URL)
@@ -873,7 +991,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             result = {"output": str(args.output), "documents": documents, "passages": passages}
     except WikipediaDataError as error:
-        print("error: {}".format(error), file=sys.stderr)
+        print(_format_wikipedia_error(error, args), file=sys.stderr)
+        return 1
+    except Exception as error:
+        if os.environ.get("YAPPOD_EXAMPLE_DEBUG") == "1":
+            raise
+        print(_format_wikipedia_error(error, args, unexpected=True), file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0

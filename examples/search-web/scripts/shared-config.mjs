@@ -35,7 +35,17 @@ export function configPathFromArgs(args) {
 }
 
 export async function loadRawConfig(path) {
-  return object(parse(await readFile(path, "utf8")), "config");
+  let source;
+  try {
+    source = await readFile(path, "utf8");
+  } catch (error) {
+    throw new Error(`cannot read shared config ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    return object(parse(source), "config");
+  } catch (error) {
+    throw new Error(`invalid shared config ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function loadSharedConfig(path) {
