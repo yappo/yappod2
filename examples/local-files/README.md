@@ -195,7 +195,6 @@ Tikaは自動downloadしません。
 自分の環境に合わせます。相対pathは設定fileがあるdirectoryを基準に解決します。
 
 ```toml
-schema_version = 1
 format_version = 2
 collection_id = "my-files"
 

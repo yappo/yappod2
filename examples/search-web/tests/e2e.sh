@@ -32,7 +32,6 @@ web_port=$3
 mock_port=$4
 
 cat >"$config" <<EOF
-schema_version = 1
 format_version = 2
 
 [index]

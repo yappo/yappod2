@@ -36,7 +36,7 @@ static int key_allowed(const toml_table_t *table, const char *const *allowed) {
 
 static int root_key_allowed(toml_table_t *root) {
   static const char *const scalar_keys[] = {
-    "schema_version", "format_version", "collection_id", NULL
+    "format_version", "collection_id", NULL
   };
   int index;
   for (index = 0;; index++) {
@@ -176,7 +176,6 @@ static int read_filterable_fields(toml_table_t *metadata, YAP_V2_CONFIG *config,
 void YAP_application_config_init(YAP_APPLICATION_CONFIG *config) {
   if (config == NULL) return;
   memset(config, 0, sizeof(*config));
-  config->schema_version = 1U;
   YAP_V2_config_init(&config->index_config);
   (void)strcpy(config->core_host, "127.0.0.1");
   config->core_port = 18401U;
@@ -227,10 +226,6 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
     set_error(error, error_size, "application config contains an unknown key"); goto done;
   }
   YAP_application_config_init(config);
-  value = config->schema_version;
-  status = read_uint32(root, "schema_version", &value, 1U, 1U, 1, error, error_size);
-  if (status != YAP_V2_OK) goto done;
-  config->schema_version = value;
   value = config->index_config.format_version;
   status = read_uint32(root, "format_version", &value, YAP_V2_FORMAT_VERSION,
                        YAP_V2_FORMAT_VERSION, 1, error, error_size);

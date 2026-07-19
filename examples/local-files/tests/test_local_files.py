@@ -72,7 +72,6 @@ class LocalFilesTest(unittest.TestCase):
         self.config.write_text(
             textwrap.dedent(
                 f"""
-                schema_version = 1
                 collection_id = {json.dumps(collection)}
 
                 [input]
@@ -136,7 +135,6 @@ class LocalFilesTest(unittest.TestCase):
         config.write_text(
             textwrap.dedent(
                 f"""
-                schema_version = 1
                 format_version = 2
                 collection_id = "pipeline-fixture"
                 [index]
@@ -220,6 +218,15 @@ class LocalFilesTest(unittest.TestCase):
         self.assertNotEqual(configured.config_fingerprint, enabled.config_fingerprint)
         self.assertNotEqual(configured.config_fingerprint, disabled.config_fingerprint)
         self.assertNotEqual(enabled.config_fingerprint, disabled.config_fingerprint)
+
+    def test_rejects_schema_version_in_application_toml(self):
+        self.write_config()
+        self.config.write_text(
+            "schema_version = 1\n" + self.config.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(local_files.LocalFilesError, "schema_version is not supported"):
+            local_files.load_settings(self.config)
 
     def test_web_and_daemon_settings_do_not_change_pipeline_fingerprint(self):
         self.write_config(content_match=False)

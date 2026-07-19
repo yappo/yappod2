@@ -349,7 +349,7 @@ static int write_application_config(const char *path, const char *index_dir,
   }
   file = fopen(path, "w");
   if (file == NULL ||
-      fprintf(file, "schema_version=1\nindex.directory='%s'\n", index_dir) < 0 ||
+      fprintf(file, "index.directory='%s'\n", index_dir) < 0 ||
       fwrite(index_config, 1U, index_bytes, file) != index_bytes ||
       fprintf(file, "\n[daemon]\nrun_directory='%s'\ncore_host='127.0.0.1'\n"
                     "core_port=%d\nfront_host='127.0.0.1'\nfront_port=%d\n",

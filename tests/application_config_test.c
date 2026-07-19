@@ -24,7 +24,7 @@ static char *write_config(const char *source) {
 }
 
 static const char valid[] =
-  "schema_version=1\nformat_version=2\n"
+  "format_version=2\n"
   "[index]\ndirectory='./data/../index'\n"
   "[tokenizer]\nid='unicode_nfkc_casefold_v2'\n"
   "[chunking]\nmax_chars=1200\noverlap_chars=200\n"
@@ -52,9 +52,9 @@ static void test_loads_shared_config_and_resolves_paths(void **state) {
 }
 
 static void test_rejects_missing_required_table_and_unknown_key(void **state) {
-  char *missing = write_config("schema_version=1\nformat_version=2\n[index]\ndirectory='./x'\n");
+  char *missing = write_config("format_version=2\n[index]\ndirectory='./x'\n");
   char *unknown = write_config(
-    "schema_version=1\nformat_version=2\n[index]\ndirectory='./x'\nsurprise=true\n"
+    "format_version=2\n[index]\ndirectory='./x'\nsurprise=true\n"
     "[tokenizer]\n[chunking]\n[vector]\nenabled=false\n[daemon]\n"
     "run_directory='./run'\ncore_host='127.0.0.1'\ncore_port=1\n"
     "front_host='127.0.0.1'\nfront_port=2\n");
@@ -89,7 +89,7 @@ static void test_daemon_fields_do_not_change_index_fingerprint(void **state) {
   unlink(first); unlink(second); free(first); free(second);
 }
 
-static void test_rejects_invalid_types_and_ranges(void **state) {
+static void test_rejects_invalid_ranges_and_removed_schema_version(void **state) {
   char source[4096];
   char *invalid;
   YAP_APPLICATION_CONFIG config;
@@ -103,7 +103,7 @@ static void test_rejects_invalid_types_and_ranges(void **state) {
   assert_int_equal(YAP_application_config_load(invalid, &config, NULL, 0U), YAP_V2_OUT_OF_RANGE);
   unlink(invalid); free(invalid);
   invalid = write_config(
-    "schema_version='one'\nformat_version=2\nindex.directory='./x'\n"
+    "schema_version=1\nformat_version=2\nindex.directory='./x'\n"
     "[tokenizer]\n[chunking]\n[vector]\nenabled=false\n[daemon]\n"
     "run_directory='./run'\ncore_host='127.0.0.1'\ncore_port=1\n"
     "front_host='127.0.0.1'\nfront_port=2\n");
@@ -117,7 +117,7 @@ int main(void) {
     cmocka_unit_test(test_loads_shared_config_and_resolves_paths),
     cmocka_unit_test(test_rejects_missing_required_table_and_unknown_key),
     cmocka_unit_test(test_daemon_fields_do_not_change_index_fingerprint),
-    cmocka_unit_test(test_rejects_invalid_types_and_ranges),
+    cmocka_unit_test(test_rejects_invalid_ranges_and_removed_schema_version),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

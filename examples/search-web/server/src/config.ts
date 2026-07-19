@@ -258,7 +258,7 @@ export async function loadWebConfig(path = defaultConfigPath()): Promise<WebConf
     throw new Error(`invalid shared config: ${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
   onlyKeys(root, [
-    "schema_version", "format_version", "collection_id", "index", "tokenizer", "chunking",
+    "format_version", "collection_id", "index", "tokenizer", "chunking",
     "vector", "metadata", "input", "output", "prepare", "embedding", "usage_log",
     "build", "extract", "formatters", "daemon", "web", "llm", "mock",
   ], "config");
