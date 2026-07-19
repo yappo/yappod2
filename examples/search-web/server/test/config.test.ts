@@ -22,6 +22,13 @@ afterEach(async () => {
 });
 
 describe("web config", () => {
+  it("loads the Web startup timeout independently from the yappod request timeout", async () => {
+    const path = await configFile("[web]\nyappod_timeout_ms=5000\nstartup_timeout_ms=30000\n");
+    await expect(loadWebConfig(path)).resolves.toMatchObject({
+      web: { yappodTimeoutMs: 5000, startupTimeoutMs: 30000 },
+    });
+  });
+
   it("requires the shared config file", async () => {
     const path = join(tmpdir(), `missing-yappod-config-${process.pid}.toml`);
     await expect(loadWebConfig(path)).rejects.toThrow("cannot read shared config");

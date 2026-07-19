@@ -67,6 +67,7 @@ export async function loadSharedConfig(path) {
     web: {
       host: text(web.host, "127.0.0.1", "web.host"),
       port: integer(web.port, 4173, 1, 65535, "web.port"),
+      startupTimeoutMs: integer(web.startup_timeout_ms, 8000, 100, 600000, "web.startup_timeout_ms"),
     },
     mock: {
       enabled: flag(mock.enabled, false, "mock.enabled"),

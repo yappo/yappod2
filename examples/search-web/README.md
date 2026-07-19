@@ -59,6 +59,9 @@ examples/search-web/scripts/start.sh \
 ```
 
 設定した`[web].host`と`port`をBrowserで開きます。標準は`http://127.0.0.1:4173`です。
+launcherがWebの起動を待つ時間は`[web].startup_timeout_ms`で指定します。標準は8000msです。
+`[web].yappod_timeout_ms`は起動待ちではなく、起動後にWebから`yappod_front`へ送るrequestのtimeoutです。
+起動に失敗した場合、launcherは`[daemon].run_directory/web.error`の末尾をエラーとして表示します。
 
 ```sh
 examples/search-web/scripts/stop.sh \
