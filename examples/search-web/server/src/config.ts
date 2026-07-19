@@ -28,6 +28,7 @@ export interface WebServerConfig {
   host: string;
   port: number;
   yappodTimeoutMs: number;
+  startupTimeoutMs: number;
 }
 
 export interface MockConfig {
@@ -203,11 +204,12 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
 
 function webServerConfig(value: unknown): WebServerConfig {
   const web = optionalTable(value, "web");
-  onlyKeys(web, ["host", "port", "yappod_timeout_ms"], "web");
+  onlyKeys(web, ["host", "port", "yappod_timeout_ms", "startup_timeout_ms"], "web");
   return {
     host: optionalString(web.host, "web.host") ?? "127.0.0.1",
     port: integer(web.port, 4173, 1, 65535, "web.port"),
     yappodTimeoutMs: integer(web.yappod_timeout_ms, 5000, 1, 600000, "web.yappod_timeout_ms"),
+    startupTimeoutMs: integer(web.startup_timeout_ms, 8000, 100, 600000, "web.startup_timeout_ms"),
   };
 }
 

@@ -7,6 +7,7 @@ import { configPathFromArgs, loadSharedConfig } from "./shared-config.mjs";
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const webDir = resolve(scriptsDir, "..");
 const repoRoot = resolve(webDir, "../..");
+const pollIntervalMs = 100;
 
 function pidPath(config, name) {
   return resolve(config.daemon.runDirectory, `${name}.pid`);
@@ -25,9 +26,38 @@ function alive(pid) {
 async function waitFor(check, attempts = 80) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (await check()) return true;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, pollIntervalMs));
   }
   return false;
+}
+
+export async function waitForBackgroundReady(check, pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (!alive(pid)) return "exited";
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return "timeout";
+    if (await check(remainingMs)) return "ready";
+    await new Promise((resolvePromise) =>
+      setTimeout(resolvePromise, Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()))));
+  }
+}
+
+function logTail(path, maximumLines = 80) {
+  if (!existsSync(path)) return "";
+  return readFileSync(path, "utf8").trimEnd().split("\n").slice(-maximumLines).join("\n");
+}
+
+export function backgroundStartupError(service, status, pid, timeoutMs, healthUrl, errorPath) {
+  const reason = status === "exited"
+    ? `${service} exited before becoming ready (PID ${pid})`
+    : `${service} did not become ready within ${timeoutMs} ms (PID ${pid})`;
+  const output = logTail(errorPath);
+  return new Error(`${reason}\nhealth check: GET ${healthUrl}` +
+    `\nstartup timeout: web.startup_timeout_ms = ${timeoutMs}` +
+    `\nerror log: ${errorPath}${
+    output ? `\n--- ${service} error output ---\n${output}` : "\n(error log is missing or empty)"
+  }`);
 }
 
 function run(command, args, options = {}) {
@@ -134,16 +164,26 @@ async function start(config) {
       })) throw new Error("mock LLM did not become ready");
     }
 
+    const webErrorPath = resolve(config.daemon.runDirectory, "web.error");
     const webPid = startBackground(
       process.execPath, [resolve(webDir, "server/dist/index.js"), "--config", config.path], webDir,
       resolve(config.daemon.runDirectory, "web.log"),
-      resolve(config.daemon.runDirectory, "web.error"),
+      webErrorPath,
     );
     writeFileSync(pidPath(config, "web"), `${webPid}\n`, { mode: 0o600 });
-    if (!await waitFor(async () => {
-      try { return (await fetch(`http://${config.web.host}:${config.web.port}/api/health`)).ok; }
+    const webHealthUrl = `http://${config.web.host}:${config.web.port}/api/health`;
+    const webStatus = await waitForBackgroundReady(async (remainingMs) => {
+      try {
+        return (await fetch(webHealthUrl, {
+          signal: AbortSignal.timeout(Math.min(1000, remainingMs)),
+        })).ok;
+      }
       catch { return false; }
-    })) throw new Error("Web application did not become ready");
+    }, webPid, config.web.startupTimeoutMs);
+    if (webStatus !== "ready") {
+      throw backgroundStartupError(
+        "Web application", webStatus, webPid, config.web.startupTimeoutMs, webHealthUrl, webErrorPath);
+    }
     started = true;
     console.log(`yappod search is ready: http://${config.web.host}:${config.web.port}`);
   } finally {
@@ -151,9 +191,13 @@ async function start(config) {
   }
 }
 
-const [command, ...rest] = process.argv.slice(2);
-const config = await loadSharedConfig(configPathFromArgs(rest));
-if (command === "build") buildIndex(config);
-else if (command === "start") await start(config);
-else if (command === "stop") await stop(config);
-else throw new Error("Usage: stack.mjs build|start|stop --config PATH");
+async function main() {
+  const [command, ...rest] = process.argv.slice(2);
+  const config = await loadSharedConfig(configPathFromArgs(rest));
+  if (command === "build") buildIndex(config);
+  else if (command === "start") await start(config);
+  else if (command === "stop") await stop(config);
+  else throw new Error("Usage: stack.mjs build|start|stop --config PATH");
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
