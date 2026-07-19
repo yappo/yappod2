@@ -25,7 +25,7 @@ front_port = 18400
 max_inflight = 4
 max_inflight_bytes = 4194304
 request_timeout_ms = 5000
-# 文書登録を認証する場合だけ16文字以上のtokenを設定します。
+# 文書登録を認証する場合だけ16文字以上のトークンを設定します。
 # write_token = "replace-with-16-or-more-characters"
 
 [web]
@@ -43,7 +43,7 @@ startup_timeout_ms = 30000
 # timeout_ms = 30000
 # authorization_token_env = "LLM_API_KEY"
 
-# vector/hybrid検索を使う場合だけ有効にします。index生成側も同じsectionを読みます。
+# ベクトル検索または複合検索を使う場合だけ有効にします。索引生成側も同じセクションを読みます。
 # [embedding]
 # directory = "../data/local-files/vectors"
 # provider = "lmstudio" # lmstudio | ollama | openai

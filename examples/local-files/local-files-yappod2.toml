@@ -18,7 +18,7 @@ enabled = false
 filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [input]
-# This file lives in examples/local-files, so ../.. is the repository root.
+# このファイルはexamples/local-filesにあるため、../..がリポジトリのルートです。
 root = "../.."
 include = ["*", "**/*"]
 exclude = [

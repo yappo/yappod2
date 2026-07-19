@@ -33,8 +33,8 @@ directory = "../data/local-files/documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
-# このfileは設定項目のsampleです。copyして入力・出力pathを変更して使います。
-# `rag`/`hybrid`では[prepare]、`hybrid`では[embedding]も有効にします。
+# このファイルは設定項目のサンプルです。複製して入力と出力のパスを変更して使います。
+# `rag`と`hybrid`では[prepare]、`hybrid`では[embedding]も有効にします。
 # [prepare]
 # directory = "../data/local-files/passages"
 #
@@ -86,7 +86,7 @@ startup_timeout_ms = 30000
 enable_plugins = false
 max_extracted_bytes = 67108864
 tika_timeout_ms = 30000
-# Tikaは自動downloadしません。iWorkや旧Office形式が必要な場合だけ設定します。
+# Tikaは自動でダウンロードしません。iWorkや旧Office形式が必要な場合だけ設定します。
 # tika_command = ["java", "-jar", "/absolute/path/to/tika-app-3.3.1.jar", "--text", "{path}"]
 
 [formatters]
@@ -94,7 +94,7 @@ enabled = true
 content_match_enabled = false
 content_scan_bytes = 1048576
 
-# path条件だけで独自整形scriptを実行する例です。
+# パスの条件だけで独自の整形スクリプトを実行する例です。
 # [[formatters.rules]]
 # name = "dockerfile"
 # basename_glob = ["Dockerfile"]
@@ -102,7 +102,7 @@ content_scan_bytes = 1048576
 # timeout_ms = 30000
 # max_stdout_bytes = 67108864
 
-# path条件を満たしたfileだけ、先頭1 MiBの内容も調べる例です。
+# パスの条件を満たしたファイルだけ、先頭1 MiBの内容も調べる例です。
 # [[formatters.rules]]
 # name = "special-c-source"
 # path_glob = ["src/**/*.c"]
