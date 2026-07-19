@@ -1,30 +1,20 @@
-# ローカルファイルをshard化してyappod2で検索する
+# local-filesで手元の文書を検索する
 
-このexampleは、手元のdirectoryにある文書、設定、source code、PDF、Office文書などを検索可能な
-canonical NDJSONへ変換し、必要に応じてpassage生成、embedding、index作成まで実行するPython CLIです。
-大量の文書を1個の巨大なJSONへ詰めず、各stageを複数のNDJSON shardへ分けます。複数のdocument
-shardはCLI内部のFIFOから既存の`yappo_makeindex build`へ1回だけ渡すため、shell scriptで連結する
-必要はありません。
+local-filesは、ディレクトリ内の文書を正式な入力NDJSONへ変換し、必要に応じてパッセージ生成、embedding、索引作成まで
+実行するPythonコマンドです。テキスト、ソースコード、PDF、Office文書などを扱い、大きな入力は複数の分割ファイルへ分けます。
 
-## まず試す: yappod2 repository自身をindexにして検索する
+## 最初に試す
 
-このrepository専用の[`local-files-yappod2.toml`](local-files-yappod2.toml)を用意しています。
-この設定はrepository rootを走査し、`.git/**`、`build/**`、`node_modules/**`、virtual environment、
-IDE設定、生成済みdataなどを除外します。汎用の設定例`local-files.toml`やrootの
-`examples/config.toml`をこの手順に使う必要はありません。
-
-repository rootで、まずC binaryとPython環境を準備します。macOSでもPython executable名は
-`python3`で構いません。
+このリポジトリ自身を検索する設定`local-files-yappod2.toml`を用意しています。リポジトリのルートで準備します。
 
 ```sh
 cmake --build build -j
-
 python3 -m venv examples/local-files/.venv
 examples/local-files/.venv/bin/python -m pip install \
   -r examples/local-files/requirements-core.txt
 ```
 
-次の1 commandで、repositoryの変換からlexical index作成までを一気に実行します。
+次のコマンドは文書収集から語彙索引の作成まで実行します。
 
 ```sh
 examples/local-files/.venv/bin/python \
@@ -33,39 +23,17 @@ examples/local-files/.venv/bin/python \
   --target lexical
 ```
 
-成功すると、次が作られます。
-
-```text
-examples/data/local-files/
-├── yappod2-documents/
-│   ├── manifest.json
-│   ├── documents-000001.ndjson
-│   ├── documents-000002.ndjson  # shard上限を超えた場合
-│   └── failures-000001.ndjson   # 抽出失敗があった場合
-└── yappod2-index/
-    ├── config.toml
-    ├── manifest.json
-    └── segments/
-```
-
-作成したindexを検索します。
+成功すると`examples/data/local-files`の下に文書の分割ファイルと索引が作られます。
 
 ```sh
 ./build/search \
   --config examples/local-files/local-files-yappod2.toml \
   --mode lexical \
-  --scope documents \
   --query yappo_makeindex \
   --limit 10
 ```
 
-別のqueryとして`segment_write`、`BM25`、`unicode_nfkc_casefold_v2`なども試せます。titleには
-`src/yappo_makeindex.c`のようなrepository root相対pathが入るため、file名も検索対象です。
-
-### Web UIで検索する
-
-`local-files-yappod2.toml`は収集・embedding・index生成だけでなく、daemonとWeb UIの設定も保持します。
-Web依存関係を一度installしてから、同じ設定を指定します。
+## Web UIで検索する
 
 ```sh
 cd examples/search-web
@@ -76,441 +44,95 @@ examples/search-web/scripts/start.sh \
   --config examples/local-files/local-files-yappod2.toml
 ```
 
-標準では`http://127.0.0.1:4173`で検索、引用付き質問、文書登録を利用できます。停止時も同じ設定を渡します。
+既定では`http://127.0.0.1:4173`で検索できます。停止時も同じ設定を渡します。
 
 ```sh
 examples/search-web/scripts/stop.sh \
   --config examples/local-files/local-files-yappod2.toml
 ```
 
-local-files文書はURLを持たず、titleの相対pathをリンクなしで表示します。lexical indexではlexical検索と
-lexical RAG、hybrid indexでは同じ`[embedding]`設定を使うvector/hybrid検索とRAGも利用できます。
-`[daemon].write_token`を設定すると文書登録を認証できますが、登録内容は元fileや生成済みdocument shardへ
-反映されないため、local-files pipelineでindexを再生成すると失われます。
+local-filesの文書はURLを持たず、`title`に入力元からの相対パスを保存します。Web UIはこれを外部リンクにしません。
 
-入力fileの絶対pathはIDやmetadataへ保存しません。ただし、source codeや設定の原文自体に秘密情報や
-絶対pathが書かれていれば、その文字列はbodyへ入ります。検索対象にすべきでないfileは
-`local-files-yappod2.toml`の`input.exclude`へ追加してください。
+## 自分のディレクトリを対象にする
 
-個別stageのcommandは、出力directoryやindexが既にある場合に上書きしません。一方、`all`は既存の
-documents、passages、vectors、indexについてmanifest、checksum、設定fingerprint、入力manifestを
-検証し、一致する完了stageを再利用します。同じ設定で完了済みの`all`を再実行しても成功します。
-検証できない成果物や設定・入力と一致しない成果物は上書きせずerrorにします。
-
-入力や設定の変更を反映してpipelineを強制的に全再生成する場合は、documentsだけでなくpassages、
-vectors、indexも前回の生成物として残るため、`data` directory全体を削除してから再実行します。
-個別のdirectoryだけを削除すると、stage間の対応を検証できず停止することがあります。
-
-```sh
-rm -rf examples/data/local-files
-
-examples/local-files/.venv/bin/python \
-  examples/local-files/local_files.py all \
-  --config examples/local-files/local-files-yappod2.toml \
-  --target lexical
-```
-
-## targetと生成物
-
-`all --target TARGET`は、選択した最終成果に必要なstageだけを順番に実行します。
-
-| target | documents shard | 外部passage shard | embedding | index |
-|---|---:|---:|---:|---|
-| `documents` | あり | なし | なし | 作らない |
-| `lexical` | あり | なし | なし | vector無効 |
-| `rag` | あり | あり | なし | vector無効 |
-| `hybrid` | あり | あり | あり | lexical＋vector |
-
-たとえば変換結果だけが必要なら次を実行します。
-
-```sh
-examples/local-files/.venv/bin/python \
-  examples/local-files/local_files.py all \
-  --config examples/local-files/local-files-yappod2.toml \
-  --target documents
-```
-
-`lexical`では外部passage shardやembeddingを作りません。ただし現行indexerはvector無効時にも内部で
-本文をchunkし、index内部のpassageを保存します。これは既存buildの挙動であり、このexampleでは
-変更しません。
-
-`rag`は外部利用可能なpassage shardを保存した後、vector無効indexを作ります。index作成時には
-既存buildへdocument shardを渡し、build自身も同じchunk設定でindex内部のpassageを作ります。
-
-`hybrid`は外部passageをembeddingし、各documentのpassage ordinal順に`vectors`二次元配列へ戻した
-vector付きdocument shardからindexを作ります。
-
-## CLI command
-
-一括実行のほか、各stageを個別に再現できます。
-
-```sh
-# local file -> documents-*.ndjson
-python3 local_files.py convert --config local-files.toml
-
-# documents shard -> passages-*.ndjson
-python3 local_files.py prepare --config local-files.toml
-
-# passage embedding -> vectors付きdocuments-*.ndjson
-python3 local_files.py embed --config local-files.toml
-
-# manifestで検証した複数document shard -> 1個のindex
-python3 local_files.py build --config local-files.toml --target hybrid
-
-# 必要stageを全て実行
-python3 local_files.py all --config local-files.toml --target hybrid
-```
-
-各commandは成功時にsummary JSONをstdoutへ1行出力し、失敗時は次の形式をstderrへ出して非0で終了します。
-
-```text
-local-files: error: 'all' command failed
-Reason: cannot load config /path/to/local-files.toml: No such file or directory
-Config: /path/to/local-files.toml
-How to fix:
-  1. Check that the --config file exists and is readable: /path/to/local-files.toml
-  2. Compare it with examples/local-files/local-files.toml.
-  3. Run `python3 examples/local-files/local_files.py all --help` to review this command's inputs.
-```
-
-`Reason`だけでなく、確認対象のpathと次に行う操作を表示します。未知のPython例外を調査する場合は、
-`YAPPOD_EXAMPLE_DEBUG=1`を付けて同じcommandを再実行するとtracebackを確認できます。stageを個別実行する場合も、
-前stageのmanifestとshard checksumを検証してから処理します。
-
-## 必要環境
-
-- text、source、JSON、HTML、XML、外部formatter: Python 3.9以上
-- Python 3.9と3.10: `requirements-core.txt`の`tomli`
-- PDF、DOCX、XLS/XLSX、PPTX: Python 3.10以上と`requirements.txt`のMarkItDown
-- DOC/PPT、Keynote、Pages、Numbers: Javaと利用者が配置したApache Tika 3.3.1
-- index作成: build済みの`yappo_makeindex`
-- hybrid: LM Studio、Ollama、またはOpenAI互換embedding endpoint
-
-基本機能だけなら次で準備できます。
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-core.txt
-```
-
-PDFやOffice文書も扱う場合だけfull requirementsを追加します。
-
-```sh
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Tikaは自動downloadしません。
-
-## 自分のdirectory用の設定
-
-[`local-files.toml`](local-files.toml)は設定項目を説明するための汎用sampleです。そのまま実行する
-前提のrepository専用設定ではありません。別名へcopyし、少なくともcollection、入力、出力、buildを
-自分の環境に合わせます。相対pathは設定fileがあるdirectoryを基準に解決します。
+`local-files.toml`を複製し、少なくとも次を変更します。
 
 ```toml
-format_version = 2
-collection_id = "my-files"
-
-[index]
-directory = "../data/local-files/index"
-
-[tokenizer]
-id = "unicode_nfkc_casefold_v2"
-
-[chunking]
-max_chars = 1200
-overlap_chars = 200
-
-[vector]
-enabled = false
-
-[metadata]
-filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
+collection_id = "my-documents"
 
 [input]
-root = "/absolute/path/to/search-root"
+root = "/path/to/documents"
 include = ["*", "**/*"]
-exclude = [".git/**", ".venv/**", "data/**"]
+exclude = ["**/.git/**", "**/node_modules/**"]
 follow_symlinks = false
 
 [output]
 directory = "../data/local-files/documents"
-shard_max_bytes = 67108864
-body_max_bytes = 1000000
 
-[prepare]
-directory = "../data/local-files/passages"
-
-[build]
-yappo_makeindex = "../../build/yappo_makeindex"
+[index]
+directory = "../data/local-files/index"
 ```
 
-`collection_id`は1〜32文字の英数字、`.`、`_`、`-`で指定します。異なるcollectionの同じ相対pathが
-衝突しないためのnamespaceです。
+入力ファイルの絶対パスはIDやメタデータへ保存しません。ただし、文書本文に秘密情報や絶対パスが書かれていれば検索対象に
+なります。対象にすべきでないファイルは`input.exclude`へ追加してください。
 
-### embedding設定
+## `all --target`
 
-`hybrid` targetを使う場合だけ`[embedding]`が必要です。
+| 対象 | 作成する成果物 |
+|---|---|
+| `documents` | 文書の分割ファイルだけを作ります。 |
+| `lexical` | 文書の分割ファイルと、ベクトルを使わない索引を作ります。 |
+| `rag` | 文書とパッセージの分割ファイルを作ります。 |
+| `hybrid` | パッセージのembeddingを含む索引まで作ります。 |
+
+`hybrid`では`[vector]`と完全な`[embedding]`が必要です。`model_id`と`dimensions`を一致させてください。
 
 ```toml
-[embedding]
-directory = "../data/local-files/vectors"
-provider = "lmstudio" # lmstudio | ollama | openai
-base_url = "http://127.0.0.1:1234/v1"
-# endpoint_url = "https://api.openai.com/v1/embeddings" # base_urlとは排他的
-model = "実際にendpointへ渡すmodel名"
-model_id = "my-embedding-768-v1"
-dimensions = 768
-batch_size = 16
-timeout_ms = 60000
-prompt_profile = "plain" # plain | embeddinggemma
-# authorization_token_env = "EMBEDDING_API_KEY"
-
-[usage_log]
-path = "../data/local-files/api-usage.jsonl"
-```
-
-- `base_url`と完全URLの`endpoint_url`はどちらか一方だけを指定します。`endpoint_url`はpathを追加せず
-  そのまま使用します。
-- LM StudioとOpenAIでは`base_url`へ`/embeddings`を追加して呼び出します。
-- Ollamaでは通常`base_url = "http://127.0.0.1:11434"`とし、`/api/embed`を追加して呼び出します。
-- bearer tokenが必要なら、共有設定の`authorization_token_env`へtokenを保持する環境変数名を指定します。
-  環境変数名が不正、またはtokenが未設定・空ならAPIを呼ぶ前に停止します。
-- `embedding.model_id`と`dimensions`は同じ設定の`[vector]`と一致させます。
-- hybrid indexでは`[vector].enabled = true`にし、`model_id`、`dimensions`、`metric`を設定します。
-
-yappod2自身をhybrid化する場合は、`local-files-yappod2.toml`のplaceholder `model`、`model_id`、
-`dimensions`と、同じfileの`[vector]`を実際のembedding modelへ合わせてから実行します。
-
-OpenAIの`text-embedding-3-small`を使う例です。OpenAI providerでは`dimensions`をAPI requestにも
-含めます。
-
-```toml
-[embedding]
-directory = "../data/local-files/vectors"
-provider = "openai"
-endpoint_url = "https://api.openai.com/v1/embeddings"
-model = "text-embedding-3-small"
-model_id = "text-embedding-3-small-768-v1"
-dimensions = 768
-batch_size = 16
-timeout_ms = 60000
-prompt_profile = "plain"
-authorization_token_env = "OPENAI_API_KEY"
-
-[usage_log]
-path = "../data/local-files/api-usage.jsonl"
-```
-
-`usage_log.path`は設定file基準のpathです。成功したAPI requestごとにUTC日時、source、service、
-operation、provider、model、API応答の`usage`（未返却時は`null`）をJSONLへappendします。prompt、
-vector、応答本文、認証情報、endpointは記録しません。ログ書き込みに失敗してもwarningをstderrへ出して
-処理を続けるため、ログ障害を理由に課金済みrequestを再送しません。
-
-HTTPSは常に許可します。HTTPを使えるのは`localhost`、IPv4 loopback `127.0.0.0/8`、RFC 1918、
-IPv6 loopback `::1`、RFC 4193 ULAだけです。その他のhostnameとliteral IPはHTTPSが必須で、DNS解決で
-private addressかどうかは判定しません。OpenAI互換Bearer認証が対象であり、Azure固有の`api-key`認証は
-対象外です。
-
-```sh
-examples/local-files/.venv/bin/python \
-  examples/local-files/local_files.py all \
-  --config examples/local-files/local-files-yappod2.toml \
-  --target hybrid
-```
-
-検索時には、同じmodelとprompt profileでquery vectorを作り、comma区切りで渡します。
-
-```sh
-./build/search \
-  --config examples/local-files/local-files-yappod2.toml \
-  --mode hybrid \
-  --scope documents \
-  --query yappo_makeindex \
-  --vector 0.01,0.02,0.03 \
-  --limit 10
-```
-
-上の3値は書式例です。実際にはindexの`dimensions`個の値が必要です。
-
-## 抽出形式
-
-- Markdown、source code、TOML/YAML/INIなどのtextはdecode後の原文をbodyへ保存します。
-- JSON/JSON Lines/XMLは構造を検証します。
-- HTML/XHTMLは`script`、`style`、`noscript`を除き、検索しやすいtextへ正規化します。
-- PDF、DOCX、XLS/XLSX、PPTXはMarkItDownを使います。
-- DOC/PPT、Keynote/Pages/Numbersは、明示設定したTika commandへfallbackします。
-- 暗号化、破損、unsupported、timeout、空抽出などは`failures-*.ndjson`へ記録し、正常fileの
-  処理は続けます。
-
-OCR、一般archiveの再帰展開、symlink追跡、source codeのAST解析は初版の対象外です。
-
-## 外部整形script
-
-pathやfile先頭の内容に一致した場合、利用者指定commandのUTF-8 stdoutを本文にできます。独自形式だけで
-なく、Tree-sitter、ctags、独自parserでsource codeを検索用textへ整形する用途にも使えます。
-
-```toml
-[formatters]
+[vector]
 enabled = true
-content_match_enabled = true
-content_scan_bytes = 1048576
+model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+metric = "cosine"
 
-[[formatters.rules]]
-name = "special-source"
-basename_glob = ["Makefile", "Dockerfile"]
-path_glob = ["src/**/*.c"]
-content_regex = ["(?m)^SPECIAL_FORMAT="]
-command = ["python3", "./tools/format_special.py", "{path}"]
-timeout_ms = 30000
-max_stdout_bytes = 67108864
+[embedding]
+directory = "../data/local-files/vectors"
+provider = "lmstudio"
+base_url = "http://127.0.0.1:1234/v1"
+model = "text-embedding-embeddinggemma-300m"
+model_id = "embeddinggemma-300m-768-local-v1"
+dimensions = 768
+prompt_profile = "embeddinggemma"
+timeout_ms = 60000
+batch_size = 16
 ```
 
-`basename_glob`、`path_glob`、`path_regex`を先に評価し、path条件を通ったfileだけ先頭
-`content_scan_bytes`をdecodeして`content_regex`を評価します。selectorの種類同士はAND、同じlist内は
-ORです。contentだけのruleも使用できます。ruleは記述順で最初に一致した1件だけを実行します。
+外部APIを使う場合は`authorization_token_env`へ環境変数名を指定します。トークン自体はTOMLへ書きません。
 
-commandはshellを介さずargv配列として実行し、`{path}`へ絶対pathを渡します。非0終了、timeout、
-空stdout、不正UTF-8、出力上限超過はfile単位のfailureです。
-
-content探索はCLIでも切り替えられます。
+## 個別のコマンド
 
 ```sh
-python3 local_files.py convert --config local-files.toml --content-match
-python3 local_files.py convert --config local-files.toml --no-content-match
+# ファイルを文書の分割ファイルへ変換します。
+examples/local-files/.venv/bin/python examples/local-files/local_files.py convert --config CONFIG
+
+# 文書の分割ファイルからパッセージを作ります。
+examples/local-files/.venv/bin/python examples/local-files/local_files.py prepare --config CONFIG
+
+# パッセージへembeddingを付けます。
+examples/local-files/.venv/bin/python examples/local-files/local_files.py embed --config CONFIG
+
+# 検証済みの分割ファイルから索引を作ります。
+examples/local-files/.venv/bin/python examples/local-files/local_files.py build --config CONFIG --target lexical
 ```
 
-無効時は`content_regex`を持つruleを実行しません。
+設定の全項目は[local-files設定](docs/configuration.md)、分割ファイル、manifest、チェックポイント、再開は
+[処理の流れと再生成](docs/pipeline-and-recovery.md)を参照してください。
 
-## MarkItDown plugin
+## 問題が発生した場合
 
-独自Python形式はMarkItDownの`markitdown.plugin` entry pointで追加できます。pluginは明示的に
-`enable_plugins = true`とした場合だけloadします。同梱sampleは`.mydoc`をUTF-8 textへ変換します。
+コマンドは失敗した操作、原因、対象パス、修正手順を標準エラー出力へ表示します。Python 3.9/3.10でTOMLモジュールを
+読み込めない場合、整形プログラムやTikaがない場合、embeddingや`yappo_makeindex`へ接続できない場合も、必要な準備を
+案内します。
 
-```sh
-.venv/bin/python -m pip install -e plugins/sample-local-format
-```
-
-```toml
-[extract]
-enable_plugins = true
-```
-
-plugin packageは任意codeを実行できるため、信頼できるものだけを専用virtual environmentへinstallして
-ください。
-
-## Apache Tika
-
-Tikaは自動downloadせず、利用者が用意したcommandをprocess分離・timeout付きで起動します。
-
-```toml
-[extract]
-tika_command = [
-  "java",
-  "-jar",
-  "/absolute/path/to/tika-app-3.3.1.jar",
-  "--text",
-  "{path}",
-]
-tika_timeout_ms = 30000
-max_extracted_bytes = 67108864
-```
-
-Tika未設定の対象fileは`extractor_unavailable`としてfailure shardへ記録します。画像だけのPDFや
-Office内画像はOCRしないため、通常の文字layerがなければ`no_text`になります。
-
-## Document IDとpath
-
-絶対pathはdocument IDに使いません。root相対pathをPOSIX separator、Unicode NFCへ正規化し、次の
-決定的IDを作ります。
-
-```text
-lf:v1:<collection_id>:<sha256(collection_id + NUL + normalized_relative_path)>:p<part>
-```
-
-- 同じpathのfileを編集してもIDは同じです。
-- renameすると別IDになります。
-- 同じ内容でもpathが異なれば別documentです。
-- 1,000,000 UTF-8 bytes以下へ本文分割した各partに固定幅ordinalを付けます。
-- metadataには`source_path`、`source_sha256`、MIME、extractor、part番号を保存します。
-- titleには255 UTF-8 bytes以内へ切ったroot相対pathを保存します。
-
-本文は段落、改行、UTF-8境界の順に切り、part間の重複は作りません。
-
-## Shard、manifest、checkpoint
-
-既定shard目標は64 MiBです。1 recordだけで目標を超える場合は、そのrecordだけのshardとして出力します。
-各stageの`manifest.json`はrecord一覧ではなく、次のdescriptorを保持します。
-
-```text
-schema_version, stage, target, config_fingerprint, source_manifest_sha256
-input_snapshot_sha256, input_file_count
-total_records, total_bytes
-shards[].path, shards[].record_count, shards[].file_bytes, shards[].sha256
-failure_count, failure_shards[]
-```
-
-全shardは一時directoryで作り、件数、byte数、SHA-256を確定してからdirectory単位で公開します。
-`prepare`、`embed`、`build`は入力manifestの順序、size、件数、checksumを再検証します。
-`all`でdocumentsを再利用する場合は、現在の入力relative path、内容SHA-256、更新時刻から同じsnapshotを再計算します。
-入力が変わっていれば既存成果物を上書きせず停止し、前述の完全再生成を要求します。
-
-embeddingは`.vectors.work`配下へ入力document shardごとのprogress metadataとappend-only vector journalを
-作ります。成功batchはdocument ID、passage ordinal、入力text SHA-256、vectorをまとめて追記し、flushと
-fsyncが完了してから次のAPI requestへ進みます。`embed`または`all`が途中終了した場合は、同じcommandを
-再実行するとjournalを入力passageと順番に照合し、最後に永続化できたbatchの次から再開します。
-
-journal末尾の未完了行だけは切り捨てて再開します。途中の破損、順序・hash・次元・有限値の不一致、設定変更は
-再課金せず明示errorにします。全batch完了後にvector付きdocument shardを再構成してatomic publishし、公開成功後
-だけprogressを削除します。入力shard SHA、passage manifest SHA、chunk config SHA、provider、endpoint、model、
-model ID、dimensions、prompt profileが一致する完了shardも再利用します。API成功からjournalのfsyncまでの極短い
-区間で強制終了したbatchだけは、provider側に冪等性保証がないため再送される可能性があります。
-
-`all`で作るindexにはtarget、入力manifest SHA、index設定SHA、generation、accepted件数を記録したsidecarを
-含めます。これをindex manifestとあわせて検証することで、完成済みindexも安全に再利用します。
-
-## FIFO buildとatomic公開
-
-`build`は検証済みdocument shardをmanifest順にFIFOへstreamし、既存の
-`yappo_makeindex build --input FIFO`を1回だけ起動します。build側producer、checksum、process、accepted
-件数、index componentのどれかが失敗した場合、最終index pathへ公開しません。成功したstage indexだけを
-最終indexと同じ親directory内でatomic renameします。
-
-NDJSON shard境界はindex segment境界ではありません。複数shardをFIFOへ渡しても、主要YAP2 componentの
-256 MiB payload上限を回避する自動segment分割にはなりません。現行buildの10,000 operation単位の
-segment化とsize超過時のerrorをそのまま使います。詳細と将来のsegment planner案は
-[index segment sizing](../../docs/index_segment_sizing.md)を参照してください。
-
-## Source code検索の性質
-
-原文bodyでも通常のlexical document検索はできます。titleとbodyをNFKC casefoldとICU word boundaryで
-tokenizeするため、一般的な単語やidentifierを検索できます。
-
-ただし、次は保証しません。
-
-- punctuationだけのoperator検索
-- AST、定義・参照関係
-- comment、string、実行codeの区別
-- camelCaseの強制分割
-- 関数境界を守ったRAG chunk
-
-document検索は原文全文が対象ですが、passageは汎用sentence/grapheme chunkerなので関数途中で切れる
-場合があります。構造が重要なrepositoryでは、外部整形ruleで関数名、型、path、本文を含む検索用textへ
-変換してください。
-
-fixtureでは`snake_case_identifier`と`camelCaseIdentifier`は完全なidentifierで検索できましたが、
-`camel`だけでは`camelCaseIdentifier`へ一致しませんでした。`Namespace::QualifiedName`はqualified name
-全体でも`QualifiedName`でも一致し、記号だけの`++`と`->`は一致しませんでした。この挙動を
-`test_source_identifier_queries_record_actual_tokenizer_behavior`で実際のindex/searchに対して固定しています。
-コード専用のtoken分解やoperator indexを保証するものではありません。
-
-## Failureの扱い
-
-file単位の失敗は次のように記録します。
-
-```json
-{"path":"legacy/example.key","code":"extractor_unavailable","message":"Apache Tika command is not configured","extractor":"tika"}
-```
-
-一部fileが失敗しても正常fileのdocuments shardは公開します。成功fileが1件もない、設定が不正、出力先が
-既に存在する、manifest/checksumが一致しない、embeddingやbuildが失敗した場合はcommand全体を失敗させます。
+既存成果物を検証できない場合でも、すぐに削除しないでください。manifest、チェックサム、チェックポイント、入力スナップショットを
+確認し、必要な成果物を保存してから全再生成を判断します。詳しくは
+[サンプルの問題解決](../troubleshooting.md)を参照してください。
