@@ -11,6 +11,7 @@ describe("OpenAI-compatible LLM client", () => {
     const client = new OpenAICompatibleClient({
       baseUrl: "https://api.openai.com/v1",
       model: "answer-model",
+      maxTokens: 8192,
       timeoutMs: 1000,
       usageLog,
       fetchImpl,
@@ -25,5 +26,7 @@ describe("OpenAI-compatible LLM client", () => {
       model: "answer-model",
       usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
     }));
+    const request = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
+    expect(request.max_tokens).toBe(8192);
   });
 });

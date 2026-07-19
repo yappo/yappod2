@@ -78,6 +78,7 @@ startup_timeout_ms = 30000
 # [llm]
 # base_url = "http://127.0.0.1:1234/v1"
 # model = "model-identifier"
+# max_tokens = 8192
 # timeout_ms = 30000
 # authorization_token_env = "LLM_API_KEY"
 

@@ -8,6 +8,7 @@ export interface LlmServerConfig {
   baseUrl: string;
   model: string;
   effort?: string;
+  maxTokens: number;
   authorizationToken?: string;
   timeoutMs: number;
 }
@@ -138,11 +139,12 @@ function authorizationToken(value: Record<string, unknown>, name: string): strin
 
 function llmConfig(value: unknown): LlmServerConfig {
   const llm = table(value, "llm");
-  onlyKeys(llm, ["base_url", "model", "effort", "authorization_token", "authorization_token_env", "timeout_ms"], "llm");
+  onlyKeys(llm, ["base_url", "model", "effort", "max_tokens", "authorization_token", "authorization_token_env", "timeout_ms"], "llm");
   return {
     baseUrl: url(llm.base_url, "llm.base_url", true),
     model: requiredString(llm.model, "llm.model"),
     effort: optionalString(llm.effort, "llm.effort"),
+    maxTokens: integer(llm.max_tokens, 8192, 1, 131072, "llm.max_tokens"),
     authorizationToken: authorizationToken(llm, "llm"),
     timeoutMs: integer(llm.timeout_ms, 30000, 1000, 600000, "llm.timeout_ms"),
   };

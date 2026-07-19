@@ -39,6 +39,21 @@ timeout_ms = 60000
 batch_size = 16
 ```
 
+RAG回答生成を有効にする場合は、OpenAI-compatibleなChat Completionsを設定します。
+
+```toml
+[llm]
+base_url = "http://127.0.0.1:1234/v1"
+model = "model-identifier"
+effort = "low"
+max_tokens = 8192
+timeout_ms = 30000
+# authorization_token_env = "LLM_API_KEY"
+```
+
+`max_tokens`は生成token数の上限で、未指定時は8192です。1から131072まで指定でき、上限まで必ず生成する
+ものではありません。reasoningを有効にするproviderでは内部思考も上限を消費する場合があります。
+
 ## 起動と停止
 
 依存関係とC binaryを準備します。
