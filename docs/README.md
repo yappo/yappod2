@@ -16,6 +16,7 @@
 | HTTP APIを利用します | [`yappod_front` API](yappod-front-api.md) |
 | front/core間通信を確認します | [`yappod_core`内部プロトコル](yappod-core-protocol.md) |
 | デーモンを起動・監視します | [運用](operations.md) |
+| Prometheusで監視します | [監視とメトリクス](observability.md) |
 | ビルド、テスト、品質確認を行います | [開発](development.md) |
 
 サンプルの選び方は[サンプル一覧](../examples/README.md)、サンプル固有の問題は

@@ -1,16 +1,22 @@
 # search-webのLLM連携
 
-## 構成
+この文書では、search-webがRAG向けの参照資料から回答を生成する流れ、`[llm]`の全設定、空回答と期限超過の確認方法を説明します。特定のモデルやOpenAI互換サーバーに共通すると確認できない挙動は断定しません。
 
-回答生成サービスへ接続するのは`yappod_core`や`yappod_front`ではなく、Node.js/Fastifyで実装されたBFFです。
-BFFは`/v2/retrieve`から参照資料を取得し、質問と参照資料をOpenAI互換の`/v1/chat/completions`へ送ります。
+## 回答生成の流れ
 
-```text
-ブラウザー → search-web BFF → yappod_front → yappod_core
-                         ↘ Chat Completions互換LLM
-```
+1. ブラウザーがBFFの`POST /api/rag`へ質問と検索方式を送ります。
+2. BFFは必要なら質問を埋め込みし、`yappod_front`の`POST /v2/retrieve`から最大20件のパッセージを取得します。
+3. 参照資料が0件なら、LLMを呼ばず`no_context`として資料不足を返します。
+4. `[llm]`がなければ、LLMを呼ばず`unconfigured`として参照資料だけを返します。
+5. `[llm]`があれば、BFFが質問と参照資料から`messages`を作り、OpenAI互換の`chat/completions`へ送ります。
+6. `choices[0].message.content`を回答として取り出し、`[1]`形式の参照番号を検証します。
+7. 存在しない番号を参照した回答は画面へ出さず、取得済みの参照資料だけを残します。
 
-## 設定
+LLMへ接続するのはBFFです。`yappod_core`と`yappod_front`はLLMを読み込まず、回答も生成しません。
+
+## `[llm]`の設定
+
+回答生成を使わない場合はセクション全体を省略します。空の`[llm]`は無効化ではなく設定エラーです。
 
 ```toml
 [llm]
@@ -22,63 +28,140 @@ timeout_ms = 30000
 # authorization_token_env = "LLM_API_KEY"
 ```
 
-| キー | 条件 | 説明 |
-|---|---|---|
-| `base_url` | 必須 | `chat/completions`を加える基準URLです。プライベートネットワーク以外のHTTP接続は拒否します。 |
-| `model` | 必須 | 接続先が公開するモデル名です。 |
-| `effort` | 任意 | `reasoning_effort`として送ります。接続先が受理する値を指定します。 |
-| `max_tokens` | 1〜131072、既定値8192 | 出力トークン数の上限として毎回送ります。 |
-| `timeout_ms` | 1000〜600000、既定値30000 | BFFが1回の生成を待つ時間です。 |
-| `authorization_token_env` | 任意 | Bearerトークンを読む環境変数名です。 |
+| キー | 型 | 必須・既定値 | BFFの処理 |
+|---|---|---|---|
+| `base_url` | 文字列 | 必須 | 末尾へ`chat/completions`を加えます。クエリーとフラグメントは指定できません。 |
+| `model` | 文字列 | 必須 | リクエストの`model`へそのまま入れます。接続先が公開する実際のモデル名を指定します。 |
+| `effort` | 文字列 | 任意 | 指定した場合だけ`reasoning_effort`として送ります。値の候補をBFFは制限しません。 |
+| `max_tokens` | 整数 | 既定8192、1〜131072 | 出力トークン上限として、毎回`max_tokens`を明示します。 |
+| `timeout_ms` | 整数 | 既定30000、1000〜600000 | BFFが1回のHTTP応答を待つ期限です。生成トークン数の上限ではありません。 |
+| `authorization_token_env` | 文字列 | 任意 | 指定した名前の環境変数を起動時に読み、Bearer認証ヘッダーへ入れます。 |
 
-現在のBFFは`temperature: 0`を必ずリクエストへ含めます。LM Studioなどの画面で別の値を指定しても、BFFからの
-リクエストでは0が使われます。`[llm].temperature`は実装されていません。
+`authorization_token_env`は`[A-Za-z_][A-Za-z0-9_]*`に一致する環境変数名です。未設定または空ならBFFは起動に失敗します。`authorization_token`へトークンを直接書く形式は明示的に拒否します。
 
-## 接続先の画面設定との関係
+`base_url`はHTTPSを使用します。ただしローカルホスト、ループバックアドレス、RFC 1918のプライベートIPv4、ユニークローカルIPv6に限りHTTPも許可します。これは平文通信を安全にする機能ではないため、信頼できないネットワークではHTTPSを使用してください。
 
-BFFがリクエストへ含める`model`、`max_tokens`、`temperature`は、接続先の画面で選んだ既定値より優先されます。
-`effort`を設定した場合は`reasoning_effort`も明示して送ります。省略した場合は、この項目をリクエストへ含めません。
-接続先が受理する`reasoning_effort`の値は製品やモデルにより異なるため、接続先の受信ログとレスポンスを確認してください。
+## 実際に送るリクエスト
 
-`timeout_ms`の既定値は30000ミリ秒です。モデルの読み込み直後や長い参照資料を渡す場合は、回答生成が30秒を超える
-可能性があります。これはBFF側の待ち時間であり、接続先の生成上限ではありません。実際の生成時間を測ったうえで、
-必要な場合だけ運用設定を長くしてください。既定値そのものは30秒のままです。
+BFFは概ね次のJSONを送ります。
+
+```json
+{
+  "model": "model-identifier",
+  "reasoning_effort": "low",
+  "max_tokens": 8192,
+  "messages": [
+    {"role": "system", "content": "参照資料だけに基づいて日本語で回答するための指示"},
+    {"role": "user", "content": "質問と番号付き参照資料"}
+  ],
+  "temperature": 0
+}
+```
+
+`reasoning_effort`は`effort`を省略した場合、リクエストにも含めません。`temperature`は現在常に0です。`[llm].temperature`という設定は実装されていません。
+
+LM Studioなどの画面で別の温度や出力上限を設定していても、BFFがリクエストに含める`model`、`max_tokens`、`temperature`、任意の`reasoning_effort`がリクエスト値になります。接続先が最終的にどう扱ったかは、接続先の受信ログで確認してください。
+
+## `model`、`model_id`、埋め込みとの違い
+
+`[llm].model`は回答生成へ使うLLMの実名です。索引の互換性には使いません。`[vector].model_id`と`[embedding].model_id`は、検索ベクトルと索引ベクトルが同じ生成規則か確認する識別子です。LLMと埋め込みに同じモデルを使う必要はありません。
+
+## `max_tokens`の意味
+
+`max_tokens = 8192`は、接続先へ最大8192出力トークンを要求する設定です。必ず8192トークンを生成する指定ではありません。入力に含まれる質問と参照資料のトークン数も含みません。接続先のコンテキスト上限、モデル固有の制限、停止条件により、それより短く終わる場合があります。
+
+現行BFFは`max_tokens`を省略せず、設定値または既定値8192を毎回送ります。接続先の画面だけを変更しても、このリクエスト値は変わりません。
+
+## `reasoning_effort`の注意
+
+受理する値と効果は、OpenAI互換サーバー、モデル形式、サーバーの版により異なります。BFFは文字列を検証せずそのまま送るため、接続先が対応しない値ならHTTPエラーになる可能性があります。
+
+推論用出力と最終回答のトークン配分も接続先によって異なります。`effort`を変更した場合は、受信リクエスト、`message.content`、接続先独自の推論フィールド、利用量を実測してください。特定のモデルと接続先で検証していない値や所要時間は、一般的な仕様として扱いません。
 
 ## 回答として採用するフィールド
 
-BFFが画面へ表示するのは`choices[0].message.content`です。文字列が存在しない場合や空白だけの場合は失敗として
-扱います。`reasoning_content`は回答本文として採用しません。`finish_reason`だけを成功判定には使いません。
+BFFが採用するのは`choices[0].message.content`だけです。次のいずれかなら失敗です。
 
-モデルや互換サーバーによってフィールドの扱いが異なる可能性があります。この文書では特定モデルの一般仕様を断定せず、
-実際のレスポンスを確認する方法を説明します。
+- `choices[0]`または`message`がありません。
+- `content`が文字列ではありません。
+- `content`が空文字列または空白だけです。
+- HTTP応答が2xxではありません。
+- 応答本文をJSONとして解析できません。
+- `timeout_ms`内に応答を取得できません。
 
-## 空の回答を調べる
+`reasoning_content`など接続先独自の推論フィールドは回答に採用しません。`finish_reason: "stop"`だけでも成功とは判断しません。`content`が空なら、終了理由にかかわらず回答本文を取得できなかったものとして扱います。
 
-1. LM Studioなどのサーバー側で受信リクエストを開き、`max_tokens`、`reasoning_effort`、`temperature`を確認します。
-2. レスポンスの`content`、`reasoning_content`、`finish_reason`を別々に確認します。
-3. `usage.prompt_tokens`、`completion_tokens`と実際の生成時間を確認します。
-4. 生成時間が`llm.timeout_ms`を超えていないか確認します。
-5. BFFの`.error`と利用量のログを確認します。
+## 回答生成状態
 
-通信失敗、期限超過、HTTPエラー、不正なJSON、空の`content`は利用者画面で似た失敗表示になるため、BFFとLLMの
-両方のログを確認してください。
+BFFの`POST /api/rag`は参照資料を保持したまま、次の状態を返します。
 
-## curlで接続先を確認する
+| `generation_status` | 意味 |
+|---|---|
+| `no_context` | 検索結果に回答へ使えるパッセージがありません。LLMは呼びません。 |
+| `unconfigured` | `[llm]`がありません。参照資料だけを返します。 |
+| `answered` | `content`を取得し、参照番号も検証できました。 |
+| `invalid_citations` | 回答が存在しない資料番号を参照したため、回答を表示しません。 |
+| `failed` | 通信、HTTP、JSON、空の`content`、期限超過などで回答を利用できません。 |
 
-トークンが不要なローカルサーバーの例です。モデル名とURLは実際の設定に合わせます。
+現行UIでは複数のLLM失敗を`failed`へまとめます。画面だけでは原因を区別できないため、BFFと接続先のログを確認します。
+
+## 最小の接続確認
+
+まずsearch-webを介さず、接続先が応答するか確認します。次は認証不要なローカルサーバーの例です。
 
 ```sh
 curl -sS http://127.0.0.1:1234/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"model-identifier","max_tokens":128,"messages":[{"role":"user","content":"日本語で短く回答してください。"}]}'
+  --data '{"model":"model-identifier","max_tokens":128,"messages":[{"role":"user","content":"日本語で一文だけ回答してください。"}],"temperature":0}'
 ```
 
-外部APIを使う場合はトークンをコマンド履歴へ直接残さず、環境変数からヘッダーへ渡してください。
+外部APIではトークンをTOMLやコマンド履歴へ直接書かないでください。たとえば環境変数を利用します。
 
-## `src`、`dist`、再起動
+```sh
+curl -sS https://llm.example.test/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $LLM_API_KEY" \
+  --data '{"model":"model-identifier","max_tokens":128,"messages":[{"role":"user","content":"日本語で一文だけ回答してください。"}],"temperature":0}'
+```
 
-TypeScriptの実装は`server/src`、実行されるJavaScriptはビルド後の`server/dist`にあります。`src`を編集しただけでは
-起動中のプロセスへ反映されません。
+shell historyやプロセス一覧へ秘密情報が残る可能性も考慮し、実運用では利用するシェルと秘密管理の手順に従ってください。
+
+## 空回答の切り分け
+
+次の順で確認します。
+
+1. LM Studioなどの接続先とsearch-web BFFの両方が起動していることを確認します。
+2. BFFが実際に読み込んだTOMLと、起動しているリポジトリの複製をPIDとコマンドラインで確認します。
+3. 接続先の受信ログで`model`、`max_tokens`、`temperature: 0`、任意の`reasoning_effort`を確認します。
+4. HTTP状態、応答JSON、`choices[0].message.content`を確認します。
+5. 接続先独自の`reasoning_content`などへだけ出力されていないか確認します。
+6. `finish_reason`、`usage.prompt_tokens`、`usage.completion_tokens`を別々に記録します。
+7. リクエスト開始から応答または切断までの実時間と`llm.timeout_ms`を比較します。
+8. 同じ`messages`を小さな`max_tokens`で直接送るなど、最小リクエストとRAGリクエストの差を確認します。
+
+`completion_tokens: 0`は出力トークンが記録されていないことを示しますが、その理由を単独で特定する情報ではありません。サーバーの生成ログ、クライアント切断、モデル状態も確認してください。
+
+## 30秒の期限と初回生成
+
+既定の`timeout_ms`は30000ミリ秒です。モデルの読み込み直後や長いコンテキストでは、それを超える可能性があります。実測した生成時間が30秒を超え、接続先がその後に正常な`content`を返すことを確認できた場合は、たとえば次のように運用値を長くします。
+
+```toml
+[llm]
+base_url = "http://127.0.0.1:1234/v1"
+model = "model-identifier"
+max_tokens = 8192
+timeout_ms = 120000
+```
+
+`120000`は設定可能な例であり、実装の既定値ではありません。期限を長くするだけでは空の`content`や不正な`reasoning_effort`は直りません。
+
+## 利用量ログ
+
+`[usage_log].path`を設定すると、BFFはLLM応答の`usage`を、サービス名、操作、プロバイダー、モデル、時刻とともにJSONLへ追記します。接続先が`usage`を返さない場合も、接続自体の成功を保証する値にはなりません。トークンやリクエスト本文はこの利用量ログへ書きません。
+
+## `src`、`dist`、ビルド、再起動
+
+TypeScriptの編集元は`server/src`、配布用に実行するJavaScriptは`server/dist`です。`start.sh`は毎回`npm run build`を実行してから`server/dist/index.js`を起動します。手動で`npm start`する場合は、先に索引作成が必要です。
 
 ```sh
 cd examples/search-web
@@ -87,4 +170,4 @@ npm test
 npm run build
 ```
 
-ビルド後、対象の設定で起動したBFFを再起動します。別の複製にある`dist`を起動していないか、PIDとコマンドラインも確認します。
+起動済みプロセスは、ファイルを編集しただけでは入れ替わりません。編集後に同じ設定で停止してから起動します。`server/src`だけを直して古い`dist`を実行していないか、逆に`dist`だけを手編集して次のビルドで消えていないかを確認してください。複数の複製がある場合は、PIDのコマンドラインが編集対象の絶対パスを指すことも確認します。
