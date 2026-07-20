@@ -8,7 +8,7 @@
 |---|---|
 | `src/` | Cによる索引、検索、HTTP、デーモン、コマンドの実装です。公開対象を含む宣言は対応するヘッダーにあります。 |
 | `tests/cmocka/` | C API、保存形式、CLI、HTTP、異常系の単体・結合テストです。 |
-| `tests/quality/` | 検索品質、ANN再現率、デーモン信頼性、負荷計測のテスト資料と実行ファイルです。 |
+| `tests/quality/` | 検索品質、近似ベクトル検索の再現率、Yappod2サーバーの信頼性、負荷計測のテスト資料と実行ファイルです。 |
 | `examples/` | 実行可能な設定、入力生成、Web UIです。 |
 | `cmake/` | 外部依存関係とCMake補助処理です。 |
 
@@ -26,7 +26,7 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-`YAPPOD_WARNINGS_AS_ERRORS`は既定で有効です。警告を一時的に無視する前提の変更は追加しないでください。CTestの登録内容だけを確認する場合は次を実行します。
+`YAPPOD_WARNINGS_AS_ERRORS`はデフォルトで有効です。警告を一時的に無視する前提の変更は追加しないでください。CTestの登録内容だけを確認する場合は次を実行します。
 
 ```sh
 ctest --test-dir build -N
@@ -34,7 +34,7 @@ ctest --test-dir build -N
 
 ## CMakeの主な選択肢
 
-| 選択肢 | 既定値 | 用途 |
+| 選択肢 | デフォルト | 用途 |
 |---|---|---|
 | `YAPPOD_WARNINGS_AS_ERRORS` | `ON` | コンパイラー警告をエラーにします。 |
 | `YAPPOD_TESTS_DAEMON` | `ON` | ポート、fork、signalを使うデーモン試験を構築します。 |
@@ -51,7 +51,7 @@ ctest --test-dir build -N
 - `canonical_ingest`、`update_v2`、`segment_planner_v2`はNDJSON、更新の不可分性、セグメント上限を確認します。
 - `lexical_v2_*`、`bm25_score`、`vector_search`、`ann_v2`、`hybrid_rerank`は各検索方式を確認します。
 - `manifest_v2_nrt`、`snapshot_v2`、`index_v2_contracts`は公開、再読み込み、保存形式の契約を確認します。
-- `core_protocol_v2`、`http_v2_runtime`、`http_v2_daemon`は内部フレームとHTTP APIを確認します。
+- `core_protocol_v2`、`http_v2_runtime`、`http_v2_daemon`はfront/core間の通信形式とHTTP APIを確認します。
 - `runtime_policy_v2`、`observability_v2`、`v2_daemon_reliability`は処理上限、メトリクス、並行更新を確認します。
 - `v2_search_quality`と`search_quality_metrics`は品質指標の回帰を確認します。
 - `wikipedia_example_converter`はWikipedia exampleの変換処理を確認します。
@@ -124,7 +124,7 @@ sed "s|directory = \"./index-lexical\"|directory = \"$tmpdir/index\"|" \
 
 ## 文書変更の確認
 
-文書だけを変更した場合も、記載したコマンド、設定キー、既定値、範囲、HTTP状態、JSONフィールドをソースとテストへ照合します。
+文書だけを変更した場合も、記載したコマンド、設定キー、デフォルト、範囲、HTTP状態、JSONフィールドをソースとテストへ照合します。
 
 ```sh
 git diff --check
@@ -134,4 +134,4 @@ Markdownの相対リンク、削除した文書への参照、廃止済みの`sc
 
 ## 品質試験と性能測定
 
-リポジトリ内の小規模テストは、結果の再現性と回帰検出を目的とします。実運用規模の性能を保証するものではありません。大規模な基準試験では、ハードウェア、OS、コンパイラー、データ集合、検索文、同時実行数、事前実行、索引設定を固定し、P50/P95/P99、RSS、ANN Recall@10、nDCG@10を条件と一緒に保存します。具体的な対象は[品質テスト](../tests/quality/README.md)を参照してください。
+リポジトリ内の小規模テストは、結果の再現性と回帰検出を目的とします。実運用規模の性能を保証するものではありません。大規模な基準試験では、ハードウェア、OS、コンパイラー、データ集合、検索文、同時実行数、事前実行、索引設定を固定し、P50/P95/P99、RSS、近似ベクトル検索のRecall@10、nDCG@10を条件と一緒に保存します。具体的な対象は[品質テスト](../tests/quality/README.md)を参照してください。

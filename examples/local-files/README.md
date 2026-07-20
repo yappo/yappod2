@@ -1,6 +1,6 @@
 # local-filesで手元の文書を検索する
 
-local-filesは、指定したディレクトリから文書を収集し、Yappod2の正式なNDJSON、パッセージ、埋め込み、索引を段階的に作るPythonコマンドです。入力ファイルは変更せず、各段階の成果物と検証情報を設定した出力先へ保存します。
+local-filesは、指定したディレクトリから文書を収集し、Yappod2の正式なNDJSON、本文断片、埋め込み、索引を段階的に作るPythonコマンドです。入力ファイルは変更せず、各段階の成果物と検証情報を設定した出力先へ保存します。
 
 ## 対応する入力
 
@@ -64,7 +64,7 @@ directory = "../data/local-files/index"
 
 `collection_id`は`[A-Za-z0-9._-]{1,32}`です。別の文書集合には別の値と出力ディレクトリを使います。`output.directory`、`prepare.directory`、`embedding.directory`、`index.directory`は、互いに包含しない別ディレクトリでなければなりません。
 
-全キーの型、既定値、上限、フォーマッター規則は[local-files設定リファレンス](docs/configuration.md)を参照してください。
+全キーの型、デフォルト、上限、フォーマッター規則は[local-files設定リファレンス](docs/configuration.md)を参照してください。
 
 ## `all`で作る範囲を選ぶ
 
@@ -79,8 +79,8 @@ examples/local-files/.venv/bin/python \
 |---|---|---|
 | `documents` | `convert` | 文書NDJSONと抽出失敗記録です。索引は作りません。 |
 | `lexical` | `convert` → `build` | 語彙検索用索引です。`[vector].enabled = false`が必要です。 |
-| `rag` | `convert` → `prepare` → `build` | パッセージも準備しますが、索引はベクトルを持ちません。RAGの語彙検索経路を試せます。 |
-| `hybrid` | `convert` → `prepare` → `embed` → `build` | パッセージベクトルとANNを持つ索引です。完全な`[embedding]`と`[vector].enabled = true`が必要です。 |
+| `rag` | `convert` → `prepare` → `build` | 本文断片も準備しますが、索引はベクトルを持ちません。RAGの語彙検索経路を試せます。 |
+| `hybrid` | `convert` → `prepare` → `embed` → `build` | 本文断片のベクトルと、近いベクトルを高速に探すUSearchデータを持つ索引です。完全な`[embedding]`と`[vector].enabled = true`が必要です。 |
 
 既存の段階がある場合、`all`はマニフェスト、チェックサム、設定の指紋値、元入力のスナップショットを検証してから再利用します。単にディレクトリが存在するだけでは完成済みと判断しません。
 
@@ -94,8 +94,8 @@ examples/local-files/.venv/bin/python \
 |---|---|---|
 | `convert` | `--config PATH` | 必須です。収集、抽出、出力先を含むTOMLを読みます。 |
 | `convert` | `--content-match` / `--no-content-match` | どちらか一方を指定できます。`formatters.content_match_enabled`を今回の実行だけ上書きします。 |
-| `prepare` | `--config PATH` | 必須です。完成済み文書成果物を検証してパッセージを作ります。 |
-| `embed` | `--config PATH` | 必須です。完成済み文書とパッセージを検証してベクトルを付けます。 |
+| `prepare` | `--config PATH` | 必須です。完成済み文書成果物を検証して本文断片を作ります。 |
+| `embed` | `--config PATH` | 必須です。完成済み文書と本文断片を検証してベクトルを付けます。 |
 | `build` | `--config PATH` | 必須です。完成済みの前段成果物と索引設定を読みます。 |
 | `build` | `--target lexical\|rag\|hybrid` | 必須です。索引へ渡す前段成果物と、必要なベクトル構成を選びます。 |
 | `all` | `--config PATH` | 必須です。必要な段階を順に実行します。 |
@@ -115,7 +115,7 @@ examples/local-files/.venv/bin/python \
 
 `input.include`へ一致し、`input.exclude`へ一致しないファイルを安定した順序で処理します。文書IDは文書集合の識別子、相対パス、分割番号から作り、本文が`output.body_max_bytes`を超える場合は複数文書へ分けます。成功時は`output.directory`を不可分に公開し、既存ディレクトリは上書きしません。
 
-### 2. パッセージを作る
+### 2. 本文断片を作る
 
 ```sh
 examples/local-files/.venv/bin/python \
@@ -131,7 +131,7 @@ examples/local-files/.venv/bin/python \
   examples/local-files/local_files.py embed --config CONFIG
 ```
 
-文書とパッセージのID、順序、件数を照合し、バッチごとに埋め込みAPIを呼びます。途中経過はジャーナルとチェックポイントへ保存し、同じ入力、設定、モデル、次元数であれば完了済み入力分割ファイルを再利用します。最終成果物は元の文書操作へ`vectors`を付けたNDJSONです。
+文書と本文断片のID、順序、件数を照合し、バッチごとに埋め込みAPIを呼びます。途中経過はジャーナルとチェックポイントへ保存し、同じ入力、設定、モデル、次元数であれば完了済み入力分割ファイルを再利用します。最終成果物は元の文書操作へ`vectors`を付けたNDJSONです。
 
 ### 4. 索引を作る
 
@@ -190,7 +190,7 @@ batch_size = 16
 4. 抽出に失敗し`extract.tika_command`があればTikaコマンドを試します。
 5. 最後にtextとして検出できるか確認し、できなければ失敗へ記録します。
 
-外部コマンドの配列には`{path}`をちょうど1回含めます。シェル文字列として連結せず引数配列で実行します。タイムアウトと標準出力上限を超えた結果は失敗です。内容によるフォーマッター判定はファイルを追加で読むため、既定では無効です。
+外部コマンドの配列には`{path}`をちょうど1回含めます。シェル文字列として連結せず引数配列で実行します。タイムアウトと標準出力上限を超えた結果は失敗です。内容によるフォーマッター判定はファイルを追加で読むため、デフォルトでは無効です。
 
 ## 成果物
 
@@ -213,7 +213,7 @@ examples/search-web/scripts/start.sh \
   --config examples/local-files/local-files-yappod2.toml
 ```
 
-既定は`http://127.0.0.1:4173`です。local-files文書は外部URLを持たず、画面は`title`の相対パスを表示します。停止時も同じ設定を渡します。
+デフォルトは`http://127.0.0.1:4173`です。local-files文書は外部URLを持たず、画面は`title`の相対パスを表示します。停止時も同じ設定を渡します。
 
 ```sh
 examples/search-web/scripts/stop.sh \

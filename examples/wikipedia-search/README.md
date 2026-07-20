@@ -45,46 +45,49 @@ cp examples/wikipedia-search/wikipedia-search.example.toml \
 
 設定例は最初、語彙索引用です。
 
+以下の表では、「デフォルトは`1200`、1〜1048576」のようにデフォルトと範囲を明記します。「`4`、1〜1024」のように
+値と範囲だけを書いた行では、最初の値4がデフォルトです。バッククォートは設定値を示すMarkdown表記です。
+
 ### 索引構造の設定
 
-| キー | 必須・既定値・範囲 | 用途 |
+| キー | 必須・デフォルト・範囲 | 用途 |
 |---|---|---|
 | `format_version` | 必須、`2` | 現在の索引形式です。 |
 | `index.directory` | 必須 | 作成または起動する索引ディレクトリです。既存の語彙索引をベクトル対応へ変更するときは別のパスを指定します。 |
-| `tokenizer.id` | 既定値`unicode_nfkc_casefold_v2`、最大255バイト | 索引互換性を識別する値です。任意の文字列で別実装へ切り替わる設定ではありません。 |
-| `chunking.max_chars` | 既定値`1200`、1〜1048576 | 一つのパッセージに含める最大文字数です。 |
-| `chunking.overlap_chars` | 既定値`200`、0以上かつ`max_chars`未満 | 隣接するパッセージの重なりです。 |
+| `tokenizer.id` | デフォルトは`unicode_nfkc_casefold_v2`、最大255バイト | 索引互換性を識別する値です。任意の文字列で別実装へ切り替わる設定ではありません。 |
+| `chunking.max_chars` | デフォルトは`1200`、1〜1048576 | 一つの本文断片に含める最大文字数です。 |
+| `chunking.overlap_chars` | デフォルトは`200`、0以上かつ`max_chars`未満 | 隣接する本文断片の重なりです。 |
 | `vector.enabled` | 必須 | 語彙索引では`false`、ベクトル対応索引では`true`です。 |
 | `vector.model_id` | ベクトル有効時に必須、1〜255バイト | 索引と検索ベクトルの生成規則を識別します。実モデル名とは別です。 |
 | `vector.dimensions` | ベクトル有効時に必須、1〜65536 | 各ベクトルの要素数です。 |
 | `vector.metric` | ベクトル有効時に必須 | `cosine`、`dot`、`l2`から選びます。 |
-| `metadata.filterable_fields` | 既定値`[]`、最大64件、各1〜127バイト | `language`や`source`など、検索時に絞り込むメタデータのパスです。 |
+| `metadata.filterable_fields` | デフォルトは`[]`、最大64件、各1〜127バイト | `language`や`source`など、検索時に絞り込むメタデータのパスです。 |
 
 `[tokenizer]`、`[chunking]`、`[vector]`はセクション自体が必要です。`[metadata]`は省略できます。索引作成後の実際の値は索引直下の`config.toml`に保存されます。
 
-### 索引作成、デーモン、Webの設定
+### 索引作成、Yappod2サーバー、Webの設定
 
-| キー | 必須・既定値・範囲 | 用途 |
+| キー | 必須・デフォルト・範囲 | 用途 |
 |---|---|---|
 | `build.yappo_makeindex` | 索引がない場合に必須 | search-webの索引作成処理が実行する`yappo_makeindex`です。 |
 | `build.input` | 索引がない場合に必須 | 語彙索引では`documents.ndjson`、ベクトル対応索引では`documents.vector.ndjson`を指定します。 |
-| `daemon.run_directory` | Cデーモンでは必須 | core、front、WebのPIDとログを保存します。 |
-| `daemon.core_host` / `core_port` | Cデーモンでは必須、ポートは1〜65535 | coreの待ち受け先と、frontからの接続先です。 |
-| `daemon.front_host` / `front_port` | Cデーモンでは必須、ポートは1〜65535 | frontの待ち受け先と、BFFからの接続先です。 |
+| `daemon.run_directory` | Yappod2サーバーでは必須 | core、front、WebのPIDとログを保存します。 |
+| `daemon.core_host` / `core_port` | Yappod2サーバーでは必須、ポートは1〜65535 | coreの待ち受け先と、frontからの接続先です。 |
+| `daemon.front_host` / `front_port` | Yappod2サーバーでは必須、ポートは1〜65535 | frontの待ち受け先と、search-webサーバーからの接続先です。 |
 | `daemon.max_inflight` | `4`、1〜1024 | frontとcoreがそれぞれ保持する処理中リクエスト件数の上限です。 |
 | `daemon.max_inflight_bytes` | `4194304`、1〜1073741824 | frontとcoreがそれぞれ保持する処理中データ量の上限です。 |
 | `daemon.request_timeout_ms` | `5000`、1〜60000 | 接続後のソケット送受信期限です。 |
 | `daemon.write_token` | 任意、16〜255バイト | 文書登録APIのBearer認証に使います。空白と制御文字は使用できません。 |
-| `web.host` / `web.port` | `127.0.0.1` / `4173` | BFFとWeb画面の待ち受け先です。 |
-| `web.yappod_timeout_ms` | `5000`、1〜600000 | BFFがfrontの応答を待つ時間です。 |
-| `web.startup_timeout_ms` | `8000`、100〜600000 | 起動スクリプトがBFFと模擬サービスの起動を待つ時間です。 |
+| `web.host` / `web.port` | `127.0.0.1` / `4173` | search-webサーバーとWeb画面の待ち受け先です。 |
+| `web.yappod_timeout_ms` | `5000`、1〜600000 | search-webサーバーがfrontの応答を待つ時間です。 |
+| `web.startup_timeout_ms` | `8000`、100〜600000 | 起動スクリプトがsearch-webサーバーと模擬サービスの起動を待つ時間です。 |
 | `usage_log.path` | 任意 | 埋め込みとLLMの`usage`を追記するJSONLです。 |
 
 ### 埋め込みの設定
 
 ベクトルを作る場合だけ`[embedding]`を追加します。
 
-| キー | 必須・既定値・範囲 | 用途 |
+| キー | 必須・デフォルト・範囲 | 用途 |
 |---|---|---|
 | `provider` | 必須 | `lmstudio`、`ollama`、`openai`から選びます。 |
 | `base_url` / `endpoint_url` | どちらか一方だけ必須 | 基準URL、または埋め込みエンドポイント全体です。 |
@@ -100,7 +103,7 @@ cp examples/wikipedia-search/wikipedia-search.example.toml \
 
 回答生成を使う場合だけ`[llm]`を追加します。
 
-| キー | 必須・既定値・範囲 | 用途 |
+| キー | 必須・デフォルト・範囲 | 用途 |
 |---|---|---|
 | `base_url` | 必須 | OpenAI互換Chat Completions APIの基準URLです。 |
 | `model` | 必須 | 接続先へ送るLLM名です。 |
@@ -121,10 +124,10 @@ python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
 
 ### `fetch-api`の引数
 
-| 引数 | 必須・既定値 | 説明 |
+| 引数 | 必須・デフォルト | 説明 |
 |---|---|---|
 | `--output PATH` | 必須 | 正式なNDJSONの出力先です。親ディレクトリは作成します。 |
-| `--limit N` | 既定1000、1以上 | 書き出す記事数の上限です。APIから必ずこの件数を得られる保証はありません。 |
+| `--limit N` | デフォルトは1000、1以上 | 書き出す記事数の上限です。APIから必ずこの件数を得られる保証はありません。 |
 | `--topic TEXT` | 繰り返し指定可 | 検索話題です。省略時は歴史、地理、自然科学、情報技術など20の話題へ件数を配分します。 |
 | `--api-url URL` | `https://ja.wikipedia.org/w/api.php` | Action APIの接続先です。通常は変更しません。 |
 | `--user-agent TEXT` | リポジトリの例示値 | Wikimediaへ送るUser-Agentです。実利用では連絡先を含む値へ変更します。 |
@@ -132,7 +135,11 @@ python3 examples/wikipedia-search/wikipedia_data.py fetch-api \
 各話題を生成器による検索へ渡し、記事ごとにプレーンテキストの抜粋、完全URL、リビジョンIDを取得します。同じページIDと空本文は読み飛ばします。成功時の標準出力は次の要約JSONです。
 
 ```json
-{"output":"examples/data/wikipedia-search/documents.ndjson","skipped":12,"written":988}
+{
+  "output": "examples/data/wikipedia-search/documents.ndjson",
+  "skipped": 12,
+  "written": 988
+}
 ```
 
 出力は一時ファイルへ書いて`fsync`してから置き換えます。APIエラーや不正応答で失敗した途中ファイルを最終出力として公開しません。
@@ -144,7 +151,7 @@ python3 examples/wikipedia-search/wikipedia_data.py download-dump \
   --output-dir examples/data/wikipedia-search/dump
 ```
 
-| 引数 | 必須・既定値 | 説明 |
+| 引数 | 必須・デフォルト | 説明 |
 |---|---|---|
 | `--output-dir DIR` | 必須 | チェックサムとダンプを保存します。 |
 | `--base-url URL` | `https://dumps.wikimedia.org/jawiki/latest` | `jawiki-latest`の基準URLです。 |
@@ -176,7 +183,7 @@ python3 examples/wikipedia-search/wikipedia_data.py convert-dump \
   --output examples/data/wikipedia-search/documents.ndjson
 ```
 
-| 引数 | 必須・既定値 | 説明 |
+| 引数 | 必須・デフォルト | 説明 |
 |---|---|---|
 | `--input PATH` | 必須 | 1ファイル、または複数出力を含むディレクトリです。`.bz2`と`.gz`も読めます。 |
 | `--output PATH` | 必須 | Yappod2の正式なNDJSONです。 |
@@ -187,7 +194,19 @@ python3 examples/wikipedia-search/wikipedia_data.py convert-dump \
 生成する各行は次の形です。
 
 ```json
-{"operation":"upsert","id":"jawiki:123","url":"https://ja.wikipedia.org/wiki/...","title":"記事名","body":"本文","metadata":{"language":"ja","source":"wikipedia-ja","wikipedia_page_id":"123","wikipedia_revision_id":456}}
+{
+  "operation": "upsert",
+  "id": "jawiki:123",
+  "url": "https://ja.wikipedia.org/wiki/...",
+  "title": "記事名",
+  "body": "本文",
+  "metadata": {
+    "language": "ja",
+    "source": "wikipedia-ja",
+    "wikipedia_page_id": "123",
+    "wikipedia_revision_id": 456
+  }
+}
 ```
 
 ## 語彙索引を作る
@@ -199,7 +218,8 @@ examples/wikipedia-search/scripts/build_index.sh \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-このscriptは`node examples/search-web/scripts/stack.mjs build`を呼びます。`index.directory`がすでに存在すると上書きせず失敗します。
+このスクリプトは、内部でsearch-webの索引作成コマンド`node examples/search-web/scripts/stack.mjs build`を呼びます。
+`index.directory`がすでに存在すると上書きせず失敗します。
 
 ```sh
 ./build/search \
@@ -208,9 +228,9 @@ examples/wikipedia-search/scripts/build_index.sh \
   --query "検索エンジン"
 ```
 
-## パッセージを作る
+## 本文断片を作る
 
-ベクトル対応索引を作る前に、索引と同じトークナイザーと文書分割設定でパッセージを準備します。
+ベクトル対応索引を作る前に、索引と同じトークナイザーと文書分割設定で本文断片を準備します。
 
 ```sh
 ./build/yappo_makeindex prepare \
@@ -219,7 +239,7 @@ examples/wikipedia-search/scripts/build_index.sh \
   --output examples/data/wikipedia-search/passages.ndjson
 ```
 
-`prepare`の出力はパッセージ用の中間NDJSONであり、そのまま`build`へは渡しません。次の`embed`が元文書と結合します。出力ファイルは上書きされるため、既存成果物を保存する必要がある場合は別パスを指定してください。
+`prepare`の出力は本文断片用の中間NDJSONであり、そのまま`build`へは渡しません。次の`embed`が元文書と結合します。出力ファイルは上書きされるため、既存成果物を保存する必要がある場合は別パスを指定してください。
 
 ## 埋め込みを付ける
 
@@ -255,16 +275,16 @@ python3 examples/wikipedia-search/wikipedia_data.py embed \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-| 引数 | 必須・既定値 | 説明 |
+| 引数 | 必須・デフォルト | 説明 |
 |---|---|---|
 | `--documents PATH` | 必須 | 元の正式な登録・更新用NDJSONです。 |
-| `--passages PATH` | 必須 | 同じ文書から`prepare`したパッセージNDJSONです。 |
+| `--passages PATH` | 必須 | 同じ文書から`prepare`した本文断片NDJSONです。 |
 | `--output PATH` | 必須 | `vectors`を付けた正式なNDJSONです。 |
-| `--config PATH` | 既定は`wikipedia-search.toml` | `[embedding]`と`[usage_log]`を読みます。 |
+| `--config PATH` | デフォルトは`wikipedia-search.toml` | `[embedding]`と`[usage_log]`を読みます。 |
 
-全文書が一意な登録・更新操作であること、全パッセージが既知の文書を指すこと、通し番号が文書ごとに0から連続すること、全文書に1件以上のパッセージがあることを検証します。埋め込み応答は件数、索引順、次元数、有限値を検証します。
+すべての文書IDが一意であること、すべての本文断片が入力文書のいずれかを指すこと、通し番号が文書ごとに0から連続すること、各文書に1件以上の本文断片があることを検証します。埋め込み応答は件数、索引順、次元数、有限値を検証します。
 
-成功時は文書数とパッセージ数を要約JSONへ出します。出力は一時ファイルから不可分に置き換えます。現行のWikipedia `embed`はlocal-filesのようなチェックポイント再開を実装していないため、途中失敗時は同じ入力から再実行します。
+成功時は文書数と本文断片数を要約JSONへ出します。出力は一時ファイルから不可分に置き換えます。現行のWikipedia `embed`はlocal-filesのようなチェックポイント再開を実装していないため、途中失敗時は同じ入力から再実行します。
 
 ## ベクトル対応索引を作る
 
@@ -297,7 +317,7 @@ examples/wikipedia-search/scripts/start_demo.sh \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-索引がなければ`[build]`から作り、有効な既存索引は再利用します。既定は`http://127.0.0.1:4173`です。
+索引がなければ`[build]`から作り、有効な既存索引は再利用します。デフォルトは`http://127.0.0.1:4173`です。
 
 ```sh
 examples/wikipedia-search/scripts/stop_demo.sh \
@@ -308,7 +328,7 @@ examples/wikipedia-search/scripts/stop_demo.sh \
 
 ## RAG回答を利用する
 
-質問画面は`/v2/retrieve`でパッセージと出典を取得します。`[llm]`がなければ参照資料だけを表示します。追加した場合はBFFがOpenAI互換Chat Completionsへ回答を依頼します。LLMの全設定、固定temperature、空content、期限超過の確認は[LLM連携](../search-web/docs/llm-integration.md)を参照してください。
+質問画面は`/v2/retrieve`で本文断片と出典を取得します。`[llm]`がなければ参照資料だけを表示します。追加した場合はsearch-webサーバーがOpenAI互換Chat Completionsへ回答を依頼します。LLMの全設定、固定temperature、空content、期限超過の確認は[LLM連携](../search-web/docs/llm-integration.md)を参照してください。
 
 ## 問題が発生した場合
 

@@ -19,7 +19,10 @@ curl -fsS http://127.0.0.1:18400/health/live
 ```
 
 ```json
-{"status":"live","service":"yappod_front"}
+{
+  "status": "live",
+  "service": "yappod_front"
+}
 ```
 
 この応答は索引とcoreを確認しません。`200`でも検索できるとは限りません。
@@ -142,7 +145,7 @@ sum by (operation, status_class) (increase(yappod_v2_requests_total[1h]))
 0.005, 0.010, 0.025, 0.050, 0.100, 0.200, 0.500, 1.000, +Inf
 ```
 
-計測範囲はfrontで対象APIの処理を開始してからレスポンス送信処理を呼ぶまでです。検索、RAG向け取得、文書更新ではcoreとの往復を含みます。`passages:prepare`ではfront内の処理を含みます。クライアントがレスポンス本文全体を読み終えるまでの時間や、search-webのBFF、埋め込み、LLMの時間は含みません。
+計測範囲はfrontで対象APIの処理を開始してからレスポンス送信処理を呼ぶまでです。検索、RAG向け取得、文書更新ではcoreとの往復を含みます。`passages:prepare`ではfront内の処理を含みます。クライアントがレスポンス本文全体を読み終えるまでの時間や、search-webサーバー、埋め込み、LLMの時間は含みません。
 
 95パーセンタイルの例です。
 
@@ -173,11 +176,11 @@ frontがディスク上のマニフェストから読んだ現在の世代です
 
 ### `yappod_v2_inflight_requests`
 
-frontが現在処理中として受理した検索、RAG向け取得、パッセージ生成、文書更新の件数です。認証失敗と上限超過で拒否したリクエストは受理しないため含みません。
+frontが現在処理中として受理した検索、RAG向け取得、本文断片生成、文書更新の件数です。認証失敗と上限超過で拒否したリクエストは受理しないため含みません。
 
 ### `yappod_v2_inflight_request_bytes`
 
-受理済みリクエストの`Content-Length`合計です。レスポンスの大きさ、索引のメモリーマッピング、内部フレームのヘッダーは含みません。
+受理済みリクエストの`Content-Length`合計です。レスポンスの大きさ、索引のメモリーマッピング、front/core間の通信ヘッダーは含みません。
 
 ### `yappod_v2_inflight_request_limit`
 
@@ -263,10 +266,10 @@ yappod_v2_compaction_state{state="interrupted"} == 1
 現行の`/metrics`には次の情報がありません。
 
 - 結果件数、ヒット率、検索文、検索方式または`scope`別の件数
-- セグメントごとの文書数、パッセージ数、ファイルサイズ
+- セグメントごとの文書数、本文断片数、ファイルサイズ
 - プロセスのCPU、RSS、開いているファイル記述子、スレッド数
 - core単体のPrometheusエンドポイント
-- search-webのBFF、埋め込みAPI、LLM APIの処理時間とエラー
+- search-webサーバー、埋め込みAPI、LLM APIの処理時間とエラー
 - `write_token`認証失敗だけを分離したカウンター
 - 再読み込みの成功・失敗回数
 

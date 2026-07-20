@@ -24,8 +24,8 @@ cmake --build build -j
 | サンプル | 入力 | 主な処理 | 成果物 | 外部サービス |
 |---|---|---|---|---|
 | [local-files](local-files/README.md) | 手元のディレクトリにあるテキスト、ソース、PDF、Office文書など | 収集、本文抽出、整形、分割、埋め込み、索引作成 | 分割NDJSON、マニフェスト、再開位置、埋め込み、索引 | ベクトルを使う場合は埋め込みAPI、形式によってTikaや拡張処理が必要です。 |
-| [Wikipedia](wikipedia-search/README.md) | Wikimedia Action APIまたは日本語Wikipediaダンプ | 取得、チェックサム確認、WikiExtractor出力の変換、埋め込み、索引作成 | 正式なNDJSON、パッセージ、埋め込み付きNDJSON、索引 | データ取得にはネットワーク、ベクトルを使う場合は埋め込みAPIが必要です。 |
-| [search-web](search-web/README.md) | 作成済みのYappod2索引 | core、front、BFF、Web UIの起動、検索、RAG向け取得、文書登録 | PID、ログ、Web用索引作成成果物、任意のAPI利用量ログ | ベクトル検索には埋め込みAPI、回答生成にはLLMが必要です。 |
+| [Wikipedia](wikipedia-search/README.md) | Wikimedia Action APIまたは日本語Wikipediaダンプ | 取得、チェックサム確認、WikiExtractor出力の変換、埋め込み、索引作成 | 正式なNDJSON、本文断片、埋め込み付きNDJSON、索引 | データ取得にはネットワーク、ベクトルを使う場合は埋め込みAPIが必要です。 |
+| [search-web](search-web/README.md) | 作成済みのYappod2索引 | core、front、search-webサーバー、Web UIの起動、検索、RAG向け取得、文書登録 | PID、ログ、Web用索引作成成果物、任意のAPI利用量ログ | ベクトル検索には埋め込みAPI、回答生成にはLLMが必要です。 |
 
 ### local-filesを選ぶ場合
 
@@ -41,7 +41,7 @@ cmake --build build -j
 
 ## 共通する必要環境
 
-最初にリポジトリのルートでCプログラムをビルドします。
+最初にリポジトリのルートでYappod2コマンドをビルドします。
 
 ```sh
 cmake -S . -B build
@@ -59,6 +59,6 @@ cmake --build build -j
 
 ## 成果物を混ぜない
 
-文書NDJSON、パッセージ、埋め込み、索引は、同じ入力と設定から生成した組み合わせを使います。別の実行結果や異なる`model_id`、`dimensions`の成果物を一つのディレクトリへ混ぜないでください。語彙索引のアプリケーション用TOMLへ`[vector].enabled = true`を追加しても、既存索引はベクトル対応になりません。別ディレクトリへ作り直します。
+文書NDJSON、本文断片、埋め込み、索引は、同じ入力と設定から生成した組み合わせを使います。別の実行結果や異なる`model_id`、`dimensions`の成果物を一つのディレクトリへ混ぜないでください。語彙索引のアプリケーション用TOMLへ`[vector].enabled = true`を追加しても、既存索引はベクトル対応になりません。別ディレクトリへ作り直します。
 
 エラーの共通形式、PID、ログ、安全な再生成は[サンプルの問題解決](troubleshooting.md)を参照してください。アプリケーション用TOMLの全キーは[設定リファレンス](../docs/configuration.md)にあります。

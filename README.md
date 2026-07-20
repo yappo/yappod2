@@ -1,18 +1,36 @@
 # Yappod2
 
-Yappod2は、1台のサーバーで動作する全文検索エンジンです。UTF-8の文書を索引へ登録し、
+Yappod2は、1台のサーバーで動作する検索エンジンです。UTF-8の文書を索引へ登録し、
 語句による検索、ベクトルによる類似検索、両者を組み合わせた検索を利用できます。
-検索結果から引用可能な本文断片を取得できるため、RAGの検索部分にも利用できます。
+長い本文を検索しやすい長さに分割して保存できるため、RAGでLLMへ渡す参照資料の取得にも利用できます。
 
-索引は作成後に変更しないセグメントと、世代管理されたマニフェストで構成します。文書の追加・更新・削除は新しい
-世代として公開され、検索処理には公開前または公開後の完全な状態だけが見えます。
+Yappod2では、本文を設定した長さで分割した一部分を「本文断片」と呼びます。設定ファイルやAPIでは、この本文断片を
+`passage`または`passages`と表記します。文書単位の検索では文書ごとに結果をまとめ、本文断片単位の検索では分割した
+各部分を別々の結果として返します。
+
+## サーバーの構成
+
+HTTP APIを提供するときは、`yappod_core`と`yappod_front`の二つのサーバーを起動します。
+
+| サーバー | 役割 |
+|---|---|
+| `yappod_core` | 索引ファイルを開き、検索、本文断片の取得、文書の追加・更新・削除を実行します。外部向けのHTTP APIは提供しません。 |
+| `yappod_front` | 利用者からHTTPリクエストを受け付け、内容を検証して`yappod_core`へ処理を依頼します。ヘルスチェックとPrometheus用メトリクスも提供します。 |
+
+二つに分かれているため、HTTPの受付処理と索引を扱う処理を別々に監視し、負荷を制限できます。通常のアプリケーションは
+`yappod_front`のHTTP APIへ接続します。`yappod_core`のポートは`yappod_front`との通信専用であり、ブラウザーや
+一般のHTTPクライアントから直接接続するものではありません。
+
+索引は複数の「セグメント」から構成されます。セグメントは、ある時点で登録された文書、検索用の語句一覧、本文断片、
+ベクトルなどを一組のファイルとして保存したものです。更新時は既存ファイルを直接書き換えず、新しいセグメントを追加します。
+`manifest.json`には、現在の検索で使用するセグメントと索引の世代番号が記録されます。
 
 ## 主な機能
 
-- BM25Fによる語彙検索
-- USearch HNSWと全件走査によるベクトル検索
-- Reciprocal Rank Fusion（RRF）による複合検索
-- 文書単位とパッセージ単位の検索
+- 題名と本文の重要度を考慮したBM25Fによる語彙検索
+- USearchを使ったベクトルの近似検索と、小規模データ向けの全件比較
+- 語彙検索とベクトル検索の順位を組み合わせる複合検索
+- 文書単位と本文断片単位の検索
 - メタデータフィルター、フレーズ検索、カーソルによる続きの取得
 - RAG向けの本文断片と出典情報の取得
 - NDJSONによる文書の追加、更新、削除
@@ -84,13 +102,14 @@ cmake --install build --prefix "$HOME/yappod2"
   --query "modern search"
 ```
 
-`--scope documents`が既定値です。パッセージ単位で検索する場合は`--scope passages`を指定します。
-`--limit`には1から100までを指定でき、既定値は10です。
+`--scope documents`がデフォルトです。この指定では、一つの文書から複数の本文断片が一致しても文書ごとに結果を
+まとめます。RAG用に一致した本文断片を一つずつ確認したい場合は`--scope passages`を指定します。
+`--limit`には1から100までを指定でき、デフォルトは10です。
 
 ## ベクトルを使った検索
 
-`examples/config.toml`は3次元の動作確認用ベクトルを使う設定です。入力NDJSONの`vectors`には、
-文書をチャンクへ分割した後のパッセージ順でベクトルを指定します。
+`examples/config.toml`は3次元の動作確認用ベクトルを使う設定です。Yappod2は文書の本文を`[chunking]`の設定に従って
+複数の本文断片へ分割します。入力NDJSONの`vectors`には、先頭の本文断片から順番に対応するベクトルを指定します。
 
 ```sh
 ./build/yappo_makeindex build \
@@ -119,7 +138,7 @@ cmake --install build --prefix "$HOME/yappod2"
 
 Yappod2の検索APIは、検索文を外部の埋め込みサービスへ送信しません。実際のアプリケーションでは、
 索引作成時と同じモデルから検索ベクトルを生成して渡してください。search-webでは
-`[embedding]`を設定すると、この処理をBFFが担当します。
+`[embedding]`を設定すると、この処理をsearch-webサーバーが担当します。
 
 設定ファイルで`[vector].enabled = true`へ変更しても、既存の語彙索引にベクトルは追加されません。
 ベクトルを含むNDJSONを用意し、新しいディレクトリへ索引を作成する必要があります。詳しくは
@@ -133,14 +152,14 @@ TOMLを`--config`で読みます。主なセクションは次のとおりです
 | セクション | 用途 |
 |---|---|
 | `[index]` | 索引ディレクトリを指定します。 |
-| `[tokenizer]`、`[chunking]` | 文字列の正規化とパッセージ分割を指定します。 |
+| `[tokenizer]`、`[chunking]` | 文字列の正規化と本文断片分割を指定します。 |
 | `[vector]` | 索引へ保存するベクトルの互換条件を指定します。 |
 | `[metadata]` | 検索時に絞り込み可能なメタデータのフィールドを指定します。 |
 | `[daemon]` | coreとfrontの接続先、PID、ログ、処理上限を指定します。 |
 | `[embedding]` | サンプルが利用する埋め込みAPIへの接続を指定します。 |
 | `[web]`、`[llm]` | search-webと回答生成サービスを指定します。 |
 
-相対パスは設定ファイルがあるディレクトリを基準に解決します。各キーの型、既定値、範囲、利用する
+相対パスは設定ファイルがあるディレクトリを基準に解決します。各キーの型、デフォルト、範囲、利用する
 プログラムは[設定リファレンス](docs/configuration.md)にまとめています。
 
 ### 語彙検索用の完成した設定
@@ -218,15 +237,33 @@ authorization_token_env = "EMBEDDING_API_KEY"
 
 ## 正式な入力NDJSON
 
-正式な入力は、1行に1操作を書くUTF-8のNDJSONです。
+正式な入力は、1行に一つのJSONオブジェクトを書くUTF-8のNDJSONです。次の例は読みやすいように整形しています。
+実際のNDJSONファイルでは、各オブジェクトを改行なしの1行にします。
 
 ```json
-{"operation":"upsert","id":"doc-1","url":"https://example.test/1","title":"検索入門","body":"検索対象となる本文です。","metadata":{"language":"ja"}}
-{"operation":"delete","id":"doc-2"}
+{
+  "operation": "upsert",
+  "id": "doc-1",
+  "url": "https://example.test/1",
+  "title": "検索入門",
+  "body": "検索対象となる本文です。",
+  "metadata": {
+    "language": "ja"
+  }
+}
+```
+
+削除する場合は、`operation`を`delete`にして文書IDを指定します。
+
+```json
+{
+  "operation": "delete",
+  "id": "doc-2"
+}
 ```
 
 `upsert`では`id`と`body`が必須です。`url`、`title`、`metadata`、`updated_at_unix_ms`は省略できます。
-ベクトル対応索引では、生成されるパッセージ数と同じ数の`vectors`が必要です。入力形式の詳細は
+ベクトル対応索引では、生成される本文断片数と同じ数の`vectors`が必要です。入力形式の詳細は
 [索引作成](docs/indexing.md)を参照してください。
 
 ## 索引を更新する
@@ -261,7 +298,8 @@ NDJSONの1行を1件の更新操作として扱い、`update`は1回の実行で
 
 ## HTTP APIを起動する
 
-`yappod_core`を先に起動し、その後で`yappod_front`を起動します。両プログラムはデーモンとして動作し、
+`yappod_core`を先に起動し、その後で`yappod_front`を起動します。役割の違いは
+[サーバーの構成](#サーバーの構成)を参照してください。両プログラムはバックグラウンドで動作し、
 `[daemon].run_directory`へPIDとログを保存します。
 
 ```sh
@@ -269,12 +307,19 @@ NDJSONの1行を1件の更新操作として扱い、`update`は1回の実行で
 ./build/yappod_front --config examples/config.lexical.toml
 ```
 
-既定ではfrontが`127.0.0.1:18400`、coreが`127.0.0.1:18401`を使用します。
+デフォルトではfrontが`127.0.0.1:18400`、coreが`127.0.0.1:18401`を使用します。
 
 ```sh
 curl -sS -H 'Content-Type: application/json' \
-  --data '{"query":"modern search","mode":"lexical","scope":"documents","limit":10}' \
-  http://127.0.0.1:18400/v2/search
+  --data @- \
+  http://127.0.0.1:18400/v2/search <<'JSON'
+{
+  "query": "modern search",
+  "mode": "lexical",
+  "scope": "documents",
+  "limit": 10
+}
+JSON
 ```
 
 準備状態とメトリクスは別々に確認できます。
@@ -285,10 +330,10 @@ curl -sS http://127.0.0.1:18400/metrics
 ```
 
 停止用コマンドはないため、PIDが対象プロセスを指すことを確認してからfront、coreの順に`SIGTERM`を送ります。具体的な
-手順とPID再利用への注意は[デーモンの運用](docs/operations.md)を参照してください。
+手順とPID再利用への注意は[Yappod2サーバーの運用](docs/operations.md)を参照してください。
 
 公開HTTP APIは[`yappod_front` APIリファレンス](docs/yappod-front-api.md)、front/core間の通信は
-[`yappod_core`内部プロトコル](docs/yappod-core-protocol.md)で説明しています。
+[frontとcoreの通信仕様](docs/yappod-core-protocol.md)で説明しています。
 
 `GET /metrics`で公開する全メトリクス名、ラベル、ヒストグラムのバケット、Prometheusの収集設定、値の読み方は
 [監視とメトリクス](docs/observability.md)を参照してください。
@@ -307,7 +352,7 @@ curl -sS http://127.0.0.1:18400/metrics
 
 - 設定を読み込めない場合は、相対パス、必須セクション、未知のキーを確認してください。
 - ベクトル検索に失敗する場合は、索引の`model_id`、`dimensions`、`metric`と検索ベクトルを確認してください。
-- デーモンが起動しない場合は、`[daemon].run_directory`にある`.error`と`.log`を確認してください。
+- `yappod_core`または`yappod_front`が起動しない場合は、`[daemon].run_directory`にある`.error`と`.log`を確認してください。
 - サンプルのエラーには`Reason`と`How to fix`が表示されます。詳しくは
   [サンプルの問題解決](examples/troubleshooting.md)を参照してください。
 
