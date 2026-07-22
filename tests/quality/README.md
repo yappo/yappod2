@@ -1,17 +1,19 @@
-# v2 search quality and load tooling
+# 検索品質、信頼性、負荷の確認
 
-This directory contains deterministic v2 quality, ANN recall, daemon reliability, and load tools.
-Committed corpora are deliberately small regression guards; they are not substitutes for the
-release reference benchmark.
+このディレクトリには、検索結果の品質、近似ベクトル検索で正しい候補を取得できる割合、Yappod2サーバーの並行動作、
+負荷時の処理時間とメモリーを確認する実装があります。近似ベクトル検索とは、すべてのベクトルを比較せずに近い候補を
+推定する検索方法です。リポジトリ内の小さな固定データは回帰検出用であり、実運用データに対する性能保証ではありません。
 
-CTest registers:
+## CTestへ登録される試験
 
-- `v2_search_quality`: lexical/vector/hybrid nDCG@10 and Recall@10
-- `ann_v2`: HNSW Recall@10 against exact ground truth
-- `v2_daemon_reliability`: concurrent search/update, P95, RSS, and latest-generation visibility
-- `search_quality_metrics`: metric implementation contracts
+| テスト名 | 確認する内容 |
+|---|---|
+| `v2_search_quality` | 語彙、ベクトル、複合検索の固定検索文に対してnDCG@10とRecall@10を計算し、基準値を下回らないことを確認します。 |
+| `ann_v2` | 全ベクトルを比較した上位結果を正解集合とし、USearchによる近似検索のRecall@10、保存と再読み込み、入力検証を確認します。 |
+| `v2_daemon_reliability` | core/frontを使った検索と更新の並行実行、世代の可視性、P95、RSSを確認します。`YAPPOD_TESTS_DAEMON=ON`のときだけ構築します。 |
+| `search_quality_metrics` | DCG、nDCG、Recall、MRR、処理時間の分位計算そのものを確認します。 |
 
-Run the gates locally:
+全試験を構築してから、対象だけを実行します。
 
 ```sh
 cmake --build build -j
@@ -20,7 +22,50 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-`v2_load_probe` runs against an externally started daemon and is intentionally not a CTest smoke.
-The authoritative 1M-document procedure, hardware profile, thresholds, and evidence requirements
-are documented in
-[`docs/quality_performance_reliability_v2.md`](../../docs/quality_performance_reliability_v2.md).
+終了状態0は、リポジトリに固定された基準を満たしたことを示します。異なるCPU、データ、コンパイラーの性能が同じであることまでは示しません。
+
+## 品質指標
+
+### Recall@k
+
+正解集合の上位`k`件のうち、評価対象の上位`k`件にも現れた割合です。近似ベクトル検索では全ベクトルを比較した結果を
+正解集合として使います。値は0〜1で、大きいほど正解候補を取りこぼしていません。
+
+### nDCG@k
+
+検索順位ごとの関連度を割引加算したDCGを、理想順序のDCGで割った値です。上位へ関連文書を置くほど高くなります。固定データの関連度ラベルと検索文を変更した場合、基準値だけを都合よく変えず、変更理由を記録してください。
+
+### P95
+
+観測した処理時間を昇順に並べ、95%の要求が収まる位置の値です。試験回数が少ないと値が不安定になるため、性能比較では試行数、事前実行、同時実行数を固定します。
+
+## `v2_load_probe`
+
+`v2_load_probe`は通常のCTestへ登録されない手動計測用実行ファイルです。すでに起動しているHTTPエンドポイントへ要求を送り、負荷時の結果を観測するために使います。正確な引数は実行ファイルの`--help`で確認してください。
+
+```sh
+./build/v2_load_probe --help
+```
+
+実行前に、対象が負荷試験を許可された環境であることを確認してください。開発者の既存デーモンや本番環境へ無断で実行してはいけません。
+
+## 大規模な基準試験
+
+100万文書、300万本文断片、768次元など実運用に近い規模は、リポジトリ内の小規模CTestとは別に実施します。比較可能にするため、少なくとも次を結果と一緒に保存します。
+
+- Gitコミット、ビルド種別、コンパイラーと依存ライブラリの版
+- CPU、メモリー、ストレージ、OS
+- 文書数、本文断片数、ベクトル次元、距離尺度、索引サイズ、セグメント数
+- 検索文集合、関連度ラベル、検索方式、候補数、結果数
+- 事前実行回数、計測回数、同時実行数
+- P50、P95、P99、スループット、RSS、Recall@10、nDCG@10
+
+性能値を文書へ掲載する場合は、この条件と計測日を併記します。条件を保存していない単発の値を一般的な性能として扱わないでください。
+
+## 失敗時の確認
+
+品質試験が失敗した場合は、最初に実際値と期待値、検索文、検索方式、世代、使用した固定テストデータを記録します。
+近似ベクトル検索だけが低下した場合は、ベクトルの次元、距離尺度、正規化、USearchの保存・再読み込みを確認します。
+Yappod2サーバーの信頼性試験だけが失敗した場合は、ポート競合、プロセス終了、PID、ログ、タイムアウトを確認します。
+
+開発全体のビルド、サニタイザー、ファジング、example試験は[開発と品質確認](../../docs/development.md)を参照してください。

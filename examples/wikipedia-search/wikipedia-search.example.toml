@@ -46,7 +46,7 @@ startup_timeout_ms = 30000
 # timeout_ms = 30000
 # authorization_token_env = "LLM_API_KEY"
 
-# vector/hybrid indexを使う場合だけ追加します。wikipedia_data.pyとWebが共有します。
+# ベクトル検索または複合検索に対応する索引を使う場合だけ追加します。wikipedia_data.pyとWebが共有します。
 # [embedding]
 # provider = "lmstudio"
 # base_url = "http://127.0.0.1:1234/v1"

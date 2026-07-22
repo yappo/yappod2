@@ -18,7 +18,7 @@ enabled = false
 filterable_fields = ["collection_id", "source_path", "source_mime", "extractor"]
 
 [input]
-# This file lives in examples/local-files, so ../.. is the repository root.
+# このファイルはexamples/local-filesにあるため、../..がリポジトリのルートです。
 root = "../.."
 include = ["*", "**/*"]
 exclude = [
@@ -42,19 +42,21 @@ directory = "../data/local-files/yappod2-documents"
 shard_max_bytes = 67108864
 body_max_bytes = 1000000
 
-[prepare]
-directory = "../data/local-files/yappod2-passages"
+# RAG向けのパッセージを作る場合だけ有効にします。
+# [prepare]
+# directory = "../data/local-files/yappod2-passages"
 
-[embedding]
-directory = "../data/local-files/yappod2-vectors"
-provider = "lmstudio"
-base_url = "http://127.0.0.1:1234/v1"
-model = "text-embedding-embeddinggemma-300m"
-model_id = "embeddinggemma-300m-768-local-v1"
-dimensions = 768
-batch_size = 16
-timeout_ms = 60000
-prompt_profile = "embeddinggemma"
+# ベクトル対応索引を作る場合だけ、[vector]も有効にして追加します。
+# [embedding]
+# directory = "../data/local-files/yappod2-vectors"
+# provider = "lmstudio"
+# base_url = "http://127.0.0.1:1234/v1"
+# model = "text-embedding-embeddinggemma-300m"
+# model_id = "embeddinggemma-300m-768-local-v1"
+# dimensions = 768
+# batch_size = 16
+# timeout_ms = 60000
+# prompt_profile = "embeddinggemma"
 
 [usage_log]
 path = "../data/local-files/api-usage.jsonl"
