@@ -1,4 +1,4 @@
-#include "yappo_core_protocol_v2.h"
+#include "yappo_core_http_v2.h"
 #include "yappo_http_v2.h"
 #include "yappo_net.h"
 #include "yappo_observability_v2.h"
@@ -42,7 +42,7 @@ static void usage(FILE *output, const char *program) {
           "Usage: %s (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --config CONFIG    Shared application TOML\n"
-          "  --port PORT        Internal frame port (default: %d)\n",
+          "  --port PORT        Internal HTTP port (default: %d)\n",
           program, DEFAULT_CORE_PORT);
 }
 
@@ -155,26 +155,80 @@ static int make_error_json(const char *code, const char *message,
   return 0;
 }
 
+static const char *allow_for_target(const char *target) {
+  if (strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0)
+    return "QUERY";
+  if (strcmp(target, "/v2/documents:batch") == 0) return "POST";
+  if (strcmp(target, "/health/ready") == 0) return "GET";
+  return NULL;
+}
+
+static int query_target(const char *target) {
+  return strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0;
+}
+
+static int send_json(FILE *stream, int status, const char *allow, int accept_query,
+                     const char *json, size_t json_bytes) {
+  return YAP_V2_core_http_write_response(stream, status,
+    "application/json; charset=utf-8", allow, accept_query, json, json_bytes);
+}
+
+static int send_error(FILE *stream, int status, const char *code, const char *message,
+                      const char *allow, int accept_query) {
+  char *json = NULL;
+  size_t json_bytes = 0U;
+  int result;
+  if (make_error_json(code, message, &json, &json_bytes) != 0) return -1;
+  result = send_json(stream, status, allow, accept_query, json, json_bytes);
+  free(json);
+  return result;
+}
+
 static int handle_request(FILE *stream, const char *index_dir,
                           YAP_V2_HTTP_RUNTIME *http_runtime) {
-  YAP_V2_CORE_FRAME request, response;
+  YAP_V2_CORE_HTTP_REQUEST request;
   YAP_V2_HTTP_OPERATION operation = YAP_V2_HTTP_SEARCH;
   char *json = NULL;
   size_t json_bytes = 0U;
-  unsigned char *payload = NULL;
-  const unsigned char *request_json = NULL;
-  size_t request_json_bytes = 0U;
-  int admitted = 0, health = 0, http_status = 500;
-  int status;
-  YAP_V2_core_frame_init(&request);
-  YAP_V2_core_frame_init(&response);
-  status = YAP_V2_core_frame_read(stream, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &request);
-  if (status != YAP_V2_CORE_FRAME_OK) goto done;
-  if (request.type == YAP_V2_CORE_HEALTH_REQUEST) {
+  int admitted = 0, http_status = 500;
+  int status, result = -1;
+  const char *allow;
+  int accept_query;
+  YAP_V2_core_http_request_init(&request);
+  status = YAP_V2_core_http_read_request(stream, YAP_V2_HTTP_MAX_BODY_BYTES, &request);
+  if (status == YAP_V2_CORE_HTTP_TOO_LARGE) {
+    result = send_error(stream, 413, "body_too_large", "Content Too Large",
+                        NULL, 0);
+    goto done;
+  }
+  if (status != YAP_V2_CORE_HTTP_OK) {
+    result = send_error(stream, 400, "invalid_request", "Bad Request", NULL, 0);
+    goto done;
+  }
+  allow = allow_for_target(request.target);
+  accept_query = query_target(request.target);
+  if (allow == NULL) {
+    result = send_error(stream, 404, "not_found", "Not Found", NULL, 0);
+    goto done;
+  }
+  if ((accept_query && strcmp(request.method, "QUERY") != 0) ||
+      (strcmp(request.target, "/v2/documents:batch") == 0 &&
+       strcmp(request.method, "POST") != 0) ||
+      (strcmp(request.target, "/health/ready") == 0 &&
+       strcmp(request.method, "GET") != 0)) {
+    result = send_error(stream, 405, "method_not_allowed", "Method Not Allowed",
+                        allow, accept_query);
+    goto done;
+  }
+  if (strcmp(request.target, "/health/ready") == 0) {
     YAP_V2_OPERATIONAL_STATE state, disk_state;
     char probe_error[256] = {0};
-    if (request.payload_bytes != 0U) { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
-    health = 1;
+    memset(&state, 0, sizeof(state));
+    memset(&disk_state, 0, sizeof(disk_state));
+    if (request.have_content_length) {
+      result = send_error(stream, 400, "invalid_request", "Bad Request", "GET", 0);
+      goto done;
+    }
     status = YAP_V2_http_runtime_state(http_runtime, &state);
     if (status == YAP_V2_OK &&
         YAP_V2_operational_probe_index(index_dir, &disk_state, probe_error,
@@ -185,66 +239,48 @@ static int handle_request(FILE *stream, const char *index_dir,
     }
     http_status = status == YAP_V2_OK && state.ready ? 200 : 503;
     if (YAP_V2_operational_state_json(&state, "yappod_core", &json, &json_bytes) !=
-        YAP_V2_OK) {
-      status = YAP_V2_CORE_FRAME_NO_MEMORY;
+        YAP_V2_OK) goto done;
+  } else {
+    if (!request.have_content_length || request.body_bytes == 0U) {
+      result = send_error(stream, 400, "invalid_request", "Bad Request",
+                          allow, accept_query);
       goto done;
     }
-  } else {
-    if (request.type == YAP_V2_CORE_SEARCH_REQUEST) operation = YAP_V2_HTTP_SEARCH;
-    else if (request.type == YAP_V2_CORE_RETRIEVE_REQUEST) operation = YAP_V2_HTTP_RETRIEVE;
-    else if (request.type == YAP_V2_CORE_INGEST_REQUEST) operation = YAP_V2_HTTP_INGEST;
-    else { status = YAP_V2_CORE_FRAME_INVALID; goto done; }
-    if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.payload_bytes) != YAP_V2_OK) {
+    if (!request.json_content_type) {
+      result = send_error(stream, 415, "unsupported_media_type",
+                          "Unsupported Media Type", allow, accept_query);
+      goto done;
+    }
+    if (strcmp(request.target, "/v2/search") == 0) operation = YAP_V2_HTTP_SEARCH;
+    else if (strcmp(request.target, "/v2/retrieve") == 0) operation = YAP_V2_HTTP_RETRIEVE;
+    else operation = YAP_V2_HTTP_INGEST;
+    if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.body_bytes) != YAP_V2_OK) {
       http_status = 503;
       if (make_error_json("overloaded", "Service Unavailable", &json, &json_bytes) != 0) {
-        status = YAP_V2_CORE_FRAME_NO_MEMORY;
         goto done;
       }
     } else {
       admitted = 1;
-      request_json = request.payload;
-      request_json_bytes = request.payload_bytes;
       if (operation == YAP_V2_HTTP_INGEST &&
-          YAP_V2_ingest_envelope_unwrap(&runtime_policy, request.payload,
-                                        request.payload_bytes, &request_json,
-                                        &request_json_bytes) != YAP_V2_OK) {
+          YAP_V2_authorize_write(&runtime_policy,
+            request.authorization[0] == '\0' ? NULL : request.authorization) != YAP_V2_OK) {
         http_status = 401;
         if (make_error_json("unauthorized", "Unauthorized", &json, &json_bytes) != 0) {
-          status = YAP_V2_CORE_FRAME_NO_MEMORY;
           goto done;
         }
-      } else if (request_json_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
-                 YAP_V2_http_runtime_execute(http_runtime, operation, request_json,
-                                             request_json_bytes, &http_status,
+      } else if (YAP_V2_http_runtime_execute(http_runtime, operation, request.body,
+                                             request.body_bytes, &http_status,
                                              &json, &json_bytes) != 0) {
-        status = YAP_V2_CORE_FRAME_IO_ERROR;
         goto done;
       }
     }
   }
-  if (json_bytes > UINT32_MAX - 2U) { status = YAP_V2_CORE_FRAME_TOO_LARGE; goto done; }
-  payload = malloc(json_bytes + 2U);
-  if (payload == NULL) { status = YAP_V2_CORE_FRAME_NO_MEMORY; goto done; }
-  payload[0] = (unsigned char)((unsigned int)http_status >> 8);
-  payload[1] = (unsigned char)http_status;
-  memcpy(payload + 2U, json, json_bytes);
-  response.type = http_status == 200 ?
-    (health ? YAP_V2_CORE_HEALTH_RESPONSE :
-     operation == YAP_V2_HTTP_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
-     operation == YAP_V2_HTTP_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE :
-     YAP_V2_CORE_INGEST_RESPONSE) : YAP_V2_CORE_ERROR_RESPONSE;
-  response.request_id = request.request_id;
-  response.payload = payload;
-  response.payload_bytes = (uint32_t)(json_bytes + 2U);
-  status = YAP_V2_core_frame_write(stream, &response, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
-  if (status == YAP_V2_CORE_FRAME_OK && fflush(stream) != 0)
-    status = YAP_V2_CORE_FRAME_IO_ERROR;
+  result = send_json(stream, http_status, NULL, accept_query, json, json_bytes);
 done:
-  if (admitted) YAP_V2_runtime_limiter_release(&runtime_limiter, request.payload_bytes);
-  free(payload);
+  if (admitted) YAP_V2_runtime_limiter_release(&runtime_limiter, request.body_bytes);
   free(json);
-  YAP_V2_core_frame_free(&request);
-  return status;
+  YAP_V2_core_http_request_free(&request);
+  return result;
 }
 
 static void *run_worker(void *opaque) {
@@ -261,9 +297,7 @@ static void *run_worker(void *opaque) {
       continue;
     }
     if (YAP_V2_socket_set_deadline(descriptor, runtime_policy.request_timeout_ms) == YAP_V2_OK)
-      while (!shutdown_requested &&
-             handle_request(stream, worker->index_dir,
-                            worker->http_runtime) == YAP_V2_CORE_FRAME_OK) {}
+      (void)handle_request(stream, worker->index_dir, worker->http_runtime);
     YAP_Net_close_stream(&stream, &descriptor);
   }
   return NULL;

@@ -5,7 +5,7 @@
 ## 回答生成の流れ
 
 1. ブラウザーがsearch-webサーバーの`POST /api/rag`へ質問と検索方式を送ります。
-2. search-webサーバーは必要なら質問を埋め込みし、`yappod_front`の`POST /v2/retrieve`から最大20件の本文断片を取得します。
+2. search-webサーバーは必要なら質問を埋め込みし、`yappod_front`の`QUERY /v2/retrieve`から最大20件の本文断片を取得します。
 3. 参照資料が0件なら、LLMを呼ばず`no_context`として資料不足を返します。
 4. `[llm]`がなければ、LLMを呼ばず`unconfigured`として参照資料だけを返します。
 5. `[llm]`があれば、search-webサーバーが質問と参照資料から`messages`を作り、OpenAI互換の`chat/completions`へ送ります。

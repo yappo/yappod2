@@ -95,6 +95,7 @@ describe("citation-grounded RAG BFF", () => {
       referenced_citations: [1],
       generation_status: "answered",
     });
+    expect(requests[0]?.init?.method).toBe("QUERY");
     const retrieveBody = JSON.parse(String(requests[0]?.init?.body));
     expect(retrieveBody).toEqual({
       query: "情報検索とは？",
@@ -155,6 +156,7 @@ describe("citation-grounded RAG BFF", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ retrieval_mode: "vector", generation_status: "answered" });
     const retrieve = requests.find((request) => request.url.endsWith("/v2/retrieve"));
+    expect(retrieve?.init?.method).toBe("QUERY");
     expect(JSON.parse(String(retrieve?.init?.body))).toMatchObject({
       query: "関連する概念は？",
       mode: "vector",

@@ -81,6 +81,7 @@ describe("yappod search BFF", () => {
 
     expect(response.statusCode).toBe(200);
     expect(requests[0]?.url).toBe("http://127.0.0.1:18400/v2/search");
+    expect(requests[0]?.init?.method).toBe("QUERY");
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
       query: "情報検索",
       mode: "lexical",
@@ -116,6 +117,7 @@ describe("yappod search BFF", () => {
 
     expect(response.statusCode).toBe(200);
     const write = requests.find((request) => request.url.endsWith("/v2/documents:batch"));
+    expect(write?.init?.method).toBe("POST");
     expect(new Headers(write?.init?.headers).get("authorization")).toBe("Bearer 0123456789abcdef-secret");
     expect(JSON.parse(String(write?.init?.body))).toEqual({ operations: [{
       operation: "upsert",

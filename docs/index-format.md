@@ -347,7 +347,7 @@ metadata.filterable_fields[0]=<文字列>
 
 このファイルは、`metadata.filterable_fields`へ指定した値だけを検索時の絞り込み用に保存します。元のメタデータJSON全体は
 `documents.yap2`にあります。このファイルでは、設定に書いたフィールドの順番と文書の通し番号を使い、たとえば
-「文書5の`language`は`ja`」という関係を記録します。`POST /v2/search`の`filter`はこのデータを評価して候補を除外します。
+「文書5の`language`は`ja`」という関係を記録します。`QUERY /v2/search`の`filter`はこのデータを評価して候補を除外します。
 
 ### ペイロードヘッダーとフィールド表
 

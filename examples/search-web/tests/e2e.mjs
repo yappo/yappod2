@@ -9,9 +9,9 @@ const yappodUrl = `http://${config.daemon.frontHost}:${config.daemon.frontPort}`
 const writeToken = rawConfig.daemon?.write_token;
 if (typeof writeToken !== "string") throw new Error("daemon.write_token is required");
 
-async function jsonRequest(baseUrl, path, body) {
+async function jsonRequest(baseUrl, path, body, method = "POST") {
   const response = await fetch(new URL(path, baseUrl), body === undefined ? undefined : {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -65,7 +65,7 @@ for (let attempt = 0; attempt < 20; attempt += 1) {
 }
 if (!updated && updateError) {
   const direct = await fetch(new URL("/v2/search", yappodUrl), {
-    method: "POST",
+    method: "QUERY",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ query: uniqueTerm, mode: "lexical", scope: "documents", limit: 5 }),
   });
@@ -80,7 +80,7 @@ const retrieved = await jsonRequest(yappodUrl, "/v2/retrieve", {
   limit: 5,
   max_passages_per_document: 2,
   max_context_bytes: 16384,
-});
+}, "QUERY");
 assert.equal(retrieved.citations.some((citation) => citation.document_id === documentId), true);
 assert.match(retrieved.context, new RegExp(uniqueTerm));
 

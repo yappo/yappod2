@@ -54,7 +54,7 @@ static void *run_worker(void *opaque) {
   request = malloc(request_capacity);
   if (request == NULL) { worker->failed = 1; return NULL; }
   written = snprintf(request, request_capacity,
-    "POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+    "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
     "Content-Length: %zu\r\n\r\n%.*s", worker->body_bytes, (int)worker->body_bytes,
     worker->body);
   if (written < 0 || (size_t)written >= request_capacity) {

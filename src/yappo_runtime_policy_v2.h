@@ -37,12 +37,6 @@ int YAP_V2_runtime_limiter_snapshot(YAP_V2_RUNTIME_LIMITER *limiter, size_t *inf
                                     size_t *inflight_bytes, size_t *max_inflight,
                                     size_t *max_inflight_bytes);
 int YAP_V2_authorize_write(const YAP_V2_RUNTIME_POLICY *policy, const char *authorization);
-int YAP_V2_ingest_envelope_wrap(const YAP_V2_RUNTIME_POLICY *policy,
-                                const unsigned char *json, size_t json_bytes,
-                                unsigned char **payload, size_t *payload_bytes);
-int YAP_V2_ingest_envelope_unwrap(const YAP_V2_RUNTIME_POLICY *policy,
-                                  const unsigned char *payload, size_t payload_bytes,
-                                  const unsigned char **json, size_t *json_bytes);
 int YAP_V2_socket_set_deadline(int fd, uint32_t timeout_ms);
 
 #endif

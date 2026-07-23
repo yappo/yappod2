@@ -72,12 +72,12 @@ cp examples/wikipedia-search/wikipedia-search.example.toml \
 | `build.input` | 文字列 | 読み取り可能な正式文書NDJSON | なし | 索引が存在しない場合は必須 | 語彙索引では`documents.ndjson`、ベクトル対応索引では`documents.vector.ndjson`を指定します。 |
 | `daemon.run_directory` | 文字列 | 空でないパス。TOMLからの相対パスを解決した後で4095バイト以下 | search-webでは`./run`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | core、front、WebのPIDとログを保存します。 |
 | `daemon.core_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | coreの待ち受け先と、frontからの接続先です。 |
-| `daemon.core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontからcoreへ接続する専用ポートです。 |
+| `daemon.core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontからcoreへ接続する内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 | `daemon.front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontの待ち受け先と、search-webサーバーからの接続先です。 |
 | `daemon.front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontのHTTPポートです。 |
 | `daemon.max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreがそれぞれ保持する処理中リクエスト件数の上限です。 |
 | `daemon.max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreがそれぞれ保持する処理中データ量の上限です。 |
-| `daemon.request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 接続後のソケット送受信期限です。 |
+| `daemon.request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | frontのlibcurlによるcoreへの接続と内部HTTP要求全体、およびcoreが受理したソケットの送受信期限です。 |
 | `daemon.write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | 文書登録APIのBearer認証に使います。 |
 | `web.host` | 文字列 | 空でないホスト名またはIPアドレス | `127.0.0.1` | 任意 | search-webサーバーとWeb画面の待ち受け先です。 |
 | `web.port` | 整数 | 1〜65535 | `4173` | 任意 | ブラウザーから接続するポートです。 |
