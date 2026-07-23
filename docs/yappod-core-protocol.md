@@ -1,161 +1,152 @@
-# `yappod_front`と`yappod_core`の通信仕様
+# `yappod_front`と`yappod_core`の内部HTTP通信
 
 `yappod_core`は索引を開き、検索、RAG向け取得、文書更新を実行します。`yappod_front`は外部からHTTPリクエストを受け、
 内容を`yappod_core`へ送って処理結果を受け取ります。
 
-このプロトコルは同一システム内のfront/core間通信を目的としています。TLS、接続元認証、互換性交渉を備えた公開APIではありません。通常のクライアントは[`yappod_front` HTTP API](yappod-front-api.md)を利用してください。
+frontとcoreの間ではHTTP/1.1を使用します。検索とRAG向け取得は、本文を持つ安全で冪等な検索を表す
+[RFC 10008の`QUERY`メソッド](https://www.rfc-editor.org/rfc/rfc10008.html)で送ります。文書更新は状態を変更するため
+`POST`、準備完了確認は`GET`です。
 
-frontとcoreは、1件の要求または応答を「24バイトのヘッダー」と「その後に続くデータ」の組として送ります。実装ではこの
-一組を`YAP_V2_CORE_FRAME`と呼んでいるため、この文書では以降「通信フレーム」と表記します。通信フレームは一般利用者が
-作成するHTTPリクエストではなく、frontとcoreの内部通信をバイト単位で区切るための形式です。
+このHTTP通信は同一システム内のfront/core間通信を目的としています。coreはTLS、一般利用者向け認証、CORSを備えた
+公開APIではありません。通常のクライアントは[`yappod_front` HTTP API](yappod-front-api.md)を利用し、
+coreのポートは内部ネットワークだけから接続できるようにしてください。
 
-## 接続モデル
+## 実装
 
-- TCP上で通信します。
-- frontはHTTP要求ごとにcoreへ1本のTCP接続を作ります。
-- 1本の接続で複数の通信フレームを読み取れる実装ですが、現行frontは1要求と1応答を終えると接続を閉じます。
-- coreは16個のワーカースレッドで接続を受理します。この数は設定できません。
-- frontとcoreは、それぞれ`max_inflight`と`max_inflight_bytes`の処理枠を持ちます。core側の上限判定は通信フレームに入るデータの長さを数えます。
-- frontとcoreは送信・受信ソケットへ`[daemon].request_timeout_ms`を設定します。
-- coreの待ち受け先は`[daemon].core_host`と`core_port`です。外部ネットワークへ公開しないでください。
+`yappod_front`はfrontからcoreへのHTTP/1.1クライアントとしてlibcurlを使用します。検索と取得では
+`CURLOPT_CUSTOMREQUEST`に`QUERY`を指定し、HTTPの版を1.1へ固定します。libcurlは既存のビルド依存関係であり、
+利用者がTOMLで有効化したり接続先ライブラリを選択したりする機能ではありません。
 
-## 通信フレーム全体
+`yappod_core`は境界付きの内部HTTP parserで要求行とヘッダーを検証し、1本のTCP接続につき1要求を処理します。
+応答後は接続を閉じます。HTTP/2、HTTP/3、chunked transfer coding、接続の再利用には対応しません。
 
-通信フレームは24バイトの固定長ヘッダーと、ヘッダーで長さを指定するペイロードからなります。ペイロードは検索条件の
-JSONや検索結果など、実際に渡すデータです。複数バイト整数はすべてネットワークバイトオーダー、すなわちビッグエンディアンです。
+## 接続先と経路
 
-```text
-0                   1                   2                   3
-0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+---------------+---------------+---------------+---------------+
-|                    magic = "YAP2"                             |
-+---------------+---------------+---------------+---------------+
-| version = 1                   | message type                  |
-+---------------+---------------+---------------+---------------+
-| flags = 0                     | reserved = 0                  |
-+---------------+---------------+---------------+---------------+
-|                                                               |
-|                    request_id                                 |
-|                                                               |
-+---------------+---------------+---------------+---------------+
-|                    payload_bytes                              |
-+---------------+---------------+---------------+---------------+
-|                    payload ...                                |
-+---------------+---------------+---------------+---------------+
+coreの待ち受け先は`[daemon].core_host`と`core_port`です。frontは同じ値を接続先として使用します。
+
+| 処理 | メソッド | パス | 要求本文 |
+|---|---|---|---|
+| 検索 | `QUERY` | `/v2/search` | UTF-8 JSON |
+| RAG向け取得 | `QUERY` | `/v2/retrieve` | UTF-8 JSON |
+| 文書更新 | `POST` | `/v2/documents:batch` | UTF-8 JSON |
+| 準備完了確認 | `GET` | `/health/ready` | なし |
+
+`/v2/passages:prepare`、`/health/live`、`/metrics`はcoreへ転送しません。これらはfrontが処理します。
+
+既知のパスへ異なるメソッドを送ると、coreは`405 Method Not Allowed`と`Allow`を返します。検索と取得には
+`Allow: QUERY`、更新には`Allow: POST`、準備完了確認には`Allow: GET`を返します。不明なパスは404です。
+
+## 要求
+
+検索、取得、更新では次のヘッダーが必要です。
+
+```http
+Content-Type: application/json
+Accept: application/json
+Content-Length: <JSONの正確なバイト数>
+Connection: close
 ```
 
-| オフセット | バイト数 | 型 | フィールド | 検証条件 |
-|---:|---:|---|---|---|
-| 0 | 4 | バイト列 | マジック | ASCIIの`YAP2`です。 |
-| 4 | 2 | 符号なし整数 | プロトコル版 | `1`だけを受理します。 |
-| 6 | 2 | 符号なし整数 | メッセージ種別 | 1〜9の定義済み値です。 |
-| 8 | 2 | 符号なし整数 | フラグ | プロトコル版1では`0`です。 |
-| 10 | 2 | 符号なし整数 | 予約領域 | `0`です。 |
-| 12 | 8 | 符号なし整数 | `request_id` | `0`は使えません。 |
-| 20 | 4 | 符号なし整数 | `payload_bytes` | 後続ペイロードの正確なバイト数です。絶対上限は16 MiBです。 |
-| 24 | N | バイト列 | ペイロード | メッセージ種別に対応する内容です。 |
+`Host`もHTTP/1.1の必須ヘッダーとして検証します。`Content-Type`がない場合またはJSON以外の場合は415、
+`Content-Length`がない場合、0の場合、不正な場合は400です。要求本文の上限は1 MiBです。上限超過は413となります。
 
-`payload_bytes`が0の場合はペイロードを持ちません。16 MiBはfront/core間通信の絶対上限です。外部HTTP APIの本文上限は1 MiBであり、内部上限までHTTP本文を送れるわけではありません。
+要求行1行の上限は8192バイト、要求ヘッダー全体の上限は65536バイトです。重複した`Host`、`Content-Type`、
+`Content-Length`、`Authorization`、`Transfer-Encoding`、HTTP/1.1以外の要求は受理しません。
 
-## メッセージ種別
+検索と取得のJSONは公開APIと同じです。front/core間通信用のJSONエンベロープは追加しません。
 
-| 値 | 実装上の定数 | 方向 | ペイロード |
-|---:|---|---|---|
-| 1 | `YAP_V2_CORE_SEARCH_REQUEST` | front → core | `/v2/search`のUTF-8 JSONです。 |
-| 2 | `YAP_V2_CORE_SEARCH_RESPONSE` | core → front | 先頭2バイトのHTTP状態と検索JSONです。 |
-| 3 | `YAP_V2_CORE_RETRIEVE_REQUEST` | front → core | `/v2/retrieve`のUTF-8 JSONです。 |
-| 4 | `YAP_V2_CORE_RETRIEVE_RESPONSE` | core → front | 先頭2バイトのHTTP状態と取得JSONです。 |
-| 5 | `YAP_V2_CORE_INGEST_REQUEST` | front → core | JSON、または認証エンベロープで包んだJSONです。 |
-| 6 | `YAP_V2_CORE_INGEST_RESPONSE` | core → front | 先頭2バイトのHTTP状態と更新JSONです。 |
-| 7 | `YAP_V2_CORE_HEALTH_REQUEST` | front → core | 空です。 |
-| 8 | `YAP_V2_CORE_HEALTH_RESPONSE` | core → front | 先頭2バイトのHTTP状態と運用状態JSONです。 |
-| 9 | `YAP_V2_CORE_ERROR_RESPONSE` | core → front | 先頭2バイトのHTTP状態とエラーJSONです。 |
+### 検索
 
-成功応答は要求と対応する応答種別を使います。HTTP状態が200以外の場合、coreは種別9を使います。frontは、応答の`request_id`が要求と一致し、種別が期待したレスポンスまたは種別9であることを確認します。一致しない応答はHTTPクライアントへ転送せず、`503 core_unavailable`にします。
+```http
+QUERY /v2/search HTTP/1.1
+Host: 127.0.0.1:18401
+Content-Type: application/json
+Accept: application/json
+Content-Length: 73
+Connection: close
 
-## 検索とRAG向け取得
-
-検索と取得のリクエストペイロードは、HTTPリクエスト本文と同じUTF-8のJSONです。front/core間通信用に別のJSONで包むことは
-ありません。使用できるフィールド、デフォルト、範囲は[HTTP APIの検索条件](yappod-front-api.md#検索条件)と同じです。
-
-レスポンスペイロードは次の形です。
-
-| オフセット | バイト数 | 内容 |
-|---:|---:|---|
-| 0 | 2 | ネットワークバイトオーダーのHTTP状態コードです。成功時は200です。 |
-| 2 | N | UTF-8 JSONです。NUL終端は含みません。 |
-
-たとえば先頭が`00 c8`なら200、`01 90`なら400、`01 f7`なら503です。frontは先頭2バイトをHTTP状態へ、残りを`application/json; charset=utf-8`の本文へ変換します。
-
-## 文書更新と認証エンベロープ
-
-`[daemon].write_token`を設定していない場合、文書更新リクエストのペイロードは`POST /v2/documents:batch`のJSONそのものです。
-
-トークンを設定した場合、frontはHTTPのBearer認証を検証した後、coreでも検証できるように次のエンベロープを作ります。
-
-| オフセット | バイト数 | 内容 |
-|---:|---:|---|
-| 0 | 4 | ASCIIの`YTK1`です。 |
-| 4 | 2 | ネットワークバイトオーダーのトークン長です。 |
-| 6 | T | `write_token`のバイト列です。NUL終端は含みません。 |
-| 6 + T | J | 空でないUTF-8 JSONです。 |
-
-トークン長は設定と同じ16〜255バイトです。coreはマジック、長さ、トークン、JSONが存在することを検証します。トークン比較は、文字列の不一致位置による処理時間の偏りを抑える実装です。検証できなければHTTP 401と`unauthorized`を含む種別9を返します。
-
-このエンベロープはfront/core間の再確認であり、暗号化ではありません。coreのTCPポートへ接続できる主体からトークンを秘匿する機能はないため、coreのポートへのネットワークアクセスを制限してください。
-
-## ヘルスチェック
-
-メッセージ種別7のリクエストペイロードは必ず0バイトです。1バイト以上を付けると不正フレームとして接続を終了します。
-
-coreは保持中のスナップショットとディスク上の運用状態を調べます。利用可能なら種別8、HTTP状態200、運用状態JSONを返します。利用できない場合は種別9と503を返します。JSONにはサービス名、準備完了状態、世代、セグメント数、埋め込み、コンパクションが含まれます。
-
-## エラー応答
-
-正常に解析できた要求に対して処理エラーが起きた場合、coreは種別9を返します。ペイロードは他の応答と同じく、先頭2バイトのHTTP状態と次のJSONです。
-
-```json
-{
-  "error": {
-    "code": "overloaded",
-    "message": "Service Unavailable"
-  }
-}
+{"query":"modern search","mode":"lexical","scope":"documents","limit":10}
 ```
 
-入力JSONの詳細なエラーコードはHTTP APIと共通です。フレームヘッダー自体が不正、途中で切断、メモリー確保失敗、ソケット期限超過の場合は、応答フレームを書けるとは限りません。現行coreはその接続を閉じ、frontは`503 core_unavailable`へ変換します。
+### RAG向け取得
 
-## 通信フレームの検証順
+```http
+QUERY /v2/retrieve HTTP/1.1
+Host: 127.0.0.1:18401
+Content-Type: application/json
+Accept: application/json
+Content-Length: 79
+Connection: close
 
-読み取り側は次を検証します。
+{"query":"modern search","mode":"lexical","limit":10,"max_context_bytes":16384}
+```
 
-1. 24バイトのヘッダーを完全に読みます。
-2. マジック、プロトコル版、メッセージ種別、フラグ、予約領域、`request_id`を検証します。
-3. `payload_bytes`が呼び出し側の上限以下か確認します。
-4. 指定されたペイロードを完全に読みます。
+### 文書更新と認証
 
-ヘッダーの検証を終える前に、示された巨大なペイロードを確保しません。メモリー上の`decode` APIは、ヘッダーまたはペイロードが不足していると`YAP_V2_CORE_FRAME_NEED_MORE`を返し、`consumed_bytes`を0のままにします。ストリーム用の`read` APIでは途中EOFを`YAP_V2_CORE_FRAME_IO_ERROR`として扱います。
+`[daemon].write_token`を設定した場合、frontは公開APIでBearer認証を検証した後、同じ
+`Authorization: Bearer <token>`ヘッダーをcoreへ転送します。coreも定時間比較を使って再検証します。
+検証できない場合は401です。
 
-## C APIの状態値
+HTTP移行前に使用していた`YTK1`バイナリエンベロープは廃止されています。認証ヘッダーは暗号化ではないため、
+coreのポートへ接続できる主体からトークンを秘匿できません。coreのネットワーク到達範囲を制限してください。
 
-| 状態 | 意味 |
-|---|---|
-| `YAP_V2_CORE_FRAME_OK` | 解析、検証、読み書きが完了しました。 |
-| `YAP_V2_CORE_FRAME_NEED_MORE` | メモリー上の入力または出力領域が不足しています。 |
-| `YAP_V2_CORE_FRAME_INVALID_ARGUMENT` | NULL、0の上限、16 MiB超の上限など、API引数が不正です。 |
-| `YAP_V2_CORE_FRAME_INVALID` | マジック、プロトコル版、種別、フラグ、予約領域、ID、ペイロードの組み合わせが不正です。 |
-| `YAP_V2_CORE_FRAME_TOO_LARGE` | `payload_bytes`が指定上限を超えています。 |
-| `YAP_V2_CORE_FRAME_IO_ERROR` | ストリームの読み書きまたは途中EOFに失敗しました。 |
-| `YAP_V2_CORE_FRAME_NO_MEMORY` | ペイロード領域を確保できません。 |
+## 応答
 
-## メモリー所有権
+coreは通常のHTTP/1.1状態コードとJSON本文を返します。
 
-`YAP_V2_core_frame_init`でフレームを初期化してから使用します。`decode`と`read`が成功した場合、確保したペイロードは`YAP_V2_CORE_FRAME`が所有します。利用後は`YAP_V2_core_frame_free`で解放します。
+```http
+HTTP/1.1 200 OK
+Server: Yappo Search Core/2.0
+Content-Type: application/json; charset=utf-8
+Content-Length: 58
+Cache-Control: no-store
+Connection: close
+Accept-Query: application/json
 
-`encode`と`write`は呼び出し側のペイロードを借用し、所有権を取得しません。処理が終わるまで呼び出し側が有効な領域を保持します。失敗した`read`は、フレームに以前入っていた成功済みペイロードを勝手に解放しません。
+{"generation":7,"total":1,"results":[],"next_cursor":null}
+```
 
-## 期限超過と接続失敗
+検索と取得の応答には、受理できるQUERY本文のメディア型を示す`Accept-Query: application/json`を付けます。
+索引は更新されるため、検索、取得、エラーを含む全応答へ`Cache-Control: no-store`を付けます。
+coreから受け取る応答本文のfront側上限は16 MiBです。
 
-`request_timeout_ms`は1〜60000ミリ秒で、デフォルトは5000ミリ秒です。frontはcoreへの接続処理自体には個別の非同期期限を実装していませんが、接続後のソケット送受信に期限を設定します。coreも受理したソケットの送受信へ同じ期限を設定します。
+入力JSONのエラーコードと本文は公開APIと共通です。coreが返した正しいHTTP状態とJSONはfrontがそのまま利用者へ
+転送します。接続失敗、期限超過、不正なHTTP応答、JSON以外の応答、16 MiBを超える応答は
+`503 core_unavailable`へ変換します。
 
-期限超過、不正応答、応答ID不一致、期待しないメッセージ種別、2バイト未満のレスポンスペイロードは、frontから見ると同じcoreとの往復処理の失敗です。HTTPクライアントには`503 core_unavailable`を返します。詳細な原因を分ける外部エラーコードは現行実装にないため、frontとcore双方のログ、接続先、期限、プロセス状態を確認してください。
+## 準備完了確認
+
+frontは公開`GET /health/ready`を処理するとき、coreへ次を送ります。
+
+```http
+GET /health/ready HTTP/1.1
+Host: 127.0.0.1:18401
+Accept: application/json
+Connection: close
+```
+
+coreは保持中のスナップショットとディスク上の運用状態を調べます。利用可能なら200、利用できなければ503を返します。
+本文にはサービス名、準備完了状態、世代、セグメント数、埋め込み、コンパクション状態が含まれます。
+
+## 処理上限と期限
+
+frontとcoreは、それぞれ`max_inflight`と`max_inflight_bytes`の処理枠を持ちます。core側は受理したJSON本文の長さを
+数えます。上限を超えると`503 overloaded`です。
+
+`request_timeout_ms`は1〜60000ミリ秒で、デフォルトは5000ミリ秒です。frontのlibcurlクライアントは接続と要求全体の
+期限にこの値を使います。coreも受理したソケットの送受信期限に同じ値を使います。自動再試行は行いません。
+
+## 移行と互換性
+
+旧`YAP2`フレームと内部HTTP/1.1の自動判別や両対応は行いません。旧frontと新core、新frontと旧coreは通信できないため、
+次の順序で同時更新してください。
+
+1. 旧frontを停止します。
+2. 旧coreを停止します。
+3. frontとcoreの両バイナリを更新します。
+4. 新coreを起動します。
+5. 新frontを起動します。
+6. 公開`GET /health/ready`と代表的な`QUERY /v2/search`を確認します。
+
+設定キーとデフォルトポートは変わりません。HTTP化は将来のロードバランサー構成を妨げない通信境界にしますが、
+複数coreへの索引配布、世代同期、更新の一貫性、ロードバランサー設定はこの通信仕様の対象外です。

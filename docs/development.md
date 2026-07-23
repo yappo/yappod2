@@ -51,7 +51,7 @@ ctest --test-dir build -N
 - `canonical_ingest`、`update_v2`、`segment_planner_v2`はNDJSON、更新の不可分性、セグメント上限を確認します。
 - `lexical_v2_*`、`bm25_score`、`vector_search`、`ann_v2`、`hybrid_rerank`は各検索方式を確認します。
 - `manifest_v2_nrt`、`snapshot_v2`、`index_v2_contracts`は公開、再読み込み、保存形式の契約を確認します。
-- `core_protocol_v2`、`http_v2_runtime`、`http_v2_daemon`はfront/core間の通信形式とHTTP APIを確認します。
+- `core_http_v2`、`http_v2_runtime`、`http_v2_daemon`はfront/core間の内部HTTP/1.1通信と公開HTTP APIを確認します。
 - `runtime_policy_v2`、`observability_v2`、`v2_daemon_reliability`は処理上限、メトリクス、並行更新を確認します。
 - `v2_search_quality`と`search_quality_metrics`は品質指標の回帰を確認します。
 - `wikipedia_example_converter`はWikipedia exampleの変換処理を確認します。
@@ -59,7 +59,7 @@ ctest --test-dir build -N
 特定領域だけを再実行する場合も、変更完了時には全CTestを実行します。
 
 ```sh
-ctest --test-dir build -R '^(core_protocol_v2|http_v2_runtime|http_v2_daemon)$' --output-on-failure
+ctest --test-dir build -R '^(core_http_v2|http_v2_runtime|http_v2_daemon)$' --output-on-failure
 ctest --test-dir build -R '^(ann_v2|hybrid_rerank|v2_search_quality)$' --output-on-failure
 ```
 
@@ -93,7 +93,7 @@ npm run test:e2e
 
 ClangとlibFuzzerを使える環境では次の対象を構築できます。
 
-- `core_protocol_v2_fuzz`はfront/core間フレームの解析を対象にします。
+- `core_http_v2_fuzz`はcoreが受理する内部HTTP/1.1の要求行とヘッダーの解析を対象にします。
 - `ingest_v2_fuzz`は正式なNDJSON入力の解析を対象にします。
 
 ```sh
@@ -104,6 +104,10 @@ cmake --build build-fuzz -j
 ```
 
 ファザーの実行時間、入力データ集合、検出した入力の保存方針は実行環境で明示します。秘密情報や利用者データを入力データ集合へ入れないでください。
+
+frontからcoreへの内部HTTPクライアントはlibcurlを使用し、HTTP/1.1へ固定しています。検索と取得の`QUERY`は
+`CURLOPT_CUSTOMREQUEST`で指定します。core側のparser、上限、接続モデルは
+[front/core内部HTTP通信](yappod-core-protocol.md)を参照してください。
 
 ## 小さな索引による受け入れ確認
 

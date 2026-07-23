@@ -1,4 +1,4 @@
-#include "yappo_core_protocol_v2.h"
+#include "yappo_core_http_v2.h"
 #include "yappo_http_v2.h"
 #include "yappo_net.h"
 #include "yappo_observability_v2.h"
@@ -68,9 +68,6 @@ static char error_file[YAP_APPLICATION_PATH_BYTES] = "front.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_METRICS metrics;
-static pthread_mutex_t request_id_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t next_request_id = 1U;
-
 static void usage(FILE *output, const char *program) {
   fprintf(output,
           "Usage: %s (--config CONFIG | --index INDEX_DIR --core-host HOST [--port PORT] "
@@ -79,7 +76,7 @@ static void usage(FILE *output, const char *program) {
           "  --core-host HOST   yappod_core host (required)\n"
           "  --config CONFIG    Shared application TOML\n"
           "  --port PORT        HTTP port (default: %d)\n"
-          "  --core-port PORT   Internal frame port (default: %d)\n",
+          "  --core-port PORT   Internal HTTP port (default: %d)\n",
           program, DEFAULT_FRONT_PORT, DEFAULT_CORE_PORT);
 }
 
@@ -211,9 +208,11 @@ static endpoint_t endpoint_for(const char *method, const char *target) {
     if (strcmp(target, "/health/ready") == 0) return ENDPOINT_READY;
     if (strcmp(target, "/metrics") == 0) return ENDPOINT_METRICS;
   }
-  if (strcmp(method, "POST") == 0) {
+  if (strcmp(method, "POST") == 0 || strcmp(method, "QUERY") == 0) {
     if (strcmp(target, "/v2/search") == 0) return ENDPOINT_SEARCH;
     if (strcmp(target, "/v2/retrieve") == 0) return ENDPOINT_RETRIEVE;
+  }
+  if (strcmp(method, "POST") == 0) {
     if (strcmp(target, "/v2/passages:prepare") == 0) return ENDPOINT_PREPARE;
     if (strcmp(target, "/v2/documents:batch") == 0) return ENDPOINT_INGEST;
   }
@@ -322,26 +321,48 @@ static const char *reason_phrase(int status) {
   }
 }
 
+static int send_response_headers(FILE *stream, int status, const char *content_type,
+                                 const char *allow, int accept_query,
+                                 const void *body, size_t body_bytes);
+static int send_json_error_headers(FILE *stream, int status, const char *code,
+                                   const char *message, const char *allow,
+                                   int accept_query);
+
 static int send_response(FILE *stream, int status, const char *content_type,
                          const void *body, size_t body_bytes) {
+  return send_response_headers(stream, status, content_type, NULL, 0, body, body_bytes);
+}
+
+static int send_response_headers(FILE *stream, int status, const char *content_type,
+                                 const char *allow, int accept_query,
+                                 const void *body, size_t body_bytes) {
   if (fprintf(stream,
               "HTTP/1.1 %d %s\r\nServer: Yappo Search/2.0\r\n"
               "Content-Type: %s\r\nContent-Length: %zu\r\n"
-              "Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+              "Cache-Control: no-store\r\nConnection: close\r\n",
               status, reason_phrase(status), content_type, body_bytes) < 0 ||
+      (allow != NULL && fprintf(stream, "Allow: %s\r\n", allow) < 0) ||
+      (accept_query && fputs("Accept-Query: application/json\r\n", stream) == EOF) ||
+      fputs("\r\n", stream) == EOF ||
       (body_bytes != 0U && fwrite(body, 1U, body_bytes, stream) != body_bytes) ||
       fflush(stream) != 0) return -1;
   return 0;
 }
 
 static int send_json_error(FILE *stream, int status, const char *code, const char *message) {
+  return send_json_error_headers(stream, status, code, message, NULL, 0);
+}
+
+static int send_json_error_headers(FILE *stream, int status, const char *code,
+                                   const char *message, const char *allow,
+                                   int accept_query) {
   char body[512];
   int length = snprintf(body, sizeof(body),
                         "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}",
                         code, message);
   if (length < 0 || (size_t)length >= sizeof(body)) return -1;
-  return send_response(stream, status, "application/json; charset=utf-8", body,
-                       (size_t)length);
+  return send_response_headers(stream, status, "application/json; charset=utf-8",
+                               allow, accept_query, body, (size_t)length);
 }
 
 static int discard_request_body(FILE *stream, size_t body_bytes) {
@@ -358,120 +379,42 @@ static int discard_request_body(FILE *stream, size_t body_bytes) {
   return 0;
 }
 
-static uint64_t allocate_request_id(void) {
-  uint64_t value;
-  pthread_mutex_lock(&request_id_lock);
-  value = next_request_id++;
-  if (next_request_id == 0U) next_request_id = 1U;
-  pthread_mutex_unlock(&request_id_lock);
-  return value;
-}
-
-static int connect_core(const char *host, int port, FILE **stream, int *descriptor) {
-  struct addrinfo hints, *addresses = NULL, *address;
-  char port_text[16];
-  int lookup;
-  *stream = NULL;
-  *descriptor = -1;
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  (void)snprintf(port_text, sizeof(port_text), "%d", port);
-  lookup = getaddrinfo(host, port_text, &hints, &addresses);
-  if (lookup != 0) return -1;
-  for (address = addresses; address != NULL; address = address->ai_next) {
-    *descriptor = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
-    if (*descriptor >= 0 && connect(*descriptor, address->ai_addr, address->ai_addrlen) == 0)
-      break;
-    if (*descriptor >= 0) (void)close(*descriptor);
-    *descriptor = -1;
-  }
-  freeaddrinfo(addresses);
-  if (*descriptor < 0 ||
-      YAP_V2_socket_set_deadline(*descriptor, runtime_policy.request_timeout_ms) != YAP_V2_OK) {
-    if (*descriptor >= 0) (void)close(*descriptor);
-    *descriptor = -1;
-    return -1;
-  }
-  *stream = fdopen(*descriptor, "r+");
-  if (*stream == NULL) { (void)close(*descriptor); *descriptor = -1; return -1; }
-  return 0;
-}
-
-static uint16_t request_type(endpoint_t endpoint) {
-  return endpoint == ENDPOINT_SEARCH ? YAP_V2_CORE_SEARCH_REQUEST :
-         endpoint == ENDPOINT_RETRIEVE ? YAP_V2_CORE_RETRIEVE_REQUEST :
-         YAP_V2_CORE_INGEST_REQUEST;
-}
-
-static uint16_t response_type(endpoint_t endpoint) {
-  return endpoint == ENDPOINT_SEARCH ? YAP_V2_CORE_SEARCH_RESPONSE :
-         endpoint == ENDPOINT_RETRIEVE ? YAP_V2_CORE_RETRIEVE_RESPONSE :
-         YAP_V2_CORE_INGEST_RESPONSE;
-}
-
 static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
                           const unsigned char *body, size_t body_bytes,
+                          const char *authorization,
                           core_result_t *result) {
-  FILE *stream = NULL;
-  int descriptor = -1, frame_status;
-  unsigned char *envelope = NULL;
-  size_t payload_bytes = body_bytes;
-  YAP_V2_CORE_FRAME request, response;
+  const char *method = endpoint == ENDPOINT_INGEST ? "POST" : "QUERY";
+  const char *target = endpoint == ENDPOINT_SEARCH ? "/v2/search" :
+                       endpoint == ENDPOINT_RETRIEVE ? "/v2/retrieve" :
+                       "/v2/documents:batch";
+  YAP_V2_CORE_HTTP_RESPONSE response;
   memset(result, 0, sizeof(*result));
-  YAP_V2_core_frame_init(&request);
-  YAP_V2_core_frame_init(&response);
-  if (connect_core(worker->core_host, worker->core_port, &stream, &descriptor) != 0) return -1;
-  if (endpoint == ENDPOINT_INGEST &&
-      YAP_V2_ingest_envelope_wrap(&runtime_policy, body, body_bytes, &envelope,
-                                  &payload_bytes) != YAP_V2_OK) goto failed;
-  if (payload_bytes > UINT32_MAX) goto failed;
-  request.type = request_type(endpoint);
-  request.request_id = allocate_request_id();
-  request.payload = envelope == NULL ? (unsigned char *)body : envelope;
-  request.payload_bytes = (uint32_t)payload_bytes;
-  frame_status = YAP_V2_core_frame_write(stream, &request, YAP_V2_CORE_MAX_PAYLOAD_BYTES);
-  if (frame_status != YAP_V2_CORE_FRAME_OK || fflush(stream) != 0 ||
-      YAP_V2_core_frame_read(stream, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &response) !=
-        YAP_V2_CORE_FRAME_OK || response.request_id != request.request_id ||
-      response.payload_bytes < 2U ||
-      (response.type != response_type(endpoint) &&
-       response.type != YAP_V2_CORE_ERROR_RESPONSE)) goto failed;
-  result->status = ((int)response.payload[0] << 8) | response.payload[1];
-  result->body_bytes = response.payload_bytes - 2U;
-  result->body = malloc(result->body_bytes == 0U ? 1U : result->body_bytes);
-  if (result->body == NULL) goto failed;
-  memcpy(result->body, response.payload + 2U, result->body_bytes);
-  free(envelope);
-  YAP_V2_core_frame_free(&response);
-  YAP_Net_close_stream(&stream, &descriptor);
+  YAP_V2_core_http_response_init(&response);
+  if (YAP_V2_core_http_client_request(worker->core_host, worker->core_port,
+                                      runtime_policy.request_timeout_ms,
+                                      method, target,
+                                      endpoint == ENDPOINT_INGEST ? authorization : NULL,
+                                      body, body_bytes, &response) != YAP_V2_CORE_HTTP_OK)
+    return -1;
+  result->status = response.status;
+  result->body = response.body;
+  result->body_bytes = response.body_bytes;
+  response.body = NULL;
+  YAP_V2_core_http_response_free(&response);
   return 0;
-failed:
-  free(envelope);
-  YAP_V2_core_frame_free(&response);
-  YAP_Net_close_stream(&stream, &descriptor);
-  free(result->body);
-  memset(result, 0, sizeof(*result));
-  return -1;
 }
 
 static int core_ready(const worker_t *worker) {
-  FILE *stream = NULL;
-  int descriptor = -1, ready = 0;
-  YAP_V2_CORE_FRAME request, response;
-  YAP_V2_core_frame_init(&request);
-  YAP_V2_core_frame_init(&response);
-  if (connect_core(worker->core_host, worker->core_port, &stream, &descriptor) != 0) return 0;
-  request.type = YAP_V2_CORE_HEALTH_REQUEST;
-  request.request_id = allocate_request_id();
-  if (YAP_V2_core_frame_write(stream, &request, YAP_V2_CORE_MAX_PAYLOAD_BYTES) ==
-        YAP_V2_CORE_FRAME_OK && fflush(stream) == 0 &&
-      YAP_V2_core_frame_read(stream, YAP_V2_CORE_MAX_PAYLOAD_BYTES, &response) ==
-        YAP_V2_CORE_FRAME_OK && response.request_id == request.request_id &&
-      response.type == YAP_V2_CORE_HEALTH_RESPONSE && response.payload_bytes >= 2U &&
-      (((int)response.payload[0] << 8) | response.payload[1]) == 200) ready = 1;
-  YAP_V2_core_frame_free(&response);
-  YAP_Net_close_stream(&stream, &descriptor);
+  int ready = 0;
+  YAP_V2_CORE_HTTP_RESPONSE response;
+  YAP_V2_core_http_response_init(&response);
+  if (YAP_V2_core_http_client_request(worker->core_host, worker->core_port,
+                                      runtime_policy.request_timeout_ms,
+                                      "GET", "/health/ready", NULL, NULL, 0U,
+                                      &response) == YAP_V2_CORE_HTTP_OK &&
+      response.status == 200)
+    ready = 1;
+  YAP_V2_core_http_response_free(&response);
   return ready;
 }
 
@@ -511,6 +454,29 @@ static YAP_V2_OBSERVE_OPERATION observe_operation(endpoint_t endpoint) {
          YAP_V2_OBSERVE_RETRIEVE : YAP_V2_OBSERVE_INGEST;
 }
 
+static const char *allow_for_target(const char *target) {
+  if (strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0)
+    return "QUERY, POST";
+  if (strcmp(target, "/v2/passages:prepare") == 0 ||
+      strcmp(target, "/v2/documents:batch") == 0)
+    return "POST";
+  if (strcmp(target, "/health/live") == 0 ||
+      strcmp(target, "/health/ready") == 0 ||
+      strcmp(target, "/metrics") == 0)
+    return "GET";
+  return NULL;
+}
+
+static int query_endpoint(endpoint_t endpoint) {
+  return endpoint == ENDPOINT_SEARCH || endpoint == ENDPOINT_RETRIEVE;
+}
+
+static int send_endpoint_error(FILE *stream, endpoint_t endpoint, int status,
+                               const char *code, const char *message) {
+  return send_json_error_headers(stream, status, code, message, NULL,
+                                 query_endpoint(endpoint));
+}
+
 static int handle_client(FILE *stream, const worker_t *worker) {
   http_request_t request;
   char *line = NULL;
@@ -527,15 +493,21 @@ static int handle_client(FILE *stream, const worker_t *worker) {
   header_status = parse_headers(stream, &request);
   if (header_status != 0) {
     response_status = header_status == -2 ? 413 : header_status == -3 ? 415 : 400;
-    return send_json_error(stream, response_status,
-                           response_status == 413 ? "body_too_large" :
-                           response_status == 415 ? "unsupported_media_type" : "invalid_request",
-                           reason_phrase(response_status));
+    return send_json_error_headers(stream, response_status,
+      response_status == 413 ? "body_too_large" :
+      response_status == 415 ? "unsupported_media_type" : "invalid_request",
+      reason_phrase(response_status), NULL, query_endpoint(request.endpoint));
   }
   if (request.endpoint == ENDPOINT_UNKNOWN) {
-    return send_json_error(stream, is_known_target(request.target) ? 405 : 404,
-                           is_known_target(request.target) ? "method_not_allowed" : "not_found",
-                           is_known_target(request.target) ? "Method Not Allowed" : "Not Found");
+    int known = is_known_target(request.target);
+    if (known && request.have_content_length)
+      (void)discard_request_body(stream, request.content_length);
+    return send_json_error_headers(stream, known ? 405 : 404,
+      known ? "method_not_allowed" : "not_found",
+      known ? "Method Not Allowed" : "Not Found",
+      known ? allow_for_target(request.target) : NULL,
+      strcmp(request.target, "/v2/search") == 0 ||
+      strcmp(request.target, "/v2/retrieve") == 0);
   }
   if (request.endpoint == ENDPOINT_LIVE || request.endpoint == ENDPOINT_READY ||
       request.endpoint == ENDPOINT_METRICS) {
@@ -546,13 +518,14 @@ static int handle_client(FILE *stream, const worker_t *worker) {
   started = YAP_V2_monotonic_microseconds();
   if (!request.json_content_type) {
     response_status = 415;
-    (void)send_json_error(stream, response_status, "unsupported_media_type",
-                          "Unsupported Media Type");
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              "unsupported_media_type", "Unsupported Media Type");
     goto observed;
   }
   if (!request.have_content_length) {
     response_status = 400;
-    (void)send_json_error(stream, response_status, "invalid_request", "Bad Request");
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              "invalid_request", "Bad Request");
     goto observed;
   }
   if (request.endpoint == ENDPOINT_INGEST &&
@@ -560,22 +533,24 @@ static int handle_client(FILE *stream, const worker_t *worker) {
         request.authorization[0] == '\0' ? NULL : request.authorization) != YAP_V2_OK) {
     response_status = 401;
     (void)discard_request_body(stream, request.content_length);
-    (void)send_json_error(stream, response_status, "unauthorized", "Unauthorized");
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              "unauthorized", "Unauthorized");
     goto observed;
   }
   if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.content_length) != YAP_V2_OK) {
     response_status = 503;
     (void)discard_request_body(stream, request.content_length);
-    (void)send_json_error(stream, response_status, "overloaded", "Service Unavailable");
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              "overloaded", "Service Unavailable");
     goto observed;
   }
   admitted = 1;
   body = malloc(request.content_length);
   if (body == NULL || fread(body, 1U, request.content_length, stream) != request.content_length) {
     response_status = body == NULL ? 500 : 400;
-    (void)send_json_error(stream, response_status,
-                          response_status == 500 ? "internal_error" : "invalid_request",
-                          reason_phrase(response_status));
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              response_status == 500 ? "internal_error" : "invalid_request",
+                              reason_phrase(response_status));
     goto observed;
   }
   if (request.endpoint == ENDPOINT_PREPARE) {
@@ -584,18 +559,24 @@ static int handle_client(FILE *stream, const worker_t *worker) {
                             request.content_length, &result.status, &prepared,
                             &prepared_bytes) != 0) {
       response_status = 503;
-      (void)send_json_error(stream, response_status, "prepare_unavailable", "Service Unavailable");
+      (void)send_endpoint_error(stream, request.endpoint, response_status,
+                                "prepare_unavailable", "Service Unavailable");
       goto observed;
     }
     result.body = (unsigned char *)prepared; result.body_bytes = prepared_bytes;
-  } else if (core_roundtrip(worker, request.endpoint, body, request.content_length, &result) != 0) {
+  } else if (core_roundtrip(worker, request.endpoint, body, request.content_length,
+                            request.authorization[0] == '\0' ? NULL : request.authorization,
+                            &result) != 0) {
     response_status = 503;
-    (void)send_json_error(stream, response_status, "core_unavailable", "Service Unavailable");
+    (void)send_endpoint_error(stream, request.endpoint, response_status,
+                              "core_unavailable", "Service Unavailable");
     goto observed;
   }
   response_status = result.status;
-  (void)send_response(stream, result.status, "application/json; charset=utf-8",
-                      result.body, result.body_bytes);
+  (void)send_response_headers(stream, result.status,
+                              "application/json; charset=utf-8", NULL,
+                              query_endpoint(request.endpoint),
+                              result.body, result.body_bytes);
   free(result.body);
 observed:
   if (admitted) YAP_V2_runtime_limiter_release(&runtime_limiter, request.content_length);

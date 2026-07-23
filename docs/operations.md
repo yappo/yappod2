@@ -6,7 +6,9 @@
 
 `yappod_core`は検証済みの索引スナップショットを保持し、検索、RAG向け取得、文書更新を実行します。`yappod_front`はHTTPを受け付け、検索と更新をcoreへ転送します。`POST /v2/passages:prepare`だけはfrontのプロセス内で実行します。
 
-外部クライアントからcoreのポートを直接公開しないでください。coreとfrontの通信は内部バイナリプロトコルであり、認証やTLSを備えた外部公開APIではありません。必要に応じてfrontの手前へTLS終端とアクセス制御を配置します。
+外部クライアントからcoreのポートを直接公開しないでください。coreとfrontの通信は内部HTTP/1.1ですが、
+認証やTLSを備えた外部公開APIではありません。frontはcoreへのクライアントとしてlibcurlを使い、検索と取得を
+`QUERY`、更新を`POST`で送ります。必要に応じてfrontの手前へTLS終端とアクセス制御を配置します。
 
 ## 起動前の確認
 
@@ -89,9 +91,10 @@ coreとfrontはそれぞれ16個のワーカースレッドを作ります。設
 |---|---|
 | `max_inflight` | 同時に受理する検索、取得、更新の件数です。 |
 | `max_inflight_bytes` | 受理中のリクエスト本文の合計バイト数です。 |
-| `request_timeout_ms` | frontのクライアントソケット、front/core間ソケット、coreが受理したソケットの読み書き期限です。 |
+| `request_timeout_ms` | frontのクライアントソケット、frontのlibcurlによるcoreへの接続と要求全体、coreが受理したソケットの読み書き期限です。 |
 
-上限を超えた処理は`503 overloaded`になります。HTTP本文1件の絶対上限は1 MiBです。front/core間通信の16 MiB上限は、HTTP本文へ適用される上限ではありません。
+上限を超えた処理は`503 overloaded`になります。要求本文1件の絶対上限は公開API、内部HTTPともに1 MiBです。
+coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
 
 タイムアウト値を増やす前に、coreへの接続、索引の大きさ、同時実行数、クライアント切断、ディスクI/Oを確認します。search-webの`yappod_timeout_ms`、起動待ちの`startup_timeout_ms`、LLMや埋め込みのタイムアウトは別の待ち時間です。
 

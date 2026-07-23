@@ -298,8 +298,8 @@ jobs:
         run: |
           set -o pipefail
           {
-            ./build-sanitizer/core_protocol_v2_fuzz \
-              -runs=2000 -max_len=4096 tests/fuzz/corpus/core_protocol
+            ./build-sanitizer/core_http_v2_fuzz \
+              -runs=2000 -max_len=65536 tests/fuzz/corpus/core_http
             ./build-sanitizer/ingest_v2_fuzz \
               -runs=2000 -max_len=16384 tests/fuzz/corpus/ingest
           } 2>&1 | tee build-sanitizer/fuzz.log

@@ -287,9 +287,9 @@ search (--config CONFIG | --index INDEX_DIR) --mode lexical|vector|hybrid
 
 `search`は指定された索引ファイルを直接読み込み、検索結果を標準出力へ書きます。`yappod_core`や`yappod_front`を
 起動せずに、索引作成後の動作確認ができます。メタデータによる絞り込み、フレーズ検索、AND/ORの指定、検索結果の
-続きを取得する機能はコマンドラインから指定できないため、これらが必要なアプリケーションでは`POST /v2/search`を使用します。
+続きを取得する機能はコマンドラインから指定できないため、これらが必要なアプリケーションでは`QUERY /v2/search`を使用します。
 
-正常時は[`POST /v2/search`](yappod-front-api.md#post-v2search)と同じJSONを標準出力へ書きます。検索条件が不正でHTTP相当の状態が200以外になった場合は、JSONエラーを標準エラー出力へ書いて失敗します。
+正常時は[`QUERY /v2/search`](yappod-front-api.md#query-v2search)と同じJSONを標準出力へ書きます。検索条件が不正でHTTP相当の状態が200以外になった場合は、JSONエラーを標準エラー出力へ書いて失敗します。
 
 ## `yappo_compact`
 
@@ -345,7 +345,7 @@ yappod_core --index INDEX_DIR [--port PORT]
 |---|---|---|---|---|---|
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | `--index`形式を使わない場合に必須。ほかのオプションとは併用不可 | 索引、coreのホスト名とポート、実行時ファイルのディレクトリ、処理上限、トークンを読みます。通常はこちらを使用します。 |
 | `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | `--config`を使わない場合に必須 | 索引を直接指定します。実行時設定はデフォルトになります。 |
-| `--port PORT` | 整数 | 1〜65535 | `18401` | 任意。`--index`形式でだけ指定可能 | frontから検索や更新の依頼を受ける専用ポートです。HTTPポートではありません。 |
+| `--port PORT` | 整数 | 1〜65535 | `18401` | 任意。`--index`形式でだけ指定可能 | frontから検索や更新の依頼を受ける内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 
 `--config`形式では`daemon.core_host`を待ち受けアドレスとして使います。`--index`形式ではホストを指定せず、`getaddrinfo`で受動接続用のアドレスを取得して待ち受けます。
 
@@ -361,7 +361,7 @@ coreは索引を開いて検証し、ポートを確保してからforkします
 
 coreは16本のワーカースレッドで内部接続を受け、1秒ごとに新しいマニフェストを確認します。公開済み世代を検出すると、検証に成功したスナップショットへ切り替えます。`SIGTERM`または`SIGINT`で待ち受けを閉じて終了します。
 
-coreは外部クライアント向けHTTPサーバーではありません。通常の利用者はfrontへ接続してください。front/core間の形式は[frontとcoreの通信仕様](yappod-core-protocol.md)で説明します。
+coreは内部HTTP/1.1を受理しますが、外部クライアント向けHTTPサーバーではありません。通常の利用者はfrontへ接続してください。front/core間の形式は[frontとcoreの通信仕様](yappod-core-protocol.md)で説明します。
 
 ## `yappod_front`
 

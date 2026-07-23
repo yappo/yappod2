@@ -110,8 +110,8 @@ frontが処理を完了したv2 APIリクエスト数です。エンドポイン
 
 | HTTPエンドポイント | `operation` |
 |---|---|
-| `POST /v2/search` | `search` |
-| `POST /v2/retrieve` | `retrieve` |
+| `QUERY /v2/search`、互換用`POST /v2/search` | `search` |
+| `QUERY /v2/retrieve`、互換用`POST /v2/retrieve` | `retrieve` |
 | `POST /v2/passages:prepare` | `retrieve` |
 | `POST /v2/documents:batch` | `ingest` |
 

@@ -1,18 +1,22 @@
 # `yappod_front` HTTP APIリファレンス
 
 `yappod_front`は外部クライアント向けのHTTP APIを提供し、検索や更新を`yappod_core`へ転送します。通常の
-クライアントは、内部プロトコルではなくこのAPIを利用します。
+クライアントは、coreの内部HTTPポートではなくこのAPIを利用します。
 
 ## 共通仕様
 
 - HTTP/1.0とHTTP/1.1を受理し、1回のレスポンスごとに接続を閉じます。
-- POSTには`Content-Type: application/json`と、0より大きい`Content-Length`が必要です。
+- 本文を持つ`QUERY`と`POST`には`Content-Type: application/json`と、0より大きい`Content-Length`が必要です。
 - `Transfer-Encoding`は受理しません。リクエスト本文の上限は1 MiBです。
 - リクエスト行の上限は8192バイト、リクエストヘッダー全体の上限は65536バイトです。
 - レスポンスには`Cache-Control: no-store`が付きます。
 - レスポンスの`Server`は`Yappo Search/2.0`、HTTPの版は`HTTP/1.1`、`Connection`は`close`です。
 - エラーは`{"error":{"code":"...","message":"..."}}`形式です。
 - 検索と読み出しに認証はありません。文書の一括更新には、設定に応じてBearer認証が必要です。
+- 検索とRAG向け取得では、[RFC 10008](https://www.rfc-editor.org/rfc/rfc10008.html)の安全で冪等な
+  `QUERY`を標準メソッドとします。同じJSONと処理結果を使う互換手段として`POST`も受理します。
+- 検索と取得のレスポンスには`Accept-Query: application/json`が付きます。メソッドが異なる場合は
+  `405`と`Allow: QUERY, POST`を返します。
 
 | HTTP状態コード | 主な意味 |
 |---:|---|
@@ -49,8 +53,8 @@ frontとcoreの間の処理を待つ時間は`request_timeout_ms`です。
 
 | エンドポイント | HTTPメソッド | 認証 |
 |---|---|---|
-| `/v2/search` | POST | 不要です。 |
-| `/v2/retrieve` | POST | 不要です。 |
+| `/v2/search` | QUERY、POST（互換） | 不要です。 |
+| `/v2/retrieve` | QUERY、POST（互換） | 不要です。 |
 | `/v2/passages:prepare` | POST | 不要です。 |
 | `/v2/documents:batch` | POST | `daemon.write_token`を設定した場合にBearer認証が必要です。 |
 | `/health/live` | GET | 不要です。 |
@@ -59,7 +63,8 @@ frontとcoreの間の処理を待つ時間は`request_timeout_ms`です。
 
 ## 検索条件
 
-`POST /v2/search`と`POST /v2/retrieve`は、次の検索条件を共通して受け付けます。
+`QUERY /v2/search`と`QUERY /v2/retrieve`は、次の検索条件を共通して受け付けます。互換用の`POST`でも
+同じ条件を受け付けます。
 
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
@@ -90,10 +95,17 @@ frontとcoreの間の処理を待つ時間は`request_timeout_ms`です。
 | `and` | フィルターオブジェクトの配列 | 1件以上 | なし | フィルターノードでは、表内の条件キーのいずれか1つが必須 | 配列内のすべての条件を満たす文書を選びます。 |
 | `or` | フィルターオブジェクトの配列 | 1件以上 | なし | フィルターノードでは、表内の条件キーのいずれか1つが必須 | 配列内のいずれかの条件を満たす文書を選びます。 |
 
-## `POST /v2/search`
+## `QUERY /v2/search`
 
 文書または本文断片を検索します。`scope`は`documents`または`passages`で、デフォルトは`documents`です。
-`cursor`を指定すると、同じ検索条件の続きを取得できます。
+`cursor`を指定すると、同じ検索条件の続きを取得できます。`POST /v2/search`も互換メソッドとして同じ本文、
+検証、レスポンス、状態コードを使用します。
+
+```sh
+curl --request QUERY http://127.0.0.1:18400/v2/search \
+  --header 'Content-Type: application/json' \
+  --data '{"query":"apple","mode":"lexical","scope":"documents","limit":20}'
+```
 
 ```json
 {
@@ -113,7 +125,7 @@ frontとcoreの間の処理を待つ時間は`request_timeout_ms`です。
 }
 ```
 
-共通の検索条件に加えて、`POST /v2/search`では次のキーを指定できます。
+共通の検索条件に加えて、`QUERY /v2/search`では次のキーを指定できます。
 
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
@@ -165,16 +177,17 @@ frontとcoreの間の処理を待つ時間は`request_timeout_ms`です。
 | `fused_score` | 最終的な並び順に使うスコアです。複合検索では語彙検索とベクトル検索の順位から計算します。 |
 
 `snippet`は原文の文字列なので、Web画面へ表示するときはHTMLの特殊文字をエスケープしてください。元本文を引用する用途では、
-`POST /v2/retrieve`が返す`citations[].text`を使用します。
+`QUERY /v2/retrieve`が返す`citations[].text`を使用します。
 
 カーソルは世代、検索条件、読み出し位置をSHA-256で結び付けます。別の検索条件や世代では使えません。
 改変を検出するための値であり、認証トークンではありません。カーソルの読み出し位置は最大10000件です。1ページを
 取得する際も、読み出し位置、`limit`、続きの有無を調べる1件を合わせた値が内部上限を超えると`400`になります。
 
-## `POST /v2/retrieve`
+## `QUERY /v2/retrieve`
 
 RAGへ渡す本文断片と出典情報を取得します。回答生成は行いません。このAPIは通常の検索結果一覧ではなく、質問と関係する
 本文をLLMへ渡すためのものなので、検索結果を本文断片単位で選び、`context`と出典情報へまとめます。
+`POST /v2/retrieve`も互換メソッドとして同じ本文、検証、レスポンス、状態コードを使用します。
 
 ```json
 {
@@ -402,3 +415,8 @@ front自身はTLS、利用者認証、検索APIの流量制限を提供しませ
 ループバックアドレス以外で待ち受ける場合は、TLS、接続元制限、必要な認証、本文と要求数の制限を行うリバースプロキシーの背後へ
 配置してください。`/metrics`には秘密情報は含めませんが、索引の世代、処理量、上限を公開するため、監視サーバー
 だけが取得できるようにします。
+
+`QUERY`はCORS-safelisted methodではありません。ブラウザーからクロスオリジンで直接呼び出す場合は、
+実際の要求より前にCORS preflightが発生します。front自身はCORS用の`OPTIONS`や
+`Access-Control-Allow-*`を提供しないため、同一オリジンのBFFから呼び出すか、手前のリバースプロキシーで
+`QUERY`を許可するCORS設定を行ってください。同梱のsearch-webはサーバー側から`QUERY`を送るため、この制約を受けません。

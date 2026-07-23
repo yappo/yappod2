@@ -63,10 +63,8 @@ static void test_limiter_fails_closed_on_count_and_bytes(void **state) {
   YAP_V2_runtime_limiter_close(&limiter);
 }
 
-static void test_write_token_and_core_envelope(void **state) {
-  static const unsigned char json[] = "{\"operations\":[]}";
-  YAP_V2_RUNTIME_POLICY policy; unsigned char *payload = NULL; size_t payload_bytes = 0U;
-  const unsigned char *decoded = NULL; size_t decoded_bytes = 0U; char authorization[300];
+static void test_write_token_authorization(void **state) {
+  YAP_V2_RUNTIME_POLICY policy; char authorization[300];
   char *config;
   (void)state;
   config = write_config("[daemon]\nwrite_token='0123456789abcdef-secure'\n");
@@ -75,16 +73,7 @@ static void test_write_token_and_core_envelope(void **state) {
   assert_int_equal(YAP_V2_authorize_write(&policy, "Bearer wrong"), YAP_V2_CONFLICT);
   assert_true(snprintf(authorization, sizeof(authorization), "Bearer %s", policy.write_token) > 0);
   assert_int_equal(YAP_V2_authorize_write(&policy, authorization), YAP_V2_OK);
-  assert_int_equal(YAP_V2_ingest_envelope_wrap(&policy, json, sizeof(json) - 1U,
-                                               &payload, &payload_bytes), YAP_V2_OK);
-  assert_non_null(payload); assert_true(payload_bytes > sizeof(json));
-  assert_int_equal(YAP_V2_ingest_envelope_unwrap(&policy, payload, payload_bytes,
-                                                 &decoded, &decoded_bytes), YAP_V2_OK);
-  assert_int_equal(decoded_bytes, sizeof(json) - 1U); assert_memory_equal(decoded, json, decoded_bytes);
-  payload[6] ^= 1U;
-  assert_int_equal(YAP_V2_ingest_envelope_unwrap(&policy, payload, payload_bytes,
-                                                 &decoded, &decoded_bytes), YAP_V2_CONFLICT);
-  free(payload); unlink(config); free(config);
+  unlink(config); free(config);
 }
 
 static void test_socket_deadline_is_applied(void **state) {
@@ -99,7 +88,7 @@ int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_policy_defaults_and_strict_config),
     cmocka_unit_test(test_limiter_fails_closed_on_count_and_bytes),
-    cmocka_unit_test(test_write_token_and_core_envelope),
+    cmocka_unit_test(test_write_token_authorization),
     cmocka_unit_test(test_socket_deadline_is_applied)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);

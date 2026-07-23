@@ -94,7 +94,7 @@ export class YappodClient {
 
   search(input: SearchInput): Promise<SearchResponse> {
     return this.request<SearchResponse>("/v2/search", {
-      method: "POST",
+      method: "QUERY",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: input.query,
@@ -109,7 +109,7 @@ export class YappodClient {
 
   retrieve(question: string, mode: SearchMode, vector?: number[]): Promise<RetrieveResponse> {
     return this.request<RetrieveResponse>("/v2/retrieve", {
-      method: "POST",
+      method: "QUERY",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: question,

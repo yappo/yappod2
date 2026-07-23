@@ -73,7 +73,7 @@ set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_snapshot_v2.c
   ${SRC_DIR}/yappo_query_v2.c
   ${SRC_DIR}/yappo_retrieve_v2.c
-  ${SRC_DIR}/yappo_core_protocol_v2.c
+  ${SRC_DIR}/yappo_core_http_v2.c
   ${SRC_DIR}/yappo_http_v2.c
   ${SRC_DIR}/yappo_bm25.c
   ${SRC_DIR}/yappo_rag.c
@@ -382,10 +382,10 @@ if(YAPPOD_TESTS_NODAEMON)
     EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_retrieve_v2.c
   )
   add_yappod_cmocka_test(
-    core_protocol_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_protocol_v2_test.c
+    core_http_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_http_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_io.c ${SRC_DIR}/yappo_core_protocol_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_core_http_v2.c
   )
   add_yappod_cmocka_test(
     http_v2_runtime
@@ -447,15 +447,15 @@ if(YAPPOD_BUILD_FUZZERS)
     message(FATAL_ERROR "YAPPOD_BUILD_FUZZERS requires Clang")
   endif()
 
-  add_executable(core_protocol_v2_fuzz
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/core_protocol_v2_fuzz.c
-    ${SRC_DIR}/yappo_io.c
-    ${SRC_DIR}/yappo_core_protocol_v2.c
+  add_executable(core_http_v2_fuzz
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/core_http_v2_fuzz.c
+    ${SRC_DIR}/yappo_core_http_v2.c
   )
-  target_include_directories(core_protocol_v2_fuzz PRIVATE ${SRC_DIR})
-  target_compile_options(core_protocol_v2_fuzz PRIVATE -fsanitize=fuzzer)
-  target_link_options(core_protocol_v2_fuzz PRIVATE -fsanitize=fuzzer)
-  yappod_enable_warnings(core_protocol_v2_fuzz)
+  target_include_directories(core_http_v2_fuzz PRIVATE ${SRC_DIR})
+  target_link_libraries(core_http_v2_fuzz PRIVATE Threads::Threads CURL::libcurl)
+  target_compile_options(core_http_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(core_http_v2_fuzz PRIVATE -fsanitize=fuzzer)
+  yappod_enable_warnings(core_http_v2_fuzz)
 
   add_executable(ingest_v2_fuzz
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/ingest_v2_fuzz.c

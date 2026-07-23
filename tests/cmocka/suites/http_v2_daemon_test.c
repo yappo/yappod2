@@ -72,6 +72,17 @@ static char *post(context_t *ctx, const char *endpoint, const char *body) {
   return response;
 }
 
+static char *query_port(int port, const char *endpoint, const char *body) {
+  char request[4096]; char *response = NULL;
+  assert_true(snprintf(request,sizeof(request),"QUERY %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: %zu\r\n\r\n%s",endpoint,strlen(body),body)>0);
+  assert_int_equal(ytest_http_send_text(port,request,&response),0);
+  return response;
+}
+
+static char *query(context_t *ctx, const char *endpoint, const char *body) {
+  return query_port(ctx->stack.front_port, endpoint, body);
+}
+
 static char *get(context_t *ctx, const char *endpoint) {
   char request[1024]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",endpoint)>0);
@@ -79,36 +90,48 @@ static char *get(context_t *ctx, const char *endpoint) {
   return response;
 }
 
-static char *post_authorized(context_t *ctx, const char *endpoint, const char *body,
-                             const char *authorization) {
+static char *post_authorized_port(int port, const char *endpoint, const char *body,
+                                  const char *authorization) {
   char request[4096]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAuthorization: %s\r\nContent-Length: %zu\r\n\r\n%s",endpoint,authorization,strlen(body),body)>0);
-  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);
+  assert_int_equal(ytest_http_send_text(port,request,&response),0);
   return response;
+}
+
+static char *post_authorized(context_t *ctx, const char *endpoint, const char *body,
+                             const char *authorization) {
+  return post_authorized_port(ctx->stack.front_port, endpoint, body, authorization);
 }
 
 static double elapsed_seconds(struct timespec start, struct timespec end) {
   return (double)(end.tv_sec - start.tv_sec) + (double)(end.tv_nsec - start.tv_nsec) / 1000000000.0;
 }
 
-static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;char *response=NULL;
+static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;char *response=NULL,*query_response=NULL;
   const char *body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"scope\":\"documents\",\"limit\":1}";char request[1024];
   response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"status\":\"live\""));free(response);response=NULL;
   response=get(ctx,"/health/ready");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"ready\":true"));assert_non_null(strstr(response,"\"generation\":1"));assert_non_null(strstr(response,"\"state\":\"precomputed_ready\""));free(response);response=NULL;
   response=post(ctx,"/v2/passages:prepare","{\"id\":\"doc-new\",\"body\":\"Fresh APPLE.\"}");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"model_id\":\"embed-v1\""));assert_non_null(strstr(response,"\"dimensions\":2"));assert_non_null(strstr(response,"\"text\":\"fresh apple.\""));free(response);response=NULL;
-  assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
-  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-fruit\""));free(response);response=NULL;
+  query_response=query(ctx,"/v2/search",body);assert_non_null(strstr(query_response,"200 OK"));assert_non_null(strstr(query_response,"Accept-Query: application/json"));assert_non_null(strstr(query_response,"\"id\":\"doc-fruit\""));
+  response=post(ctx,"/v2/search",body);assert_string_equal(response,query_response);free(response);response=NULL;free(query_response);query_response=NULL;
   body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"limit\":1,\"max_context_bytes\":100}";
-  assert_true(snprintf(request,sizeof(request),"POST /v2/retrieve HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
-  assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"passage_id\":\"passage-fruit\""));assert_non_null(strstr(response,"\"url\":\"https://e.test/fruit\""));free(response);response=NULL;
+  response=query(ctx,"/v2/retrieve",body);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"Accept-Query: application/json"));assert_non_null(strstr(response,"\"passage_id\":\"passage-fruit\""));assert_non_null(strstr(response,"\"url\":\"https://e.test/fruit\""));free(response);response=NULL;
+  response=query_port(ctx->stack.core_port,"/v2/search","{\"query\":\"apple\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":1}");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"Server: Yappo Search Core/2.0"));assert_non_null(strstr(response,"Accept-Query: application/json"));free(response);response=NULL;
+  assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}")>0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: QUERY"));assert_non_null(strstr(response,"Accept-Query: application/json"));free(response);response=NULL;
+  assert_true(snprintf(request,sizeof(request),"GET /health/ready HTTP/1.1\r\nHost: localhost\r\n\r\n")>0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"service\":\"yappod_core\""));free(response);response=NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port,"YAP2 legacy frame",&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   response=get(ctx,"/healthz");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
   response=get(ctx,"/yappo/100000/AND/0-10?apple");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
-  response=get(ctx,"/v2/search");assert_non_null(strstr(response,"405 Method Not Allowed"));free(response);response=NULL;
+  response=get(ctx,"/v2/search");assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: QUERY, POST"));assert_non_null(strstr(response,"Accept-Query: application/json"));free(response);response=NULL;
+  response=query(ctx,"/v2/passages:prepare","{}");assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: POST"));assert_null(strstr(response,"Accept-Query:"));free(response);response=NULL;
+  response=query(ctx,"/v2/documents:batch","{}");assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: POST"));assert_null(strstr(response,"Accept-Query:"));free(response);response=NULL;
   response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"text/plain; version=0.0.4"));
   assert_non_null(strstr(response,"yappod_v2_manifest_generation 1"));
-  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 1"));
+  assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 2"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"retrieve\",status_class=\"2xx\"} 2"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
   assert_non_null(strstr(response,"yappod_v2_compaction_state{state=\"idle\"} 1"));
@@ -158,6 +181,11 @@ static void test_write_token_protects_daemon_ingest(void **state) {
   response=post_authorized(ctx,"/v2/documents:batch",body,"Bearer wrong-token");
   assert_non_null(strstr(response,"401 Unauthorized"));free(response);
   response=post_authorized(ctx,"/v2/documents:batch",body,"Bearer 0123456789abcdef-secure");
+  assert_non_null(strstr(response,"200 OK"));free(response);
+  body="{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-core-secure\",\"body\":\"coresecureword\",\"vectors\":[[1,0]]}]}";
+  response=post_authorized_port(ctx->stack.core_port,"/v2/documents:batch",body,"Bearer wrong-token");
+  assert_non_null(strstr(response,"401 Unauthorized"));free(response);
+  response=post_authorized_port(ctx->stack.core_port,"/v2/documents:batch",body,"Bearer 0123456789abcdef-secure");
   assert_non_null(strstr(response,"200 OK"));free(response);
   response=post(ctx,"/v2/search","{\"query\":\"secureword\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
   assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"id\":\"doc-secure\""));

@@ -174,40 +174,6 @@ int YAP_V2_authorize_write(const YAP_V2_RUNTIME_POLICY *policy, const char *auth
                              policy->write_token_bytes) ? YAP_V2_OK : YAP_V2_CONFLICT;
 }
 
-int YAP_V2_ingest_envelope_wrap(const YAP_V2_RUNTIME_POLICY *policy,
-                                const unsigned char *json, size_t json_bytes,
-                                unsigned char **payload, size_t *payload_bytes) {
-  unsigned char *result; size_t total;
-  if (policy == NULL || json == NULL || json_bytes == 0U || payload == NULL || payload_bytes == NULL)
-    return YAP_V2_INVALID_ARGUMENT;
-  if (policy->write_token_bytes == 0U) { *payload = NULL; *payload_bytes = json_bytes; return YAP_V2_OK; }
-  if (json_bytes > SIZE_MAX - policy->write_token_bytes - 6U) return YAP_V2_OUT_OF_RANGE;
-  total = json_bytes + policy->write_token_bytes + 6U; result = malloc(total);
-  if (result == NULL) return YAP_V2_ALLOCATION_FAILED;
-  memcpy(result, "YTK1", 4U); result[4] = (unsigned char)(policy->write_token_bytes >> 8);
-  result[5] = (unsigned char)policy->write_token_bytes;
-  memcpy(result + 6U, policy->write_token, policy->write_token_bytes);
-  memcpy(result + 6U + policy->write_token_bytes, json, json_bytes);
-  *payload = result; *payload_bytes = total; return YAP_V2_OK;
-}
-
-int YAP_V2_ingest_envelope_unwrap(const YAP_V2_RUNTIME_POLICY *policy,
-                                  const unsigned char *payload, size_t payload_bytes,
-                                  const unsigned char **json, size_t *json_bytes) {
-  size_t token_bytes;
-  if (policy == NULL || payload == NULL || payload_bytes == 0U || json == NULL || json_bytes == NULL)
-    return YAP_V2_INVALID_ARGUMENT;
-  if (policy->write_token_bytes == 0U) { *json = payload; *json_bytes = payload_bytes; return YAP_V2_OK; }
-  if (payload_bytes < 7U || memcmp(payload, "YTK1", 4U) != 0) return YAP_V2_CONFLICT;
-  token_bytes = ((size_t)payload[4] << 8) | payload[5];
-  if (token_bytes == 0U || token_bytes > payload_bytes - 6U ||
-      !constant_time_equal((const char *)payload + 6U, token_bytes, policy->write_token,
-                           policy->write_token_bytes) || payload_bytes == token_bytes + 6U)
-    return YAP_V2_CONFLICT;
-  *json = payload + 6U + token_bytes; *json_bytes = payload_bytes - 6U - token_bytes;
-  return YAP_V2_OK;
-}
-
 int YAP_V2_socket_set_deadline(int fd, uint32_t timeout_ms) {
   struct timeval timeout;
   if (fd < 0 || timeout_ms == 0U || timeout_ms > YAP_V2_MAX_TIMEOUT_MS)

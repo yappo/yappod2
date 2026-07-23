@@ -19,7 +19,8 @@ HTTP APIを提供するときは、`yappod_core`と`yappod_front`の二つのサ
 
 二つに分かれているため、HTTPの受付処理と索引を扱う処理を別々に監視し、負荷を制限できます。通常のアプリケーションは
 `yappod_front`のHTTP APIへ接続します。`yappod_core`のポートは`yappod_front`との通信専用であり、ブラウザーや
-一般のHTTPクライアントから直接接続するものではありません。
+一般のHTTPクライアントから直接接続するものではありません。frontとcoreの間ではHTTP/1.1を使用し、frontは
+内部HTTPクライアントにlibcurlを使用します。検索とRAG向け取得はRFC 10008の`QUERY`、文書更新は`POST`で送ります。
 
 索引は複数の「セグメント」から構成されます。セグメントは、ある時点で登録された文書、検索用の語句一覧、本文断片、
 ベクトルなどを一組のファイルとして保存したものです。更新時は既存ファイルを直接書き換えず、新しいセグメントを追加します。
@@ -310,7 +311,8 @@ NDJSONの1行を1件の更新操作として扱い、`update`は1回の実行で
 デフォルトではfrontが`127.0.0.1:18400`、coreが`127.0.0.1:18401`を使用します。
 
 ```sh
-curl -sS -H 'Content-Type: application/json' \
+curl -sS --request QUERY \
+  -H 'Content-Type: application/json' \
   --data @- \
   http://127.0.0.1:18400/v2/search <<'JSON'
 {
@@ -321,6 +323,9 @@ curl -sS -H 'Content-Type: application/json' \
 }
 JSON
 ```
+
+`QUERY /v2/search`と`QUERY /v2/retrieve`は本文を持つ安全で冪等な検索です。既存クライアントとの互換性のため、
+公開front APIは同じパスへの`POST`も受理します。frontからcoreへは常に`QUERY`で転送します。
 
 準備状態とメトリクスは別々に確認できます。
 
