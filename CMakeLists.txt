@@ -56,57 +56,143 @@ foreach(header IN ITEMS yappo_types_v2.h yappo_config_v2.h yappo_storage_v2.h)
 endforeach()
 unset(CMAKE_REQUIRED_INCLUDES)
 
-set(YAPPO_BASE_SOURCES
+set(YAPPOD_COMMON_SOURCES
   ${SRC_DIR}/yappo_io.c
   ${SRC_DIR}/yappo_net.c
   ${SRC_DIR}/yappo_types_v2.c
-  ${SRC_DIR}/yappo_storage_v2.c
+  ${SRC_DIR}/yappo_unicode.c
+)
+
+set(YAPPOD_CONFIG_SOURCES
   ${SRC_DIR}/yappo_config_v2.c
   ${SRC_DIR}/yappo_application_config.c
-  ${SRC_DIR}/yappo_unicode.c
+  ${SRC_DIR}/yappo_runtime_policy_v2.c
+)
+
+set(YAPPOD_STORAGE_SOURCES
+  ${SRC_DIR}/yappo_storage_v2.c
+  ${SRC_DIR}/yappo_compaction_status_v2.c
+  ${SRC_DIR}/yappo_segment_v2.c
+  ${SRC_DIR}/yappo_manifest_v2.c
+  ${SRC_DIR}/yappo_snapshot_v2.c
+  ${SRC_DIR}/yappo_writer_lock_v2.c
+)
+
+set(YAPPOD_COMPONENTS_SOURCES
+  ${SRC_DIR}/yappo_lexical_v2.c
+  ${SRC_DIR}/yappo_lexical_reader_v2.c
+  ${SRC_DIR}/yappo_metadata_v2.c
+  ${SRC_DIR}/yappo_embedding.c
+  ${SRC_DIR}/yappo_vector.c
+  ${SRC_DIR}/yappo_vector_v2.c
+  ${SRC_DIR}/yappo_ann_v2.c
+)
+
+set(YAPPOD_QUERY_SOURCES
+  ${SRC_DIR}/yappo_bm25.c
+  ${SRC_DIR}/yappo_filter_v2.c
+  ${SRC_DIR}/yappo_snippet_v2.c
+  ${SRC_DIR}/yappo_lexical_search_v2.c
+  ${SRC_DIR}/yappo_hybrid.c
+  ${SRC_DIR}/yappo_query_v2.c
+  ${SRC_DIR}/yappo_retrieve_v2.c
+  ${SRC_DIR}/yappo_rag.c
+)
+
+set(YAPPOD_INDEXING_SOURCES
   ${SRC_DIR}/yappo_ingest.c
   ${SRC_DIR}/yappo_build_v2.c
   ${SRC_DIR}/yappo_update_v2.c
   ${SRC_DIR}/yappo_segment_planner_v2.c
-  ${SRC_DIR}/yappo_writer_lock_v2.c
-  ${SRC_DIR}/yappo_runtime_policy_v2.c
-  ${SRC_DIR}/yappo_observability_v2.c
-  ${SRC_DIR}/yappo_segment_v2.c
-  ${SRC_DIR}/yappo_manifest_v2.c
-  ${SRC_DIR}/yappo_lexical_v2.c
-  ${SRC_DIR}/yappo_lexical_reader_v2.c
-  ${SRC_DIR}/yappo_lexical_search_v2.c
-  ${SRC_DIR}/yappo_metadata_v2.c
-  ${SRC_DIR}/yappo_filter_v2.c
-  ${SRC_DIR}/yappo_snippet_v2.c
-  ${SRC_DIR}/yappo_embedding.c
-  ${SRC_DIR}/yappo_vector_v2.c
-  ${SRC_DIR}/yappo_ann_v2.c
-  ${SRC_DIR}/yappo_snapshot_v2.c
-  ${SRC_DIR}/yappo_query_v2.c
-  ${SRC_DIR}/yappo_retrieve_v2.c
-  ${SRC_DIR}/yappo_core_http_v2.c
-  ${SRC_DIR}/yappo_http_v2.c
-  ${SRC_DIR}/yappo_bm25.c
-  ${SRC_DIR}/yappo_rag.c
-  ${SRC_DIR}/yappo_vector.c
-  ${SRC_DIR}/yappo_hybrid.c
+  ${SRC_DIR}/yappo_compact_v2.c
 )
 
-add_library(yappod_base STATIC ${YAPPO_BASE_SOURCES})
-target_include_directories(yappod_base PRIVATE ${SRC_DIR})
-target_link_libraries(yappod_base PRIVATE Threads::Threads
-  yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
-yappod_enable_warnings(yappod_base)
+set(YAPPOD_SERVER_SOURCES
+  ${SRC_DIR}/yappo_observability_v2.c
+  ${SRC_DIR}/yappo_core_http_v2.c
+  ${SRC_DIR}/yappo_http_v2.c
+)
+
+add_library(yappod_common STATIC ${YAPPOD_COMMON_SOURCES})
+add_library(yappod::common ALIAS yappod_common)
+target_include_directories(yappod_common PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_common PRIVATE ICU::uc ICU::i18n)
+
+add_library(yappod_config STATIC ${YAPPOD_CONFIG_SOURCES})
+add_library(yappod::config ALIAS yappod_config)
+target_include_directories(yappod_config PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_config PRIVATE yappod_common yappod::tomlc99)
+
+add_library(yappod_storage STATIC ${YAPPOD_STORAGE_SOURCES})
+add_library(yappod::storage ALIAS yappod_storage)
+target_include_directories(yappod_storage PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_storage PRIVATE yappod_config yappod::yyjson Threads::Threads)
+
+add_library(yappod_components STATIC ${YAPPOD_COMPONENTS_SOURCES})
+add_library(yappod::components ALIAS yappod_components)
+target_include_directories(yappod_components PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_components
+  PUBLIC yappod::usearch
+  PRIVATE yappod_storage yappod::yyjson ICU::uc ICU::i18n CURL::libcurl Threads::Threads)
+
+add_library(yappod_query STATIC ${YAPPOD_QUERY_SOURCES})
+add_library(yappod::query ALIAS yappod_query)
+target_include_directories(yappod_query PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_query
+  PUBLIC yappod_components
+  PRIVATE yappod::yyjson ICU::uc ICU::i18n)
+
+add_library(yappod_indexing STATIC ${YAPPOD_INDEXING_SOURCES})
+add_library(yappod::indexing ALIAS yappod_indexing)
+target_include_directories(yappod_indexing PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_indexing PRIVATE yappod_components yappod::yyjson)
+
+add_library(yappod_server STATIC ${YAPPOD_SERVER_SOURCES})
+add_library(yappod::server ALIAS yappod_server)
+target_include_directories(yappod_server PUBLIC ${SRC_DIR})
+target_link_libraries(yappod_server PRIVATE yappod_query yappod_indexing
+  yappod::yyjson CURL::libcurl Threads::Threads)
+
+set(YAPPOD_INTERNAL_LIBRARIES
+  yappod_common
+  yappod_config
+  yappod_storage
+  yappod_components
+  yappod_query
+  yappod_indexing
+  yappod_server
+)
+
+set_property(TARGET yappod_config PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES yappod_common)
+set_property(TARGET yappod_storage PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES yappod_config)
+set_property(TARGET yappod_components PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES yappod_storage)
+set_property(TARGET yappod_query PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES yappod_components)
+set_property(TARGET yappod_indexing PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES yappod_components)
+set_property(TARGET yappod_server PROPERTY YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES
+  yappod_query yappod_indexing)
+
+foreach(tgt IN LISTS YAPPOD_INTERNAL_LIBRARIES)
+  yappod_enable_warnings(${tgt})
+endforeach()
+
+function(yappod_validate_internal_dag)
+  foreach(tgt IN LISTS YAPPOD_INTERNAL_LIBRARIES)
+    get_target_property(internal_links ${tgt} LINK_LIBRARIES)
+    get_target_property(allowed_internal_links ${tgt} YAPPOD_ALLOWED_INTERNAL_DEPENDENCIES)
+    foreach(link IN LISTS internal_links)
+      if(link IN_LIST YAPPOD_INTERNAL_LIBRARIES AND
+         NOT link IN_LIST allowed_internal_links)
+        message(FATAL_ERROR "${tgt} has forbidden internal dependency ${link}")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
 
 add_executable(search ${SRC_DIR}/search.c)
 
 add_executable(yappo_makeindex ${SRC_DIR}/yappo_makeindex.c)
 
-add_executable(yappo_compact
-  ${SRC_DIR}/yappo_compact_v2.c
-  ${SRC_DIR}/yappo_compact.c
-)
+add_executable(yappo_compact ${SRC_DIR}/yappo_compact.c)
 
 add_executable(yappod_core ${SRC_DIR}/yappod_core.c)
 
@@ -120,9 +206,28 @@ set(ALL_TARGETS
   yappod_front
 )
 
+target_link_libraries(search PRIVATE yappod_server yappod::yyjson)
+target_link_libraries(yappo_makeindex PRIVATE yappod_server)
+target_link_libraries(yappo_compact PRIVATE yappod_indexing)
+target_link_libraries(yappod_core PRIVATE yappod_server)
+target_link_libraries(yappod_front PRIVATE yappod_server)
+
+function(yappod_assert_executable_internal_link target expected)
+  get_target_property(links ${target} LINK_LIBRARIES)
+  set(internal_links)
+  foreach(link IN LISTS links)
+    if(link IN_LIST YAPPOD_INTERNAL_LIBRARIES)
+      list(APPEND internal_links ${link})
+    endif()
+  endforeach()
+  if(NOT "${internal_links}" STREQUAL "${expected}")
+    message(FATAL_ERROR
+      "${target} must link only its top-level internal library ${expected}; got ${internal_links}")
+  endif()
+endfunction()
+
 foreach(tgt IN LISTS ALL_TARGETS)
   target_include_directories(${tgt} PRIVATE ${SRC_DIR})
-  target_link_libraries(${tgt} PRIVATE yappod_base Threads::Threads yappod::tomlc99 yappod::yyjson yappod::usearch ICU::uc ICU::i18n CURL::libcurl)
   yappod_enable_warnings(${tgt})
 endforeach()
 
@@ -183,7 +288,7 @@ else()
 endif()
 
 function(add_yappod_cmocka_test test_name test_source)
-  cmake_parse_arguments(ARG "RUN_SERIAL" "LABEL" "EXTRA_SOURCES" ${ARGN})
+  cmake_parse_arguments(ARG "RUN_SERIAL" "LABEL" "LIBRARIES;EXTRA_SOURCES" ${ARGN})
   set(target_name ${test_name}_test)
 
   add_executable(${target_name}
@@ -199,12 +304,7 @@ function(add_yappod_cmocka_test test_name test_source)
       yappod_test_support
       ${CMOCKA_TARGET}
       Threads::Threads
-      yappod::tomlc99
-      ICU::uc
-      ICU::i18n
-      yappod::yyjson
-      yappod::usearch
-      CURL::libcurl
+      ${ARG_LIBRARIES}
   )
   if(M_LIB)
     target_link_libraries(${target_name} PRIVATE ${M_LIB})
@@ -226,7 +326,7 @@ if(YAPPOD_TESTS_DAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/http_v2_daemon_test.c
     RUN_SERIAL
     LABEL daemon
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     v2_daemon_reliability
@@ -237,7 +337,7 @@ if(YAPPOD_TESTS_DAEMON)
   )
   target_include_directories(v2_daemon_reliability_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality)
-  target_link_libraries(v2_daemon_reliability_test PRIVATE yappod_base)
+  target_link_libraries(v2_daemon_reliability_test PRIVATE yappod_server yappod_components)
   set_tests_properties(v2_daemon_reliability PROPERTIES TIMEOUT 120)
 endif()
 
@@ -257,7 +357,7 @@ if(YAPPOD_TESTS_NODAEMON)
     seek_offset_overflow
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/seek_offset_overflow_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_io.c
+    LIBRARIES yappod_common
   )
   add_yappod_cmocka_test(
     v2_cli_acceptance
@@ -268,169 +368,167 @@ if(YAPPOD_TESTS_NODAEMON)
     canonical_ingest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/canonical_ingest_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c
+    LIBRARIES yappod_indexing
   )
   add_yappod_cmocka_test(
     unicode_tokenizer
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_tokenizer_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_unicode.c
+    LIBRARIES yappod_common
   )
   add_yappod_cmocka_test(
     config_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c
+    LIBRARIES yappod_config
   )
-  target_link_libraries(config_v2_test PRIVATE yappod::tomlc99)
   add_yappod_cmocka_test(
     application_config
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/application_config_test.c
     LABEL standalone
+    LIBRARIES yappod_config
   )
-  target_link_libraries(application_config_test PRIVATE yappod_base)
   add_yappod_cmocka_test(
     index_v2_contracts
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_v2_contracts_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_config_v2.c
-                  ${SRC_DIR}/yappo_storage_v2.c
+    LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     segment_v2_roundtrip
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_v2_roundtrip_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c
+    LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     rag_passage
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/rag_passage_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_rag.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     vector_search
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_search_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_vector.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     hybrid_rerank
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/hybrid_rerank_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_hybrid.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     bm25_score
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/bm25_score_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_bm25.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     manifest_v2_nrt
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/manifest_v2_nrt_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c
+    LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     lexical_v2_writer
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_writer_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     lexical_v2_reader
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_reader_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     lexical_v2_ranking
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_ranking_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     metadata_filter_snippet_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/metadata_filter_snippet_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c
+    LIBRARIES yappod_query
   )
-  target_link_libraries(metadata_filter_snippet_v2_test PRIVATE yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
   add_yappod_cmocka_test(
     embedding_provider
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_provider_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_embedding.c
+    LIBRARIES yappod_components
   )
-  target_link_libraries(embedding_provider_test PRIVATE CURL::libcurl yappod::yyjson)
+  target_link_libraries(embedding_provider_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     vector_v2_persistence
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_v2_persistence_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     ann_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ann_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c
+    LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     snapshot_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/snapshot_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c
+    LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     query_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/query_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     retrieve_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/retrieve_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_retrieve_v2.c
+    LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     core_http_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_http_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_core_http_v2.c
+    LIBRARIES yappod_server
   )
   add_yappod_cmocka_test(
     http_v2_runtime
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_segment_planner_v2.c ${SRC_DIR}/yappo_writer_lock_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
+    LIBRARIES yappod_server
   )
+  target_link_libraries(http_v2_runtime_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     update_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/update_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_compact_v2.c
+    LIBRARIES yappod_server
   )
-  target_link_libraries(update_v2_test PRIVATE yappod_base)
+  target_link_libraries(update_v2_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     segment_planner_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_planner_v2_test.c
     LABEL standalone
+    LIBRARIES yappod_indexing
   )
-  target_link_libraries(segment_planner_v2_test PRIVATE yappod_base)
   add_yappod_cmocka_test(
     runtime_policy_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_policy_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_runtime_policy_v2.c
+    LIBRARIES yappod_config
   )
   add_yappod_cmocka_test(
     observability_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/observability_v2_test.c
     LABEL standalone
+    LIBRARIES yappod_server
   )
-  target_link_libraries(observability_v2_test PRIVATE yappod_base)
   add_yappod_cmocka_test(
     search_quality_metrics
     ${QUALITY_TEST_DIR}/search_quality_metrics_test.c
@@ -452,7 +550,8 @@ if(YAPPOD_TESTS_NODAEMON)
                   ${QUALITY_TEST_DIR}/search_quality_metrics.c
   )
   target_include_directories(v2_search_quality_test PRIVATE ${QUALITY_TEST_DIR})
-  target_link_libraries(v2_search_quality_test PRIVATE yappod_base)
+  target_link_libraries(v2_search_quality_test PRIVATE
+    yappod_server yappod_components yappod::yyjson)
 endif()
 
 if(YAPPOD_BUILD_FUZZERS)
@@ -462,26 +561,30 @@ if(YAPPOD_BUILD_FUZZERS)
 
   add_executable(core_http_v2_fuzz
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/core_http_v2_fuzz.c
-    ${SRC_DIR}/yappo_core_http_v2.c
   )
   target_include_directories(core_http_v2_fuzz PRIVATE ${SRC_DIR})
-  target_link_libraries(core_http_v2_fuzz PRIVATE Threads::Threads CURL::libcurl)
+  target_link_libraries(core_http_v2_fuzz PRIVATE yappod_server)
   target_compile_options(core_http_v2_fuzz PRIVATE -fsanitize=fuzzer)
   target_link_options(core_http_v2_fuzz PRIVATE -fsanitize=fuzzer)
   yappod_enable_warnings(core_http_v2_fuzz)
 
   add_executable(ingest_v2_fuzz
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/ingest_v2_fuzz.c
-    ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c
-    ${SRC_DIR}/yappo_config_v2.c
-    ${SRC_DIR}/yappo_application_config.c
-    ${SRC_DIR}/yappo_runtime_policy_v2.c
-    ${SRC_DIR}/yappo_unicode.c
-    ${SRC_DIR}/yappo_ingest.c
   )
   target_include_directories(ingest_v2_fuzz PRIVATE ${SRC_DIR})
   target_compile_options(ingest_v2_fuzz PRIVATE -fsanitize=fuzzer)
   target_link_options(ingest_v2_fuzz PRIVATE -fsanitize=fuzzer)
-  target_link_libraries(ingest_v2_fuzz PRIVATE yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
+  target_link_libraries(ingest_v2_fuzz PRIVATE yappod_indexing)
   yappod_enable_warnings(ingest_v2_fuzz)
+endif()
+
+yappod_validate_internal_dag()
+yappod_assert_executable_internal_link(search yappod_server)
+yappod_assert_executable_internal_link(yappo_makeindex yappod_server)
+yappod_assert_executable_internal_link(yappo_compact yappod_indexing)
+yappod_assert_executable_internal_link(yappod_core yappod_server)
+yappod_assert_executable_internal_link(yappod_front yappod_server)
+
+if(TARGET yappod_base)
+  message(FATAL_ERROR "The retired yappod_base target must not be reintroduced")
 endif()
