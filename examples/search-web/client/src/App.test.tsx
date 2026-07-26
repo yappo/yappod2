@@ -102,7 +102,7 @@ describe("yappod search UI", () => {
       results: [{
         id: "lf:1",
         document_id: "lf:1",
-        title: "src/yappo_makeindex.c",
+        title: "src/app/yappo_makeindex.c",
         url: "",
         snippet: "local file snippet",
         lexical_score: 1,
@@ -115,8 +115,8 @@ describe("yappod search UI", () => {
     render(<App api={mockApi} />);
     await user.type(screen.getByRole("searchbox", { name: "検索語句" }), "makeindex");
     await user.click(screen.getByRole("button", { name: "検索を実行" }));
-    expect(await screen.findByText("src/yappo_makeindex.c")).toBeVisible();
-    expect(screen.queryByRole("link", { name: "src/yappo_makeindex.c" })).not.toBeInTheDocument();
+    expect(await screen.findByText("src/app/yappo_makeindex.c")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "src/app/yappo_makeindex.c" })).not.toBeInTheDocument();
   });
 
   it("registers a document and searches it without exposing credentials", async () => {

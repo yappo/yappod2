@@ -5,12 +5,12 @@
 #include <string.h>
 
 #include "test_fs.h"
-#include "yappo_ann_v2.h"
-#include "yappo_config_v2.h"
-#include "yappo_lexical_v2.h"
-#include "yappo_manifest_v2.h"
-#include "yappo_metadata_v2.h"
-#include "yappo_vector_v2.h"
+#include "components/yappo_ann_v2.h"
+#include "config/yappo_config_v2.h"
+#include "components/yappo_lexical_v2.h"
+#include "storage/yappo_manifest_v2.h"
+#include "components/yappo_metadata_v2.h"
+#include "components/yappo_vector_v2.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
