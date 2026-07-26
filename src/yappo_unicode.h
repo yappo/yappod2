@@ -1,7 +1,7 @@
 #ifndef YAPPO_UNICODE_H
 #define YAPPO_UNICODE_H
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 #include <stddef.h>
 #include <stdint.h>

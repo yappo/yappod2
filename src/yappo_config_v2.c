@@ -87,6 +87,87 @@ static int field_compare(const void *left, const void *right) {
   return strcmp((const char *)left, (const char *)right);
 }
 
+static int c_string_validate(const char *value, size_t max_bytes, int required) {
+  size_t len;
+
+  if (value == NULL) {
+    return required ? YAP_V2_INVALID_ARGUMENT : YAP_V2_OK;
+  }
+  len = 0U;
+  while (len <= max_bytes && value[len] != '\0') {
+    len++;
+  }
+  if (len > max_bytes) {
+    return YAP_V2_INVALID_FORMAT;
+  }
+  if (required && len == 0U) {
+    return YAP_V2_INVALID_FORMAT;
+  }
+  return YAP_V2_OK;
+}
+
+int YAP_V2_config_validate(const YAP_V2_CONFIG *config) {
+  int status;
+  size_t i;
+
+  if (config == NULL) {
+    return YAP_V2_INVALID_ARGUMENT;
+  }
+  if (config->format_version != YAP_V2_FORMAT_VERSION) {
+    return YAP_V2_INVALID_FORMAT;
+  }
+  status = c_string_validate(config->tokenizer_id, YAP_V2_MAX_IDENTIFIER_BYTES, 1);
+  if (status != YAP_V2_OK) {
+    return status;
+  }
+  if (config->chunk_max_chars == 0U || config->chunk_max_chars > YAP_V2_MAX_CHUNK_CHARS ||
+      config->chunk_overlap_chars >= config->chunk_max_chars) {
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  status = c_string_validate(config->vector_model_id, YAP_V2_MAX_MODEL_ID_BYTES,
+                             config->vector_metric != YAP_V2_VECTOR_DISABLED);
+  if (status != YAP_V2_OK) {
+    return status;
+  }
+  if (config->vector_metric == YAP_V2_VECTOR_DISABLED) {
+    if (config->vector_dimensions != 0U || config->vector_model_id[0] != '\0') {
+      return YAP_V2_INVALID_FORMAT;
+    }
+  } else if (config->vector_dimensions == 0U ||
+             config->vector_dimensions > YAP_V2_MAX_VECTOR_DIMENSIONS ||
+             config->vector_metric < YAP_V2_VECTOR_COSINE ||
+             config->vector_metric > YAP_V2_VECTOR_L2) {
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  if (config->filterable_field_count > YAP_V2_MAX_FILTER_FIELDS) {
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  for (i = 0U; i < config->filterable_field_count; i++) {
+    const char *field = config->filterable_fields[i];
+    size_t j;
+    status = c_string_validate(field, YAP_V2_MAX_FILTER_FIELD_BYTES, 1);
+    if (status != YAP_V2_OK) {
+      return status;
+    }
+    if (field[0] == '.' || field[strlen(field) - 1U] == '.') {
+      return YAP_V2_INVALID_FORMAT;
+    }
+    for (j = 0U; field[j] != '\0'; j++) {
+      unsigned char c = (unsigned char)field[j];
+      if (c == '.' && (j == 0U || field[j - 1U] == '.')) {
+        return YAP_V2_INVALID_FORMAT;
+      }
+      if (c < 0x20U || c == '/' || c == '\\') {
+        return YAP_V2_INVALID_FORMAT;
+      }
+    }
+    if (i > 0U && strcmp(config->filterable_fields[i - 1U], field) >= 0) {
+      return YAP_V2_INVALID_FORMAT;
+    }
+  }
+  return YAP_V2_OK;
+}
+
 static int read_filterable_fields(toml_table_t *metadata, YAP_V2_CONFIG *config,
                                   char *error, size_t error_size) {
   toml_array_t *array;

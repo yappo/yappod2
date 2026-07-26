@@ -1,7 +1,7 @@
 #ifndef YAPPO_EMBEDDING_H
 #define YAPPO_EMBEDDING_H
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 typedef enum {
   YAP_EMBEDDING_OK = 0,

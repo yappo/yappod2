@@ -4,7 +4,7 @@
 
 #include <stddef.h>
 
-#include "yappo_index_v2.h"
+#include "yappo_config_v2.h"
 
 typedef enum {
   YAP_VECTOR_OK = 0,

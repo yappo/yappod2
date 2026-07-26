@@ -9,7 +9,7 @@
 
 #include "test_env.h"
 #include "test_fs.h"
-#include "yappo_index_v2.h"
+#include "yappo_storage_v2.h"
 
 static YAP_V2_DOCUMENT_VIEW sample_document(void) {
   static const unsigned char id[] = "doc-1";

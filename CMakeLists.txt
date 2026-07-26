@@ -45,10 +45,22 @@ include(Dependencies)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+include(CheckIncludeFile)
+set(CMAKE_REQUIRED_INCLUDES ${SRC_DIR})
+foreach(header IN ITEMS yappo_types_v2.h yappo_config_v2.h yappo_storage_v2.h)
+  string(MAKE_C_IDENTIFIER "YAPPOD_HAS_SELF_CONTAINED_${header}" result_variable)
+  check_include_file(${header} ${result_variable})
+  if(NOT ${result_variable})
+    message(FATAL_ERROR "${header} must compile as a self-contained header")
+  endif()
+endforeach()
+unset(CMAKE_REQUIRED_INCLUDES)
+
 set(YAPPO_BASE_SOURCES
   ${SRC_DIR}/yappo_io.c
   ${SRC_DIR}/yappo_net.c
-  ${SRC_DIR}/yappo_index_v2.c
+  ${SRC_DIR}/yappo_types_v2.c
+  ${SRC_DIR}/yappo_storage_v2.c
   ${SRC_DIR}/yappo_config_v2.c
   ${SRC_DIR}/yappo_application_config.c
   ${SRC_DIR}/yappo_unicode.c
@@ -214,7 +226,7 @@ if(YAPPOD_TESTS_DAEMON)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/http_v2_daemon_test.c
     RUN_SERIAL
     LABEL daemon
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
   )
   add_yappod_cmocka_test(
     v2_daemon_reliability
@@ -256,19 +268,19 @@ if(YAPPOD_TESTS_NODAEMON)
     canonical_ingest
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/canonical_ingest_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c
   )
   add_yappod_cmocka_test(
     unicode_tokenizer
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_tokenizer_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_unicode.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_unicode.c
   )
   add_yappod_cmocka_test(
     config_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c
   )
   target_link_libraries(config_v2_test PRIVATE yappod::tomlc99)
   add_yappod_cmocka_test(
@@ -281,31 +293,32 @@ if(YAPPOD_TESTS_NODAEMON)
     index_v2_contracts
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_v2_contracts_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_config_v2.c
+                  ${SRC_DIR}/yappo_storage_v2.c
   )
   add_yappod_cmocka_test(
     segment_v2_roundtrip
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_v2_roundtrip_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c
   )
   add_yappod_cmocka_test(
     rag_passage
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/rag_passage_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_rag.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_rag.c
   )
   add_yappod_cmocka_test(
     vector_search
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_search_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_vector.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_vector.c
   )
   add_yappod_cmocka_test(
     hybrid_rerank
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/hybrid_rerank_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_hybrid.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_hybrid.c
   )
   add_yappod_cmocka_test(
     bm25_score
@@ -317,31 +330,31 @@ if(YAPPOD_TESTS_NODAEMON)
     manifest_v2_nrt
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/manifest_v2_nrt_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c
   )
   add_yappod_cmocka_test(
     lexical_v2_writer
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_writer_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c
   )
   add_yappod_cmocka_test(
     lexical_v2_reader
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_reader_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c
   )
   add_yappod_cmocka_test(
     lexical_v2_ranking
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_ranking_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c
   )
   add_yappod_cmocka_test(
     metadata_filter_snippet_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/metadata_filter_snippet_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c
   )
   target_link_libraries(metadata_filter_snippet_v2_test PRIVATE yappod::tomlc99 yappod::yyjson ICU::uc ICU::i18n)
   add_yappod_cmocka_test(
@@ -355,31 +368,31 @@ if(YAPPOD_TESTS_NODAEMON)
     vector_v2_persistence
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_v2_persistence_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c
   )
   add_yappod_cmocka_test(
     ann_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/ann_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c
   )
   add_yappod_cmocka_test(
     snapshot_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/snapshot_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c
   )
   add_yappod_cmocka_test(
     query_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/query_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c
   )
   add_yappod_cmocka_test(
     retrieve_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/retrieve_v2_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_retrieve_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_retrieve_v2.c
   )
   add_yappod_cmocka_test(
     core_http_v2
@@ -391,7 +404,7 @@ if(YAPPOD_TESTS_NODAEMON)
     http_v2_runtime
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
     LABEL standalone
-    EXTRA_SOURCES ${SRC_DIR}/yappo_index_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_segment_planner_v2.c ${SRC_DIR}/yappo_writer_lock_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
+    EXTRA_SOURCES ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c ${SRC_DIR}/yappo_config_v2.c ${SRC_DIR}/yappo_application_config.c ${SRC_DIR}/yappo_runtime_policy_v2.c ${SRC_DIR}/yappo_segment_v2.c ${SRC_DIR}/yappo_manifest_v2.c ${SRC_DIR}/yappo_snapshot_v2.c ${SRC_DIR}/yappo_unicode.c ${SRC_DIR}/yappo_ingest.c ${SRC_DIR}/yappo_update_v2.c ${SRC_DIR}/yappo_segment_planner_v2.c ${SRC_DIR}/yappo_writer_lock_v2.c ${SRC_DIR}/yappo_lexical_v2.c ${SRC_DIR}/yappo_lexical_reader_v2.c ${SRC_DIR}/yappo_lexical_search_v2.c ${SRC_DIR}/yappo_bm25.c ${SRC_DIR}/yappo_metadata_v2.c ${SRC_DIR}/yappo_filter_v2.c ${SRC_DIR}/yappo_snippet_v2.c ${SRC_DIR}/yappo_embedding.c ${SRC_DIR}/yappo_vector.c ${SRC_DIR}/yappo_vector_v2.c ${SRC_DIR}/yappo_ann_v2.c ${SRC_DIR}/yappo_hybrid.c ${SRC_DIR}/yappo_query_v2.c ${SRC_DIR}/yappo_retrieve_v2.c ${SRC_DIR}/yappo_http_v2.c
   )
   add_yappod_cmocka_test(
     update_v2
@@ -459,7 +472,7 @@ if(YAPPOD_BUILD_FUZZERS)
 
   add_executable(ingest_v2_fuzz
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/ingest_v2_fuzz.c
-    ${SRC_DIR}/yappo_index_v2.c
+    ${SRC_DIR}/yappo_types_v2.c ${SRC_DIR}/yappo_storage_v2.c
     ${SRC_DIR}/yappo_config_v2.c
     ${SRC_DIR}/yappo_application_config.c
     ${SRC_DIR}/yappo_runtime_policy_v2.c

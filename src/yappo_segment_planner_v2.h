@@ -2,6 +2,7 @@
 #define YAPPO_SEGMENT_PLANNER_V2_H
 
 #include "yappo_config_v2.h"
+#include "yappo_storage_v2.h"
 
 typedef struct {
   const YAP_V2_DOCUMENT_VIEW *document;

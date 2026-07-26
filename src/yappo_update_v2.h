@@ -2,6 +2,7 @@
 #define YAPPO_UPDATE_V2_H
 
 #include "yappo_ingest.h"
+#include "yappo_storage_v2.h"
 
 #define YAP_V2_UPDATE_MAX_OPERATIONS 100U
 #define YAP_V2_BUILD_BATCH_OPERATIONS 10000U

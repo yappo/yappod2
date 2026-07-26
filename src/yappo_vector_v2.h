@@ -2,6 +2,7 @@
 #define YAPPO_VECTOR_V2_H
 
 #include "yappo_embedding.h"
+#include "yappo_storage_v2.h"
 #include "yappo_vector.h"
 
 typedef struct {

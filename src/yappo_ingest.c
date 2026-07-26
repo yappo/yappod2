@@ -2,6 +2,7 @@
 
 #include "yappo_config_v2.h"
 #include "yappo_application_config.h"
+#include "yappo_storage_v2.h"
 #include "yappo_unicode.h"
 
 #include <errno.h>

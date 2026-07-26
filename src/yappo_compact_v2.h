@@ -1,7 +1,7 @@
 #ifndef YAPPO_COMPACT_V2_H
 #define YAPPO_COMPACT_V2_H
 
-#include "yappo_index_v2.h"
+#include "yappo_storage_v2.h"
 
 typedef struct {
   uint64_t generation;

@@ -10,7 +10,7 @@
 
 #include "test_env.h"
 #include "test_fs.h"
-#include "yappo_index_v2.h"
+#include "yappo_storage_v2.h"
 #include "yappo_config_v2.h"
 #include "yappo_manifest_v2.h"
 
