@@ -6,11 +6,17 @@
 
 | ディレクトリ | 内容 |
 |---|---|
-| `src/` | Cによる索引、検索、HTTP、デーモン、コマンドの実装です。公開対象を含む宣言は対応するヘッダーにあります。 |
-| `tests/cmocka/` | C API、保存形式、CLI、HTTP、異常系の単体・結合テストです。 |
+| `src/app/` | `search`、`yappo_makeindex`、`yappo_compact`、`yappod_core`、`yappod_front`のエントリーポイントです。 |
+| `src/common/`〜`src/server/` | 責務別のC実装とヘッダーです。依存方向と変更箇所は[アーキテクチャ](architecture.md)を参照してください。 |
+| `tests/common/`〜`tests/server/` | `src/`と同じ責務単位の単体・結合テストです。 |
+| `tests/acceptance/`、`tests/support/` | CLIとインストール後の受け入れ確認、およびテスト専用fixtureです。 |
 | `tests/quality/` | 検索品質、近似ベクトル検索の再現率、Yappod2サーバーの信頼性、負荷計測のテスト資料と実行ファイルです。 |
+| `tests/fuzz/` | 内部HTTPとcanonical NDJSON parserのfuzzerです。 |
 | `examples/` | 実行可能な設定、入力生成、Web UIです。 |
 | `cmake/` | 外部依存関係とCMake補助処理です。 |
+
+初めて変更する場合は、[アーキテクチャ](architecture.md)の読む順番と変更箇所地図を先に確認します。
+複数PRや引き継ぎを伴う作業は[タスク票と開発作業の運用](task-workflow.md)に従います。
 
 ## 必要な依存関係
 

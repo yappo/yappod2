@@ -11,6 +11,11 @@ on:
       - "src/**"
       - "tests/**"
       - "examples/**"
+      - "docs/**"
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
       - "README.md"
       - "INSTALL"
   pull_request:
@@ -23,6 +28,11 @@ on:
       - "src/**"
       - "tests/**"
       - "examples/**"
+      - "docs/**"
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
       - "README.md"
       - "INSTALL"
   workflow_dispatch:

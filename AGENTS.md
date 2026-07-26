@@ -1,78 +1,37 @@
-# Repository Guidelines
+# Yappod2共通作業規則
 
-## Project Structure & Module Organization
-- `src/` にコアの C ソースとヘッダーがあります（`yappod_core`, `yappod_front`, `search`, `yappo_makeindex` など）。
-- `build/` はビルド成果物置き場です（再生成可能）。
-- `examples/` に v2 config と canonical NDJSON の実行可能なサンプルがあります。
-- ルートの `README`/`INSTALL`/`NEWS` に使い方や変更履歴があります。
+このファイルはリポジトリ全体の承認、Git、PR、CIに関する規則だけを定めます。実装責務は
+[`docs/architecture.md`](docs/architecture.md)、タスク票の運用は
+[`docs/task-workflow.md`](docs/task-workflow.md)、対象別の規則は各ディレクトリの
+`AGENTS.md`を参照してください。
 
-## Build, Test, and Development Commands
-- `cmake -S . -B build` でビルド設定を生成します。
-- `cmake --build build -j` でビルドします。
-- `cmake --install build` でインストールします。
-- `cmake -S . -B build -DCMAKE_INSTALL_PREFIX=$HOME/yappod` でインストール先を指定できます。
+## タスクの承認
 
-README の例:
-- インデックス作成: `yappo_makeindex build --config examples/config.toml --input examples/documents.ndjson --index /tmp/yappoindex`
-- 検索: `search --index /tmp/yappoindex --mode lexical --query キーワード`
-- デーモン起動: `yappod_core --index /tmp/yappoindex` と `yappod_front --index /tmp/yappoindex --core-host 127.0.0.1`
+1. 着手前に「今回着手する1件」と「以降の残タスク（最大10件）」を提示し、ユーザーの合意を得ます。
+2. 調査で判明できる事実は先に調べ、ユーザーには製品判断や互換性判断だけを質問します。
+3. 緊急依頼は現在のタスクへ割り込ませ、元のタスクは一時停止として扱います。
+4. 通常は1タスクのmerge後に次候補を提示して判断を待ちます。ただし、ユーザーが複数タスクの内容と順序を明示的に一括承認し、連続実行を指示した場合は、承認済みの全タスクが終わるまで各merge後に停止せず次へ進みます。
+5. 追加権限、利用者向け契約の変更、承認済み範囲を越える製品判断が必要になった場合は、連続実行中でも停止して確認します。
 
-## Coding Style & Naming Conventions
-- 言語: C（`src/*.c` では K&R 風の中括弧と 2 スペースインデントが見られます）。
-- 関数名は `YAP_` プレフィックス（例: `YAP_Index_get_domainindex`）。
-- ファイル名は `yappo_*.c` / `yappo_*.h` でモジュールを分けています。
-- 宣言は対応する `*.h` にまとめてください。
+## ブランチ、コミット、PR
 
-## Testing Guidelines
-- テスト実行は `ctest --test-dir build --output-on-failure` を基準手順とします。
-- 必要に応じて `examples/` の小規模データでインデックス作成 → 全検索 mode の動作確認も行ってください。
+- 合意前にブランチを作りません。変更を伴うタスクは原則として
+  **1タスク = 1ブランチ = 1PR**とし、ブランチ名は`codex/<topic>`にします。調査だけで変更を
+  commitしない場合はブランチを作りません。
+- コミットは`type: summary`形式の短い英語命令形にします。`type`は
+  `fix|refactor|test|docs|chore`のいずれかです。
+- PRは`gh pr create --base main --head <branch> --title "<title>" --body-file <file>`で作成し、
+  `.github/pull_request_template.md`の見出しを使って、実施結果と検証結果を日本語で記録します。
+- 複数PRを束ねるタスクでは追跡Issueを作り、各PRから関連付けます。
 
-## Commit & Pull Request Guidelines
-- コミットは短く動詞ベースの英語にします。
-- PR には概要、検証手順（コマンドと入力例）、互換性や挙動変更のメモを含めてください。
+## 検証とmerge
 
-## タスク開発フロー（必須）
-1. 優先順位は「AIが必要タスクを整理し順番に処理」が基本です。**ユーザから緊急依頼が来た場合は割り込みを最優先**し、元タスクは一時停止として扱います。
-2. タスク開始前に、必ず「今回着手タスク1件」と「以降の残タスク（最大10件）」を提示し、ユーザ合意後に着手します。
-   - 今後必要になるタスクを全て先読みで洗い出して、全て提示してください。タスク完了後に後出しで追加タスクを提示しないよう努力してください。
-3. 合意前にブランチは作りません。
-   - git commit が必要なタスクの場合は、着手確定後に **1タスク = 1ブランチ = 1PR**（`codex/<topic>`）で進めます（例: `git checkout -b codex/fix-mergepos-missing-d`）。
-   - タスクの内容が調査のみでコードやファイルの変更や git commit が不要なタスクだと判断したら、ブランチ作成は不要です
-4. タスクの内容を実装し、実装後のローカル確認は最低限以下を実行します。
-   - `cmake --build build -j`
-   - `ctest --test-dir build --output-on-failure`
-   - 必要に応じて不具合再現/修正確認コマンド（CLI/HTTPなど）を実行して正常に動作することを確認する
-5. コミットメッセージは `type: summary` 形式（英語・命令形）を必須とします。`type` は `fix|refactor|test|docs|chore`。例: `fix: validate required -d option in mergepos`
-6. PRは `gh` コマンドで作成し、本文は次のテンプレートを必須とします。
-   - `gh pr create --base main --head <branch> --title \"<title>\" --body-file <file>`
-   - `## 背景`
-   - `## 変更内容`
-   - `## 検証手順`
-   - `## 影響範囲`
-7. PR作成後は GitHub Actions の CI を確認し、**必須ジョブが全て成功してから** merge します。失敗していたら gh コマンドで CI のログを確認し原因を調査しコミットを再度行います (`gh run view <run-id> --log-failed`)
-   - `gh pr checks <pr-number>`
-     - for loop で sleep 20 をしながらポーリングで確認すること
-   - `gh pr merge <pr-number> --merge --delete-branch`
-8. タスク完了後は次タスクへ自動遷移せず、再度「次タスク候補 + 残タスク（最大10件）」を提示してユーザ判断を待ちます。
-
-### PR本文テンプレート（コピペ用）
-```md
-## 背景
-- 
-
-## 変更内容
-- 
-
-## 検証手順
-- `cmake --build build -j`
-- `ctest --test-dir build --output-on-failure`
-- 
-
-## 影響範囲
-- 
-
-```
-
-## Configuration & Data Notes
-- 正式入力は 1 行 1 operation の canonical NDJSON です。TSV は `prepare --input-format tsv` adapter で変換します。
-- index の正式 layout は `config.toml`、`manifest.json`、`segments/<segment-id>/` です。
+- 変更完了時の最低限の確認は`cmake --build build -j`、
+  `ctest --test-dir build --output-on-failure`、`git diff --check`です。変更領域に固有の確認は
+  対象ディレクトリの`AGENTS.md`と[`docs/development.md`](docs/development.md)に従います。
+- PR作成後は`gh pr checks <number>`を20秒間隔で確認します。失敗時は
+  `gh run view <run-id> --log-failed`で原因を調べ、同じブランチで修正します。
+- 必須ジョブがすべて成功してから
+  `gh pr merge <number> --merge --delete-branch`でmergeします。
+- 仕様、既定値、プロトコル、コマンドについては現在のソース、テスト、正式文書を一次資料として
+  照合します。確認できなかった事項は推測せず、不明であることを明記します。
