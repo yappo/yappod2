@@ -1,7 +1,7 @@
 #ifndef YAPPO_METADATA_V2_H
 #define YAPPO_METADATA_V2_H
 
-#include "yappo_index_v2.h"
+#include "yappo_storage_v2.h"
 
 typedef enum {
   YAP_V2_METADATA_NULL = 1,

@@ -1,7 +1,7 @@
 #ifndef YAPPO_OBSERVABILITY_V2_H
 #define YAPPO_OBSERVABILITY_V2_H
 
-#include "yappo_index_v2.h"
+#include "yappo_config_v2.h"
 
 #include <pthread.h>
 

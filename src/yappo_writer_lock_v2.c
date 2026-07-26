@@ -1,6 +1,6 @@
 #include "yappo_writer_lock_v2.h"
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 #include <fcntl.h>
 #include <stdio.h>

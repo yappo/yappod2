@@ -1,7 +1,7 @@
 #ifndef YAPPO_INGEST_H
 #define YAPPO_INGEST_H
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 #include <stddef.h>
 #include <stdint.h>

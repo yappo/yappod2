@@ -1,44 +1,21 @@
-#ifndef YAPPO_INDEX_V2_H
-#define YAPPO_INDEX_V2_H
+#ifndef YAPPO_STORAGE_V2_H
+#define YAPPO_STORAGE_V2_H
 
-#include <stddef.h>
-#include <stdint.h>
+#include "yappo_config_v2.h"
+#include "yappo_types_v2.h"
 
-#define YAP_V2_FORMAT_VERSION UINT16_C(2)
 #define YAP_V2_FILE_HEADER_BYTES 32U
 #define YAP_V2_MAGIC_0 'Y'
 #define YAP_V2_MAGIC_1 'A'
 #define YAP_V2_MAGIC_2 'P'
 #define YAP_V2_MAGIC_3 '2'
 
-#define YAP_V2_MAX_IDENTIFIER_BYTES 255U
-#define YAP_V2_MAX_URL_BYTES (8U * 1024U)
-#define YAP_V2_MAX_MODEL_ID_BYTES 255U
-#define YAP_V2_MAX_METADATA_BYTES (1024U * 1024U)
 #define YAP_V2_MAX_SEGMENTS 100000U
-#define YAP_V2_MAX_VECTOR_DIMENSIONS 65536U
-#define YAP_V2_MAX_CHUNK_CHARS (1024U * 1024U)
 #define YAP_V2_MAX_SEGMENT_DOCUMENTS 1000000U
 #define YAP_V2_MAX_SEGMENT_PASSAGES 4000000U
 #define YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES (256U * 1024U * 1024U)
 #define YAP_V2_MAX_COMPONENTS 8U
 #define YAP_V2_MAX_COMPONENT_NAME_BYTES 63U
-#define YAP_V2_MAX_FILTER_FIELDS 64U
-#define YAP_V2_MAX_FILTER_FIELD_BYTES 127U
-
-typedef enum {
-  YAP_V2_OK = 0,
-  YAP_V2_INVALID_ARGUMENT = -1,
-  YAP_V2_INVALID_FORMAT = -2,
-  YAP_V2_OUT_OF_RANGE = -3,
-  YAP_V2_DUPLICATE = -4,
-  YAP_V2_ALLOCATION_FAILED = -5,
-  YAP_V2_IO_ERROR = -6,
-  YAP_V2_CHECKSUM_MISMATCH = -7,
-  YAP_V2_CONFLICT = -8,
-  YAP_V2_NOT_FOUND = -9,
-  YAP_V2_SEGMENT_CAPACITY_EXCEEDED = -10
-} YAP_V2_STATUS;
 
 typedef enum {
   YAP_V2_FILE_TERMS = 1,
@@ -50,49 +27,6 @@ typedef enum {
   YAP_V2_FILE_TOMBSTONES = 7,
   YAP_V2_FILE_ANN = 8
 } YAP_V2_FILE_TYPE;
-
-typedef enum {
-  YAP_V2_VECTOR_DISABLED = 0,
-  YAP_V2_VECTOR_COSINE = 1,
-  YAP_V2_VECTOR_DOT = 2,
-  YAP_V2_VECTOR_L2 = 3
-} YAP_V2_VECTOR_METRIC;
-
-/* A byte view never owns data. All text values must be UTF-8 without NUL bytes. */
-typedef struct {
-  const unsigned char *data;
-  size_t len;
-} YAP_V2_BYTES_VIEW;
-
-typedef struct {
-  YAP_V2_BYTES_VIEW id;
-  YAP_V2_BYTES_VIEW url;
-  YAP_V2_BYTES_VIEW title;
-  YAP_V2_BYTES_VIEW body;
-  YAP_V2_BYTES_VIEW metadata_json;
-  int64_t updated_at_unix_ms;
-} YAP_V2_DOCUMENT_VIEW;
-
-typedef struct {
-  YAP_V2_BYTES_VIEW id;
-  YAP_V2_BYTES_VIEW parent_document_id;
-  YAP_V2_BYTES_VIEW text;
-  uint32_t ordinal;
-  uint32_t start_char;
-  uint32_t end_char;
-} YAP_V2_PASSAGE_VIEW;
-
-typedef struct {
-  uint32_t format_version;
-  char tokenizer_id[YAP_V2_MAX_IDENTIFIER_BYTES + 1U];
-  uint32_t chunk_max_chars;
-  uint32_t chunk_overlap_chars;
-  char vector_model_id[YAP_V2_MAX_MODEL_ID_BYTES + 1U];
-  uint32_t vector_dimensions;
-  YAP_V2_VECTOR_METRIC vector_metric;
-  char filterable_fields[YAP_V2_MAX_FILTER_FIELDS][YAP_V2_MAX_FILTER_FIELD_BYTES + 1U];
-  size_t filterable_field_count;
-} YAP_V2_CONFIG;
 
 typedef struct {
   char name[YAP_V2_MAX_COMPONENT_NAME_BYTES + 1U];
@@ -152,17 +86,11 @@ typedef struct {
   size_t capacity;
 } YAP_V2_SEGMENT_ID_LIST;
 
-const char *YAP_V2_status_string(YAP_V2_STATUS status);
-
 void YAP_V2_segment_id_list_init(YAP_V2_SEGMENT_ID_LIST *list);
 void YAP_V2_segment_id_list_free(YAP_V2_SEGMENT_ID_LIST *list);
 int YAP_V2_segment_id_list_add(YAP_V2_SEGMENT_ID_LIST *list, const char *segment_id);
 
 int YAP_V2_segment_id_validate(const char *value);
-
-int YAP_V2_document_validate(const YAP_V2_DOCUMENT_VIEW *document);
-int YAP_V2_passage_validate(const YAP_V2_PASSAGE_VIEW *passage);
-int YAP_V2_config_validate(const YAP_V2_CONFIG *config);
 
 void YAP_V2_manifest_init(YAP_V2_MANIFEST *manifest);
 void YAP_V2_manifest_free(YAP_V2_MANIFEST *manifest);

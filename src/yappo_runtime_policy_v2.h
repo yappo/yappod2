@@ -1,7 +1,7 @@
 #ifndef YAPPO_RUNTIME_POLICY_V2_H
 #define YAPPO_RUNTIME_POLICY_V2_H
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 #include <pthread.h>
 

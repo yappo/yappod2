@@ -4,7 +4,7 @@
 
 #include <stddef.h>
 
-#include "yappo_index_v2.h"
+#include "yappo_types_v2.h"
 
 #define YAP_HYBRID_RRF_K 60.0
 

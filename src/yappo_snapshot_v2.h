@@ -2,6 +2,7 @@
 #define YAPPO_SNAPSHOT_V2_H
 
 #include "yappo_config_v2.h"
+#include "yappo_storage_v2.h"
 
 typedef struct YAP_V2_SEARCH_SNAPSHOT YAP_V2_SEARCH_SNAPSHOT;
 

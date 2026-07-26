@@ -1,4 +1,6 @@
 #include "yappo_embedding.h"
+#include "yappo_config_v2.h"
+#include "yappo_storage_v2.h"
 
 #include <curl/curl.h>
 #include <errno.h>

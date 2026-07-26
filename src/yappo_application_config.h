@@ -1,7 +1,7 @@
 #ifndef YAPPO_APPLICATION_CONFIG_H
 #define YAPPO_APPLICATION_CONFIG_H
 
-#include "yappo_index_v2.h"
+#include "yappo_config_v2.h"
 #include "yappo_runtime_policy_v2.h"
 
 #include <stddef.h>
