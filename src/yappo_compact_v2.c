@@ -2,11 +2,11 @@
 #include "yappo_application_config.h"
 
 #include "yappo_ann_v2.h"
+#include "yappo_compaction_status_v2.h"
 #include "yappo_config_v2.h"
 #include "yappo_lexical_v2.h"
 #include "yappo_manifest_v2.h"
 #include "yappo_metadata_v2.h"
-#include "yappo_observability_v2.h"
 #include "yappo_segment_planner_v2.h"
 #include "yappo_snapshot_v2.h"
 #include "yappo_vector_v2.h"

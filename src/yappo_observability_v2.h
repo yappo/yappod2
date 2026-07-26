@@ -1,6 +1,7 @@
 #ifndef YAPPO_OBSERVABILITY_V2_H
 #define YAPPO_OBSERVABILITY_V2_H
 
+#include "yappo_compaction_status_v2.h"
 #include "yappo_config_v2.h"
 
 #include <pthread.h>
@@ -13,15 +14,6 @@ typedef enum {
   YAP_V2_OBSERVE_INGEST = 2,
   YAP_V2_OBSERVE_OPERATION_COUNT = 3
 } YAP_V2_OBSERVE_OPERATION;
-
-typedef enum {
-  YAP_V2_COMPACTION_IDLE = 0,
-  YAP_V2_COMPACTION_RUNNING = 1,
-  YAP_V2_COMPACTION_SUCCEEDED = 2,
-  YAP_V2_COMPACTION_FAILED = 3,
-  YAP_V2_COMPACTION_INTERRUPTED = 4,
-  YAP_V2_COMPACTION_UNKNOWN = 5
-} YAP_V2_COMPACTION_STATE;
 
 typedef struct {
   int ready;
@@ -49,10 +41,6 @@ int YAP_V2_operational_probe_index(const char *index_dir, YAP_V2_OPERATIONAL_STA
                                    char *error, size_t error_size);
 int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const char *service,
                                   char **json, size_t *json_bytes);
-const char *YAP_V2_compaction_state_name(YAP_V2_COMPACTION_STATE state);
-int YAP_V2_compaction_status_write(const char *index_dir, YAP_V2_COMPACTION_STATE state,
-                                   uint64_t generation);
-
 int YAP_V2_metrics_init(YAP_V2_METRICS *metrics);
 void YAP_V2_metrics_close(YAP_V2_METRICS *metrics);
 void YAP_V2_metrics_record(YAP_V2_METRICS *metrics, YAP_V2_OBSERVE_OPERATION operation,
