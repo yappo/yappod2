@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "yappo_ingest.h"
+#include "indexing/yappo_ingest.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   YAP_V2_INGEST_OPERATION operation;

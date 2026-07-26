@@ -34,7 +34,7 @@ assert.deepEqual(status.available_modes, ["lexical", "vector", "hybrid"]);
 const initial = await jsonRequest(webUrl, "/api/search", { query: "検索技術", limit: 5 });
 assert.equal(initial.results.some((result) => result.title === "検索技術"), true);
 const localFile = await jsonRequest(webUrl, "/api/search", { query: "localfilemarker", limit: 5 });
-assert.equal(localFile.results.some((result) => result.title === "src/yappo_makeindex.c" && result.url === ""), true);
+assert.equal(localFile.results.some((result) => result.title === "src/app/yappo_makeindex.c" && result.url === ""), true);
 for (const mode of ["vector", "hybrid"]) {
   const semantic = await jsonRequest(webUrl, "/api/search", { query: "情報を探す技術", mode, limit: 5 });
   assert.equal(semantic.results.length > 0, true);

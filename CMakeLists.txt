@@ -45,9 +45,19 @@ include(Dependencies)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+if(Python3_Interpreter_FOUND)
+  add_test(
+    NAME source_dependency_rules
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/check_src_dependencies.py
+            ${SRC_DIR}
+  )
+  set_tests_properties(source_dependency_rules PROPERTIES LABELS standalone)
+endif()
+
 include(CheckIncludeFile)
 set(CMAKE_REQUIRED_INCLUDES ${SRC_DIR})
-foreach(header IN ITEMS yappo_types_v2.h yappo_config_v2.h yappo_storage_v2.h)
+foreach(header IN ITEMS common/yappo_types_v2.h config/yappo_config_v2.h storage/yappo_storage_v2.h)
   string(MAKE_C_IDENTIFIER "YAPPOD_HAS_SELF_CONTAINED_${header}" result_variable)
   check_include_file(${header} ${result_variable})
   if(NOT ${result_variable})
@@ -57,60 +67,60 @@ endforeach()
 unset(CMAKE_REQUIRED_INCLUDES)
 
 set(YAPPOD_COMMON_SOURCES
-  ${SRC_DIR}/yappo_io.c
-  ${SRC_DIR}/yappo_net.c
-  ${SRC_DIR}/yappo_types_v2.c
-  ${SRC_DIR}/yappo_unicode.c
+  ${SRC_DIR}/common/yappo_io.c
+  ${SRC_DIR}/common/yappo_net.c
+  ${SRC_DIR}/common/yappo_types_v2.c
+  ${SRC_DIR}/common/yappo_unicode.c
 )
 
 set(YAPPOD_CONFIG_SOURCES
-  ${SRC_DIR}/yappo_config_v2.c
-  ${SRC_DIR}/yappo_application_config.c
-  ${SRC_DIR}/yappo_runtime_policy_v2.c
+  ${SRC_DIR}/config/yappo_config_v2.c
+  ${SRC_DIR}/config/yappo_application_config.c
+  ${SRC_DIR}/config/yappo_runtime_policy_v2.c
 )
 
 set(YAPPOD_STORAGE_SOURCES
-  ${SRC_DIR}/yappo_storage_v2.c
-  ${SRC_DIR}/yappo_compaction_status_v2.c
-  ${SRC_DIR}/yappo_segment_v2.c
-  ${SRC_DIR}/yappo_manifest_v2.c
-  ${SRC_DIR}/yappo_snapshot_v2.c
-  ${SRC_DIR}/yappo_writer_lock_v2.c
+  ${SRC_DIR}/storage/yappo_storage_v2.c
+  ${SRC_DIR}/storage/yappo_compaction_status_v2.c
+  ${SRC_DIR}/storage/yappo_segment_v2.c
+  ${SRC_DIR}/storage/yappo_manifest_v2.c
+  ${SRC_DIR}/storage/yappo_snapshot_v2.c
+  ${SRC_DIR}/storage/yappo_writer_lock_v2.c
 )
 
 set(YAPPOD_COMPONENTS_SOURCES
-  ${SRC_DIR}/yappo_lexical_v2.c
-  ${SRC_DIR}/yappo_lexical_reader_v2.c
-  ${SRC_DIR}/yappo_metadata_v2.c
-  ${SRC_DIR}/yappo_embedding.c
-  ${SRC_DIR}/yappo_vector.c
-  ${SRC_DIR}/yappo_vector_v2.c
-  ${SRC_DIR}/yappo_ann_v2.c
+  ${SRC_DIR}/components/yappo_lexical_v2.c
+  ${SRC_DIR}/components/yappo_lexical_reader_v2.c
+  ${SRC_DIR}/components/yappo_metadata_v2.c
+  ${SRC_DIR}/components/yappo_embedding.c
+  ${SRC_DIR}/components/yappo_vector.c
+  ${SRC_DIR}/components/yappo_vector_v2.c
+  ${SRC_DIR}/components/yappo_ann_v2.c
 )
 
 set(YAPPOD_QUERY_SOURCES
-  ${SRC_DIR}/yappo_bm25.c
-  ${SRC_DIR}/yappo_filter_v2.c
-  ${SRC_DIR}/yappo_snippet_v2.c
-  ${SRC_DIR}/yappo_lexical_search_v2.c
-  ${SRC_DIR}/yappo_hybrid.c
-  ${SRC_DIR}/yappo_query_v2.c
-  ${SRC_DIR}/yappo_retrieve_v2.c
-  ${SRC_DIR}/yappo_rag.c
+  ${SRC_DIR}/query/yappo_bm25.c
+  ${SRC_DIR}/query/yappo_filter_v2.c
+  ${SRC_DIR}/query/yappo_snippet_v2.c
+  ${SRC_DIR}/query/yappo_lexical_search_v2.c
+  ${SRC_DIR}/query/yappo_hybrid.c
+  ${SRC_DIR}/query/yappo_query_v2.c
+  ${SRC_DIR}/query/yappo_retrieve_v2.c
+  ${SRC_DIR}/query/yappo_rag.c
 )
 
 set(YAPPOD_INDEXING_SOURCES
-  ${SRC_DIR}/yappo_ingest.c
-  ${SRC_DIR}/yappo_build_v2.c
-  ${SRC_DIR}/yappo_update_v2.c
-  ${SRC_DIR}/yappo_segment_planner_v2.c
-  ${SRC_DIR}/yappo_compact_v2.c
+  ${SRC_DIR}/indexing/yappo_ingest.c
+  ${SRC_DIR}/indexing/yappo_build_v2.c
+  ${SRC_DIR}/indexing/yappo_update_v2.c
+  ${SRC_DIR}/indexing/yappo_segment_planner_v2.c
+  ${SRC_DIR}/indexing/yappo_compact_v2.c
 )
 
 set(YAPPOD_SERVER_SOURCES
-  ${SRC_DIR}/yappo_observability_v2.c
-  ${SRC_DIR}/yappo_core_http_v2.c
-  ${SRC_DIR}/yappo_http_v2.c
+  ${SRC_DIR}/server/yappo_observability_v2.c
+  ${SRC_DIR}/server/yappo_core_http_v2.c
+  ${SRC_DIR}/server/yappo_http_v2.c
 )
 
 add_library(yappod_common STATIC ${YAPPOD_COMMON_SOURCES})
@@ -188,15 +198,15 @@ function(yappod_validate_internal_dag)
   endforeach()
 endfunction()
 
-add_executable(search ${SRC_DIR}/search.c)
+add_executable(search ${SRC_DIR}/app/search.c)
 
-add_executable(yappo_makeindex ${SRC_DIR}/yappo_makeindex.c)
+add_executable(yappo_makeindex ${SRC_DIR}/app/yappo_makeindex.c)
 
-add_executable(yappo_compact ${SRC_DIR}/yappo_compact.c)
+add_executable(yappo_compact ${SRC_DIR}/app/yappo_compact.c)
 
-add_executable(yappod_core ${SRC_DIR}/yappod_core.c)
+add_executable(yappod_core ${SRC_DIR}/app/yappod_core.c)
 
-add_executable(yappod_front ${SRC_DIR}/yappod_front.c)
+add_executable(yappod_front ${SRC_DIR}/app/yappod_front.c)
 
 set(ALL_TARGETS
   search
@@ -248,11 +258,11 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/config.example.toml
 add_test(
   NAME install_config_smoke
   COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${CMAKE_BINARY_DIR}
-          -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/install_config_smoke.cmake
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/acceptance/install_config_smoke.cmake
 )
 set_tests_properties(install_config_smoke PROPERTIES LABELS standalone RUN_SERIAL TRUE)
 
-set(TEST_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/common)
+set(TEST_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/support)
 
 set(TEST_SUPPORT_SOURCES
   ${TEST_COMMON_DIR}/test_env.c
@@ -323,7 +333,7 @@ endfunction()
 if(YAPPOD_TESTS_DAEMON)
   add_yappod_cmocka_test(
     http_v2_daemon
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmocka/suites/http_v2_daemon_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/http_v2_daemon_test.c
     RUN_SERIAL
     LABEL daemon
     LIBRARIES yappod_components
@@ -345,7 +355,7 @@ if(YAPPOD_TESTS_NODAEMON)
   set(QUALITY_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/quality)
 
   add_executable(dependency_smoke_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/dependency_smoke_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/acceptance/dependency_smoke_test.c
   )
   yappod_enable_warnings(dependency_smoke_test)
   target_link_libraries(dependency_smoke_test PRIVATE yappod::modern_dependencies)
@@ -355,177 +365,177 @@ if(YAPPOD_TESTS_NODAEMON)
 
   add_yappod_cmocka_test(
     seek_offset_overflow
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/seek_offset_overflow_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/common/seek_offset_overflow_test.c
     LABEL standalone
     LIBRARIES yappod_common
   )
   add_yappod_cmocka_test(
     v2_cli_acceptance
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/v2_cli_acceptance_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/acceptance/v2_cli_acceptance_test.c
     LABEL standalone
   )
   add_yappod_cmocka_test(
     canonical_ingest
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/canonical_ingest_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/indexing/canonical_ingest_test.c
     LABEL standalone
     LIBRARIES yappod_indexing
   )
   add_yappod_cmocka_test(
     unicode_tokenizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unicode_tokenizer_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/common/unicode_tokenizer_test.c
     LABEL standalone
     LIBRARIES yappod_common
   )
   add_yappod_cmocka_test(
     config_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config/config_v2_test.c
     LABEL standalone
     LIBRARIES yappod_config
   )
   add_yappod_cmocka_test(
     application_config
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/application_config_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config/application_config_test.c
     LABEL standalone
     LIBRARIES yappod_config
   )
   add_yappod_cmocka_test(
     index_v2_contracts
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/index_v2_contracts_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage/index_v2_contracts_test.c
     LABEL standalone
     LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     segment_v2_roundtrip
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_v2_roundtrip_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage/segment_v2_roundtrip_test.c
     LABEL standalone
     LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     rag_passage
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/rag_passage_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/rag_passage_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     vector_search
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_search_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/vector_search_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     hybrid_rerank
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/hybrid_rerank_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/hybrid_rerank_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     bm25_score
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/bm25_score_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/bm25_score_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     manifest_v2_nrt
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/manifest_v2_nrt_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage/manifest_v2_nrt_test.c
     LABEL standalone
     LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     lexical_v2_writer
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_writer_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/lexical_v2_writer_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     lexical_v2_reader
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_reader_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/lexical_v2_reader_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     lexical_v2_ranking
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/lexical_v2_ranking_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/lexical_v2_ranking_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     metadata_filter_snippet_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/metadata_filter_snippet_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/metadata_filter_snippet_v2_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     embedding_provider
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_provider_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/embedding_provider_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   target_link_libraries(embedding_provider_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     vector_v2_persistence
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_v2_persistence_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/vector_v2_persistence_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     ann_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/ann_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/components/ann_v2_test.c
     LABEL standalone
     LIBRARIES yappod_components
   )
   add_yappod_cmocka_test(
     snapshot_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/snapshot_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/storage/snapshot_v2_test.c
     LABEL standalone
     LIBRARIES yappod_storage
   )
   add_yappod_cmocka_test(
     query_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/query_v2_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     retrieve_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/retrieve_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/retrieve_v2_test.c
     LABEL standalone
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
     core_http_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/core_http_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/core_http_v2_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )
   add_yappod_cmocka_test(
     http_v2_runtime
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/http_v2_runtime_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/http_v2_runtime_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )
   target_link_libraries(http_v2_runtime_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     update_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/update_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/indexing/update_v2_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )
   target_link_libraries(update_v2_test PRIVATE yappod::yyjson)
   add_yappod_cmocka_test(
     segment_planner_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/segment_planner_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/indexing/segment_planner_v2_test.c
     LABEL standalone
     LIBRARIES yappod_indexing
   )
   add_yappod_cmocka_test(
     runtime_policy_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_policy_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config/runtime_policy_v2_test.c
     LABEL standalone
     LIBRARIES yappod_config
   )
   add_yappod_cmocka_test(
     observability_v2
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/observability_v2_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/observability_v2_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )

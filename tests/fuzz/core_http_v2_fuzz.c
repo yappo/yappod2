@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "yappo_core_http_v2.h"
+#include "server/yappo_core_http_v2.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   YAP_V2_CORE_HTTP_REQUEST request;

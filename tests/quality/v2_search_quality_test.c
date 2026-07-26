@@ -12,7 +12,7 @@
 #include "search_quality_metrics.h"
 #include "test_env.h"
 #include "v2_quality_fixture.h"
-#include "yappo_http_v2.h"
+#include "server/yappo_http_v2.h"
 
 static const char *const document_ids[9] = {
   "doc-red-0", "doc-red-1", "doc-red-2", "doc-green-0", "doc-green-1",
