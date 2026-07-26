@@ -18,6 +18,8 @@
 | Yappod2サーバーを起動・監視します | [運用](operations.md) |
 | Prometheusで監視します | [監視とメトリクス](observability.md) |
 | ビルド、テスト、品質確認を行います | [開発](development.md) |
+| 内部構造と変更箇所を把握します | [アーキテクチャ](architecture.md) |
+| 会話、Issue、PRでタスクを運用します | [タスク票と開発作業の運用](task-workflow.md) |
 
 サンプルの選び方は[サンプル一覧](../examples/README.md)、サンプル固有の問題は
 [サンプルの問題解決](../examples/troubleshooting.md)を参照してください。
