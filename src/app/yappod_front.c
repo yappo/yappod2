@@ -70,8 +70,9 @@ static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_METRICS metrics;
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s (--config CONFIG | --index INDEX_DIR --core-host HOST [--port PORT] "
-          "[--core-port PORT])\n"
+          "Usage: %s [--foreground] (--config CONFIG | --index INDEX_DIR --core-host HOST "
+          "[--port PORT] [--core-port PORT])\n"
+          "  --foreground       Run without forking or redirecting output\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --core-host HOST   yappod_core host (required)\n"
           "  --config CONFIG    Shared application TOML\n"
@@ -616,13 +617,15 @@ int main(int argc, char **argv) {
   pthread_t threads[FRONT_WORKERS];
   worker_t workers[FRONT_WORKERS];
   size_t started = 0U;
-  int have_port = 0, have_core_port = 0;
+  int foreground = 0, have_port = 0, have_core_port = 0;
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0 ||
+    if (strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0 ||
         strcmp(argv[i], "--config") == 0) {
       const char **target = strcmp(argv[i], "--index") == 0 ? &index_dir :
                             strcmp(argv[i], "--core-host") == 0 ? &core_host : &config_path;
@@ -658,7 +661,7 @@ int main(int argc, char **argv) {
     listen_host = application.front_host;
     port = application.front_port;
     runtime_policy = application.runtime_policy;
-    if (set_run_paths(application.run_directory) != 0) {
+    if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
     }
@@ -684,10 +687,12 @@ int main(int argc, char **argv) {
     YAP_V2_runtime_limiter_close(&runtime_limiter);
     return EXIT_FAILURE;
   }
-  daemon_status = daemonize_process();
-  if (daemon_status != 0) {
-    (void)close(listen_socket);
-    return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (!foreground) {
+    daemon_status = daemonize_process();
+    if (daemon_status != 0) {
+      (void)close(listen_socket);
+      return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
   }
   if (install_signal_handlers() != 0) return EXIT_FAILURE;
   for (started = 0U; started < FRONT_WORKERS; started++) {

@@ -39,7 +39,8 @@ static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
+          "Usage: %s [--foreground] (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
+          "  --foreground       Run without forking or redirecting output\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --config CONFIG    Shared application TOML\n"
           "  --port PORT        Internal HTTP port (default: %d)\n",
@@ -325,14 +326,16 @@ int main(int argc, char **argv) {
   pthread_t threads[CORE_WORKERS], reloader_thread;
   worker_t workers[CORE_WORKERS];
   size_t started = 0U;
-  int reloader_started = 0;
+  int foreground = 0, reloader_started = 0;
   YAP_V2_http_runtime_init(&http_runtime);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--config") == 0) {
+    if (strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--config") == 0) {
       if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
       if (strcmp(argv[i - 1], "--index") == 0) index_dir = argv[i]; else config_path = argv[i];
     } else if (strcmp(argv[i], "--port") == 0) {
@@ -361,7 +364,7 @@ int main(int argc, char **argv) {
     listen_host = application.core_host;
     port = application.core_port;
     runtime_policy = application.runtime_policy;
-    if (set_run_paths(application.run_directory) != 0) {
+    if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
     }
@@ -385,11 +388,13 @@ int main(int argc, char **argv) {
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
-  daemon_status = daemonize_process();
-  if (daemon_status != 0) {
-    (void)close(listen_socket);
-    YAP_V2_http_runtime_close(&http_runtime);
-    return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (!foreground) {
+    daemon_status = daemonize_process();
+    if (daemon_status != 0) {
+      (void)close(listen_socket);
+      YAP_V2_http_runtime_close(&http_runtime);
+      return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
   }
   if (install_signal_handlers() != 0) {
     (void)close(listen_socket); listen_socket = -1;

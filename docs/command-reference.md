@@ -337,12 +337,13 @@ yappo_compact (--config CONFIG | --index INDEX_DIR)
 ### 書式
 
 ```text
-yappod_core --config CONFIG
-yappod_core --index INDEX_DIR [--port PORT]
+yappod_core [--foreground] --config CONFIG
+yappod_core [--foreground] --index INDEX_DIR [--port PORT]
 ```
 
 | オプション | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
+| `--foreground` | フラグ | 指定するか省略 | 省略 | 任意 | `fork`、PIDファイル作成、標準出力と標準エラーのリダイレクトを行わず、呼び出したプロセスのまま実行します。 |
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | `--index`形式を使わない場合に必須。ほかのオプションとは併用不可 | 索引、coreのホスト名とポート、実行時ファイルのディレクトリ、処理上限、トークンを読みます。通常はこちらを使用します。 |
 | `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | `--config`を使わない場合に必須 | 索引を直接指定します。実行時設定はデフォルトになります。 |
 | `--port PORT` | 整数 | 1〜65535 | `18401` | 任意。`--index`形式でだけ指定可能 | frontから検索や更新の依頼を受ける内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
@@ -351,13 +352,16 @@ yappod_core --index INDEX_DIR [--port PORT]
 
 ### 起動とプロセス
 
-coreは索引を開いて検証し、ポートを確保してからforkします。親プロセスは成功状態で終了し、子プロセスが処理を継続します。`--config`形式では次を`daemon.run_directory`へ保存します。
+`--foreground`を省略すると、coreは索引を開いて検証し、ポートを確保してからforkします。親プロセスは成功状態で終了し、子プロセスが処理を継続します。`--config`形式では次を`daemon.run_directory`へ保存します。
 
 - `core.pid`: 子プロセスのPIDです。正常終了時に削除します。
 - `core.log`: 子プロセスの標準出力を追記します。
 - `core.error`: 子プロセスの標準エラー出力を追記します。
 
 `--index`形式ではこれらをコマンド実行時のディレクトリの`core.pid`、`core.log`、`core.error`へ作ります。通常は場所が明確な`--config`形式を使用してください。
+
+`--foreground`を指定するとforkせず、PIDファイルとログファイルを作りません。標準出力と標準エラーは
+呼び出し元から継承し、`SIGTERM`または`SIGINT`を受けるまでコマンドは終了しません。
 
 coreは16本のワーカースレッドで内部接続を受け、1秒ごとに新しいマニフェストを確認します。公開済み世代を検出すると、検証に成功したスナップショットへ切り替えます。`SIGTERM`または`SIGINT`で待ち受けを閉じて終了します。
 
@@ -368,20 +372,21 @@ coreは内部HTTP/1.1を受理しますが、外部クライアント向けHTTP�
 ### 書式
 
 ```text
-yappod_front --config CONFIG
-yappod_front --index INDEX_DIR --core-host HOST
+yappod_front [--foreground] --config CONFIG
+yappod_front [--foreground] --index INDEX_DIR --core-host HOST
              [--port PORT] [--core-port PORT]
 ```
 
 | オプション | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
+| `--foreground` | フラグ | 指定するか省略 | 省略 | 任意 | `fork`、PIDファイル作成、標準出力と標準エラーのリダイレクトを行わず、呼び出したプロセスのまま実行します。 |
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | 直接指定形式を使わない場合に必須。ほかのオプションとは併用不可 | 索引、frontのホスト名とポート、core接続先、実行時ファイルのディレクトリ、処理上限、書き込み用トークンを読みます。通常はこちらを使用します。 |
 | `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | 直接指定形式では必須 | front自身が準備完了とmetricsを判定する索引です。coreも同じ索引を開いている必要があります。 |
 | `--core-host HOST` | 文字列 | 空でないホスト名またはIPアドレス | なし | 直接指定形式では必須 | coreへ接続するホストです。 |
 | `--port PORT` | 整数 | 1〜65535 | `18400` | 任意。直接指定形式でだけ指定可能 | frontがHTTPリクエストを受け付けるポートです。 |
 | `--core-port PORT` | 整数 | 1〜65535 | `18401` | 任意。直接指定形式でだけ指定可能 | frontからcoreへ検索や更新を依頼する専用ポートです。 |
 
-frontは索引に少なくとも一つのセグメントがあることを確認し、HTTPポートを確保してからforkします。`--config`形式では`front.pid`、`front.log`、`front.error`を`daemon.run_directory`へ保存します。直接指定形式では実行時のディレクトリへ保存します。
+`--foreground`を省略すると、frontは索引に少なくとも一つのセグメントがあることを確認し、HTTPポートを確保してからforkします。`--config`形式では`front.pid`、`front.log`、`front.error`を`daemon.run_directory`へ保存します。直接指定形式では実行時のディレクトリへ保存します。`--foreground`を指定するとforkせず、PIDファイルとログファイルを作りません。標準出力と標準エラーは呼び出し元から継承します。
 
 frontは16本のワーカースレッドでHTTP/1.xリクエストを処理します。検索、RAG向けの本文取得、文書更新はcoreへ依頼し、
 結果をHTTPレスポンスへ変換します。文書を本文断片へ分割する`POST /v2/passages:prepare`、ヘルスチェック、メトリクスは
