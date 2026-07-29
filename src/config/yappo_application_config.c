@@ -192,7 +192,7 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   static const char *const vector_keys[] = {"enabled", "model_id", "dimensions", "metric", NULL};
   static const char *const metadata_keys[] = {"filterable_fields", NULL};
   static const char *const daemon_keys[] = {"run_directory", "core_host", "core_port",
-    "front_host", "front_port", "max_inflight", "max_inflight_bytes",
+    "front_host", "front_port", "worker_threads", "max_inflight", "max_inflight_bytes",
     "request_timeout_ms", "write_token", NULL};
   FILE *file;
   toml_table_t *root = NULL, *index, *tokenizer, *chunking, *vector, *metadata, *daemon;
@@ -295,6 +295,11 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   status = read_uint32(daemon, "front_port", &value, 1U, 65535U, 1, error, error_size);
   if (status != YAP_V2_OK) goto done;
   config->front_port = (uint16_t)value;
+  value = (uint32_t)config->runtime_policy.worker_threads;
+  status = read_uint32(daemon, "worker_threads", &value, 1U, YAP_V2_MAX_WORKER_THREADS,
+                       0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.worker_threads = value;
   value = (uint32_t)config->runtime_policy.max_inflight;
   status = read_uint32(daemon, "max_inflight", &value, 1U, 1024U, 0, error, error_size);
   if (status != YAP_V2_OK) goto done;

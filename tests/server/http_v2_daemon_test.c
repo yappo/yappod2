@@ -93,6 +93,15 @@ static int teardown_tiny_memory_limit(void **state) {
   return teardown(state);
 }
 
+static int setup_single_worker(void **state) {
+  policy_source = "[daemon]\nworker_threads=1\n";
+  return setup(state);
+}
+
+static int teardown_single_worker(void **state) {
+  return teardown(state);
+}
+
 static char *post(context_t *ctx, const char *endpoint, const char *body) {
   char request[4096]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",endpoint,strlen(body),body)>0);
@@ -227,6 +236,15 @@ static void test_memory_limit_rejects_before_body_allocation(void **state) {
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
+static void test_configured_single_worker_serves_requests(void **state) {
+  context_t *ctx = *state;
+  char *response = get(ctx, "/health/ready");
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "\"ready\":true"));
+  free(response);
+  assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
 static pid_t launch_foreground(char *const argv[], const char *cwd) {
   pid_t pid = fork();
   assert_true(pid >= 0);
@@ -309,5 +327,6 @@ int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
+  cmocka_unit_test_setup_teardown(test_configured_single_worker_serves_requests,setup_single_worker,teardown_single_worker),
   cmocka_unit_test_setup_teardown(test_foreground_process_lifecycle,setup_index_only,teardown_index_only)
 };return cmocka_run_group_tests(tests,NULL,NULL);}

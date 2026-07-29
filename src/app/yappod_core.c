@@ -20,8 +20,6 @@
 #include <unistd.h>
 
 #define DEFAULT_CORE_PORT 18401
-#define CORE_WORKERS 16U
-
 typedef struct {
   size_t id;
   int listen_socket;
@@ -329,9 +327,9 @@ int main(int argc, char **argv) {
   int have_port = 0;
   sigset_t shutdown_signals;
   YAP_V2_HTTP_RUNTIME http_runtime;
-  pthread_t threads[CORE_WORKERS], reloader_thread;
-  worker_t workers[CORE_WORKERS];
-  size_t started = 0U;
+  pthread_t *threads = NULL, reloader_thread;
+  worker_t *workers = NULL;
+  size_t started = 0U, worker_threads;
   int foreground = 0, reloader_started = 0;
   YAP_V2_http_runtime_init(&http_runtime);
   for (i = 1; i < argc; i++) {
@@ -381,9 +379,19 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Invalid v2 index\n");
     return EXIT_FAILURE;
   }
+  worker_threads = runtime_policy.worker_threads;
+  threads = calloc(worker_threads, sizeof(*threads));
+  workers = calloc(worker_threads, sizeof(*workers));
+  if (threads == NULL || workers == NULL) {
+    fputs("Cannot allocate worker state\n", stderr);
+    free(threads); free(workers);
+    YAP_V2_http_runtime_close(&http_runtime);
+    return EXIT_FAILURE;
+  }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
   if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
+    free(threads); free(workers);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -391,6 +399,7 @@ int main(int argc, char **argv) {
   if (listen_socket < 0) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_runtime_limiter_close(&runtime_limiter);
+    free(threads); free(workers);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -398,6 +407,7 @@ int main(int argc, char **argv) {
     daemon_status = daemonize_process();
     if (daemon_status != 0) {
       (void)close(listen_socket);
+      free(threads); free(workers);
       YAP_V2_http_runtime_close(&http_runtime);
       return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -405,6 +415,7 @@ int main(int argc, char **argv) {
   if (prepare_signal_wait(&shutdown_signals) != 0) {
     (void)close(listen_socket); listen_socket = -1;
     YAP_V2_runtime_limiter_close(&runtime_limiter);
+    free(threads); free(workers);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -412,14 +423,14 @@ int main(int argc, char **argv) {
     reloader_started = 1;
   else
     request_shutdown(SIGTERM);
-  for (started = 0U; started < CORE_WORKERS; started++) {
+  for (started = 0U; started < worker_threads; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
     workers[started].index_dir = index_dir;
     workers[started].http_runtime = &http_runtime;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != CORE_WORKERS || !reloader_started) {
+  if (started != worker_threads || !reloader_started) {
     request_shutdown(SIGTERM);
   } else {
     int signal_number;
@@ -430,6 +441,7 @@ int main(int argc, char **argv) {
   if (reloader_started) (void)pthread_join(reloader_thread, NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
+  free(threads); free(workers);
   YAP_V2_http_runtime_close(&http_runtime);
-  return started == CORE_WORKERS && reloader_started ? EXIT_SUCCESS : EXIT_FAILURE;
+  return started == worker_threads && reloader_started ? EXIT_SUCCESS : EXIT_FAILURE;
 }

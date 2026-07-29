@@ -19,7 +19,8 @@ static void set_error(char *error, size_t capacity, const char *message) {
 
 void YAP_V2_runtime_policy_init(YAP_V2_RUNTIME_POLICY *policy) {
   if (policy == NULL) return;
-  memset(policy, 0, sizeof(*policy)); policy->max_inflight = YAP_V2_DEFAULT_MAX_INFLIGHT;
+  memset(policy, 0, sizeof(*policy)); policy->worker_threads = YAP_V2_DEFAULT_WORKER_THREADS;
+  policy->max_inflight = YAP_V2_DEFAULT_MAX_INFLIGHT;
   policy->max_inflight_bytes = YAP_V2_DEFAULT_MAX_INFLIGHT_BYTES;
   policy->request_timeout_ms = YAP_V2_DEFAULT_TIMEOUT_MS;
 }
@@ -66,7 +67,10 @@ int YAP_V2_runtime_policy_load_config(YAP_V2_RUNTIME_POLICY *policy, const char 
   }
   daemon = toml_table_in(root, "daemon");
   if (daemon == NULL) { toml_free(root); return YAP_V2_OK; }
-  status = read_size(daemon, "max_inflight", 1024U, &policy->max_inflight,
+  status = read_size(daemon, "worker_threads", YAP_V2_MAX_WORKER_THREADS,
+                     &policy->worker_threads, error, error_size);
+  if (status == YAP_V2_OK)
+    status = read_size(daemon, "max_inflight", 1024U, &policy->max_inflight,
                      error, error_size);
   if (status == YAP_V2_OK)
     status = read_size(daemon, "max_inflight_bytes", 1024U * 1024U * 1024U,
