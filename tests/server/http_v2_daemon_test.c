@@ -2,9 +2,11 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <cmocka.h>
@@ -46,6 +48,32 @@ static void make_index(context_t *ctx) {
 
 static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));FILE *file;const char *config=NULL;if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(policy_source!=NULL){if(ytest_path_join(ctx->policy,sizeof(ctx->policy),ctx->env.tmp_root,"runtime.toml")!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}file=fopen(ctx->policy,"wb");if(file==NULL){ytest_env_destroy(&ctx->env);free(ctx);return -1;}if(fputs(policy_source,file)<0||fclose(file)!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}config=ctx->policy;}if(ytest_daemon_stack_start_with_config(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run,config)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
 static int teardown(void **state){context_t *ctx=*state;if(ctx){ytest_daemon_stack_stop(&ctx->stack);ytest_env_destroy(&ctx->env);free(ctx);}policy_source=NULL;return 0;}
+
+static int setup_index_only(void **state) {
+  context_t *ctx = calloc(1, sizeof(*ctx));
+  if (ctx == NULL) return -1;
+  ytest_daemon_stack_init(&ctx->stack);
+  if (ytest_env_init(&ctx->env) != 0 ||
+      ytest_path_join(ctx->run, sizeof(ctx->run), ctx->env.tmp_root, "foreground") != 0 ||
+      ytest_mkdir_p(ctx->run, 0700) != 0) {
+    ytest_env_destroy(&ctx->env);
+    free(ctx);
+    return -1;
+  }
+  make_index(ctx);
+  *state = ctx;
+  return 0;
+}
+
+static int teardown_index_only(void **state) {
+  context_t *ctx = *state;
+  if (ctx != NULL) {
+    ytest_daemon_stack_stop(&ctx->stack);
+    ytest_env_destroy(&ctx->env);
+    free(ctx);
+  }
+  return 0;
+}
 
 static int setup_write_token(void **state) {
   policy_source = "[daemon]\nwrite_token='0123456789abcdef-secure'\n";
@@ -199,10 +227,87 @@ static void test_memory_limit_rejects_before_body_allocation(void **state) {
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
+static pid_t launch_foreground(char *const argv[], const char *cwd) {
+  pid_t pid = fork();
+  assert_true(pid >= 0);
+  if (pid == 0) {
+    if (chdir(cwd) != 0) _exit(126);
+    execv(argv[0], argv);
+    _exit(127);
+  }
+  return pid;
+}
+
+static int stop_foreground(pid_t pid) {
+  int status = 0, i;
+  if (pid <= 0 || kill(pid, SIGTERM) != 0) return -1;
+  for (i = 0; i < 150; i++) {
+    pid_t waited = waitpid(pid, &status, WNOHANG);
+    if (waited == pid)
+      return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+    if (waited < 0) return -1;
+    usleep(20000);
+  }
+  (void)kill(pid, SIGKILL);
+  (void)waitpid(pid, &status, 0);
+  return -1;
+}
+
+static void test_foreground_process_lifecycle(void **state) {
+  context_t *ctx = *state;
+  char core[PATH_MAX], front[PATH_MAX], core_port[16], front_port[16], path[PATH_MAX];
+  char *core_argv[7], *front_argv[11], *response = NULL;
+
+  assert_int_equal(ytest_pick_unused_port(&ctx->stack.core_port), 0);
+  assert_int_equal(ytest_pick_unused_port(&ctx->stack.front_port), 0);
+  assert_true(ctx->stack.core_port != ctx->stack.front_port);
+  assert_int_equal(ytest_path_join(core, sizeof(core), ctx->env.build_dir, "yappod_core"), 0);
+  assert_int_equal(ytest_path_join(front, sizeof(front), ctx->env.build_dir, "yappod_front"), 0);
+  assert_true(snprintf(core_port, sizeof(core_port), "%d", ctx->stack.core_port) > 0);
+  assert_true(snprintf(front_port, sizeof(front_port), "%d", ctx->stack.front_port) > 0);
+
+  core_argv[0] = core; core_argv[1] = "--foreground"; core_argv[2] = "--index";
+  core_argv[3] = ctx->env.tmp_root; core_argv[4] = "--port"; core_argv[5] = core_port;
+  core_argv[6] = NULL;
+  ctx->stack.core_pid = launch_foreground(core_argv, ctx->run);
+  assert_int_equal(ytest_wait_for_port(ctx->stack.core_port, 50, 100), 0);
+
+  front_argv[0] = front; front_argv[1] = "--foreground"; front_argv[2] = "--index";
+  front_argv[3] = ctx->env.tmp_root; front_argv[4] = "--core-host";
+  front_argv[5] = "127.0.0.1"; front_argv[6] = "--port"; front_argv[7] = front_port;
+  front_argv[8] = "--core-port"; front_argv[9] = core_port; front_argv[10] = NULL;
+  ctx->stack.front_pid = launch_foreground(front_argv, ctx->run);
+  assert_int_equal(ytest_wait_for_port(ctx->stack.front_port, 50, 100), 0);
+
+  response = get(ctx, "/health/ready");
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "\"ready\":true"));
+  free(response);
+
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "core.pid"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "front.pid"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "core.log"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "front.log"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "core.error"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->run, "front.error"), 0);
+  assert_int_equal(access(path, F_OK), -1);
+
+  assert_int_equal(stop_foreground(ctx->stack.front_pid), 0);
+  ctx->stack.front_pid = 0;
+  assert_int_equal(stop_foreground(ctx->stack.core_pid), 0);
+  ctx->stack.core_pid = 0;
+}
+
 int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),
   cmocka_unit_test_setup_teardown(test_liveness_survives_readiness_failure,setup,teardown),
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
-  cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit)
+  cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
+  cmocka_unit_test_setup_teardown(test_foreground_process_lifecycle,setup_index_only,teardown_index_only)
 };return cmocka_run_group_tests(tests,NULL,NULL);}

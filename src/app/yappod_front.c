@@ -70,8 +70,9 @@ static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_METRICS metrics;
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s (--config CONFIG | --index INDEX_DIR --core-host HOST [--port PORT] "
-          "[--core-port PORT])\n"
+          "Usage: %s [--foreground] (--config CONFIG | --index INDEX_DIR --core-host HOST "
+          "[--port PORT] [--core-port PORT])\n"
+          "  --foreground       Run without forking or redirecting output\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --core-host HOST   yappod_core host (required)\n"
           "  --config CONFIG    Shared application TOML\n"
@@ -93,18 +94,23 @@ static int parse_port(const char *text, int *port) {
 static void request_shutdown(int signal_number) {
   (void)signal_number;
   shutdown_requested = 1;
-  if (listen_socket >= 0) (void)close(listen_socket);
+  if (listen_socket >= 0) {
+    (void)shutdown(listen_socket, SHUT_RDWR);
+    (void)close(listen_socket);
+  }
   listen_socket = -1;
 }
 
-static int install_signal_handlers(void) {
+static int prepare_signal_wait(sigset_t *shutdown_signals) {
   struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = request_shutdown;
-  sigemptyset(&action.sa_mask);
-  if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0)
+  if (sigemptyset(shutdown_signals) != 0 ||
+      sigaddset(shutdown_signals, SIGTERM) != 0 ||
+      sigaddset(shutdown_signals, SIGINT) != 0 ||
+      pthread_sigmask(SIG_BLOCK, shutdown_signals, NULL) != 0)
     return -1;
+  memset(&action, 0, sizeof(action));
   action.sa_handler = SIG_IGN;
+  sigemptyset(&action.sa_mask);
   return sigaction(SIGPIPE, &action, NULL);
 }
 
@@ -613,16 +619,19 @@ int main(int argc, char **argv) {
   int port = DEFAULT_FRONT_PORT, core_port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0}, probe_error[256] = {0};
   YAP_V2_OPERATIONAL_STATE state;
+  sigset_t shutdown_signals;
   pthread_t threads[FRONT_WORKERS];
   worker_t workers[FRONT_WORKERS];
   size_t started = 0U;
-  int have_port = 0, have_core_port = 0;
+  int foreground = 0, have_port = 0, have_core_port = 0;
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0 ||
+    if (strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--core-host") == 0 ||
         strcmp(argv[i], "--config") == 0) {
       const char **target = strcmp(argv[i], "--index") == 0 ? &index_dir :
                             strcmp(argv[i], "--core-host") == 0 ? &core_host : &config_path;
@@ -658,7 +667,7 @@ int main(int argc, char **argv) {
     listen_host = application.front_host;
     port = application.front_port;
     runtime_policy = application.runtime_policy;
-    if (set_run_paths(application.run_directory) != 0) {
+    if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
     }
@@ -684,12 +693,14 @@ int main(int argc, char **argv) {
     YAP_V2_runtime_limiter_close(&runtime_limiter);
     return EXIT_FAILURE;
   }
-  daemon_status = daemonize_process();
-  if (daemon_status != 0) {
-    (void)close(listen_socket);
-    return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (!foreground) {
+    daemon_status = daemonize_process();
+    if (daemon_status != 0) {
+      (void)close(listen_socket);
+      return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
   }
-  if (install_signal_handlers() != 0) return EXIT_FAILURE;
+  if (prepare_signal_wait(&shutdown_signals) != 0) return EXIT_FAILURE;
   for (started = 0U; started < FRONT_WORKERS; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
@@ -698,7 +709,13 @@ int main(int argc, char **argv) {
     workers[started].core_port = core_port;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != FRONT_WORKERS) request_shutdown(SIGTERM);
+  if (started != FRONT_WORKERS) {
+    request_shutdown(SIGTERM);
+  } else {
+    int signal_number;
+    if (sigwait(&shutdown_signals, &signal_number) != 0) signal_number = SIGTERM;
+    request_shutdown(signal_number);
+  }
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_metrics_close(&metrics);

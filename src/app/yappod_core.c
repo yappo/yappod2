@@ -39,7 +39,8 @@ static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
-          "Usage: %s (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
+          "Usage: %s [--foreground] (--config CONFIG | --index INDEX_DIR [--port PORT])\n"
+          "  --foreground       Run without forking or redirecting output\n"
           "  --index INDEX_DIR  Valid v2 index snapshot (required)\n"
           "  --config CONFIG    Shared application TOML\n"
           "  --port PORT        Internal HTTP port (default: %d)\n",
@@ -59,18 +60,23 @@ static int parse_port(const char *text, int *port) {
 static void request_shutdown(int signal_number) {
   (void)signal_number;
   shutdown_requested = 1;
-  if (listen_socket >= 0) (void)close(listen_socket);
+  if (listen_socket >= 0) {
+    (void)shutdown(listen_socket, SHUT_RDWR);
+    (void)close(listen_socket);
+  }
   listen_socket = -1;
 }
 
-static int install_signal_handlers(void) {
+static int prepare_signal_wait(sigset_t *shutdown_signals) {
   struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = request_shutdown;
-  sigemptyset(&action.sa_mask);
-  if (sigaction(SIGTERM, &action, NULL) != 0 || sigaction(SIGINT, &action, NULL) != 0)
+  if (sigemptyset(shutdown_signals) != 0 ||
+      sigaddset(shutdown_signals, SIGTERM) != 0 ||
+      sigaddset(shutdown_signals, SIGINT) != 0 ||
+      pthread_sigmask(SIG_BLOCK, shutdown_signals, NULL) != 0)
     return -1;
+  memset(&action, 0, sizeof(action));
   action.sa_handler = SIG_IGN;
+  sigemptyset(&action.sa_mask);
   return sigaction(SIGPIPE, &action, NULL);
 }
 
@@ -321,18 +327,21 @@ int main(int argc, char **argv) {
   int port = DEFAULT_CORE_PORT, i, daemon_status;
   char policy_error[256] = {0};
   int have_port = 0;
+  sigset_t shutdown_signals;
   YAP_V2_HTTP_RUNTIME http_runtime;
   pthread_t threads[CORE_WORKERS], reloader_thread;
   worker_t workers[CORE_WORKERS];
   size_t started = 0U;
-  int reloader_started = 0;
+  int foreground = 0, reloader_started = 0;
   YAP_V2_http_runtime_init(&http_runtime);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
       return EXIT_SUCCESS;
     }
-    if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--config") == 0) {
+    if (strcmp(argv[i], "--foreground") == 0) {
+      foreground = 1;
+    } else if (strcmp(argv[i], "--index") == 0 || strcmp(argv[i], "--config") == 0) {
       if (++i >= argc) { usage(stderr, argv[0]); return EXIT_FAILURE; }
       if (strcmp(argv[i - 1], "--index") == 0) index_dir = argv[i]; else config_path = argv[i];
     } else if (strcmp(argv[i], "--port") == 0) {
@@ -361,7 +370,7 @@ int main(int argc, char **argv) {
     listen_host = application.core_host;
     port = application.core_port;
     runtime_policy = application.runtime_policy;
-    if (set_run_paths(application.run_directory) != 0) {
+    if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
     }
@@ -385,13 +394,15 @@ int main(int argc, char **argv) {
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
-  daemon_status = daemonize_process();
-  if (daemon_status != 0) {
-    (void)close(listen_socket);
-    YAP_V2_http_runtime_close(&http_runtime);
-    return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (!foreground) {
+    daemon_status = daemonize_process();
+    if (daemon_status != 0) {
+      (void)close(listen_socket);
+      YAP_V2_http_runtime_close(&http_runtime);
+      return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
   }
-  if (install_signal_handlers() != 0) {
+  if (prepare_signal_wait(&shutdown_signals) != 0) {
     (void)close(listen_socket); listen_socket = -1;
     YAP_V2_runtime_limiter_close(&runtime_limiter);
     YAP_V2_http_runtime_close(&http_runtime);
@@ -408,7 +419,13 @@ int main(int argc, char **argv) {
     workers[started].http_runtime = &http_runtime;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != CORE_WORKERS) request_shutdown(SIGTERM);
+  if (started != CORE_WORKERS || !reloader_started) {
+    request_shutdown(SIGTERM);
+  } else {
+    int signal_number;
+    if (sigwait(&shutdown_signals, &signal_number) != 0) signal_number = SIGTERM;
+    request_shutdown(signal_number);
+  }
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
   if (reloader_started) (void)pthread_join(reloader_thread, NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
