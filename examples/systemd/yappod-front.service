@@ -1,0 +1,22 @@
+[Unit]
+Description=Yappod2 front service
+Documentation=https://github.com/yappo/yappod2/blob/main/docs/operations.md
+Wants=yappod-core.service
+After=yappod-core.service
+
+[Service]
+Type=exec
+User=yappod
+Group=yappod
+ExecStart=/usr/local/bin/yappod_front --foreground --config /etc/yappod/application.toml
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

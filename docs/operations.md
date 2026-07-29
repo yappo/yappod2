@@ -60,6 +60,9 @@ coreを先に起動し、準備完了を確認してからfrontを起動しま�
 終了には`SIGTERM`または`SIGINT`を送ります。coreを先に起動して準備し、frontを起動する順序は
 バックグラウンド実行と同じです。
 
+systemdで両プロセスを監視するunitファイルと配置手順は、
+[systemd向け起動例](../examples/systemd/README.md)にあります。
+
 ## 起動確認
 
 ```sh

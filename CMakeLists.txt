@@ -20,6 +20,13 @@ if(Python3_Interpreter_FOUND)
             -s ${CMAKE_CURRENT_SOURCE_DIR}/examples/wikipedia-search/tests
             -p test_*.py
   )
+  add_test(
+    NAME systemd_examples
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/acceptance/systemd_examples_test.py
+            ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  set_tests_properties(systemd_examples PROPERTIES LABELS standalone)
 endif()
 
 option(YAPPOD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)

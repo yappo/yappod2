@@ -27,6 +27,9 @@ cmake --build build -j
 | [Wikipedia](wikipedia-search/README.md) | Wikimedia Action APIまたは日本語Wikipediaダンプ | 取得、チェックサム確認、WikiExtractor出力の変換、埋め込み、索引作成 | 正式なNDJSON、本文断片、埋め込み付きNDJSON、索引 | データ取得にはネットワーク、ベクトルを使う場合は埋め込みAPIが必要です。 |
 | [search-web](search-web/README.md) | 作成済みのYappod2索引 | core、front、search-webサーバー、Web UIの起動、検索、RAG向け取得、文書登録 | PID、ログ、Web用索引作成成果物、任意のAPI利用量ログ | ベクトル検索には埋め込みAPI、回答生成にはLLMが必要です。 |
 
+作成済みの索引をLinuxサーバーで継続運用する場合は、
+[systemd向け起動例](systemd/README.md)も参照してください。
+
 ### local-filesを選ぶ場合
 
 自分の文書を検索したい場合に使います。入力元のファイルは変更せず、設定した出力ディレクトリへ再生成可能な成果物を作ります。抽出失敗をファイル単位で記録し、大きな入力を複数のNDJSONへ分け、途中から再開するための情報も保存します。
