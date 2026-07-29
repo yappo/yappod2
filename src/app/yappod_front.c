@@ -21,7 +21,6 @@
 
 #define DEFAULT_FRONT_PORT 18400
 #define DEFAULT_CORE_PORT 18401
-#define FRONT_WORKERS 16U
 #define MAX_HTTP_LINE_BYTES 8192U
 #define MAX_HTTP_HEADER_BYTES 65536U
 
@@ -620,9 +619,9 @@ int main(int argc, char **argv) {
   char policy_error[256] = {0}, probe_error[256] = {0};
   YAP_V2_OPERATIONAL_STATE state;
   sigset_t shutdown_signals;
-  pthread_t threads[FRONT_WORKERS];
-  worker_t workers[FRONT_WORKERS];
-  size_t started = 0U;
+  pthread_t *threads = NULL;
+  worker_t *workers = NULL;
+  size_t started = 0U, worker_threads;
   int foreground = 0, have_port = 0, have_core_port = 0;
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -680,10 +679,19 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Invalid v2 index: %s\n", probe_error);
     return EXIT_FAILURE;
   }
+  worker_threads = runtime_policy.worker_threads;
+  threads = calloc(worker_threads, sizeof(*threads));
+  workers = calloc(worker_threads, sizeof(*workers));
+  if (threads == NULL || workers == NULL) {
+    fputs("Cannot allocate worker state\n", stderr);
+    free(threads); free(workers);
+    return EXIT_FAILURE;
+  }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
   if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
       YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
+    free(threads); free(workers);
     return EXIT_FAILURE;
   }
   listen_socket = create_listener(listen_host, port);
@@ -691,17 +699,25 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_metrics_close(&metrics);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
+    free(threads); free(workers);
     return EXIT_FAILURE;
   }
   if (!foreground) {
     daemon_status = daemonize_process();
     if (daemon_status != 0) {
       (void)close(listen_socket);
+      free(threads); free(workers);
       return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
   }
-  if (prepare_signal_wait(&shutdown_signals) != 0) return EXIT_FAILURE;
-  for (started = 0U; started < FRONT_WORKERS; started++) {
+  if (prepare_signal_wait(&shutdown_signals) != 0) {
+    (void)close(listen_socket); listen_socket = -1;
+    YAP_V2_metrics_close(&metrics);
+    YAP_V2_runtime_limiter_close(&runtime_limiter);
+    free(threads); free(workers);
+    return EXIT_FAILURE;
+  }
+  for (started = 0U; started < worker_threads; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
     workers[started].index_dir = index_dir;
@@ -709,7 +725,7 @@ int main(int argc, char **argv) {
     workers[started].core_port = core_port;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != FRONT_WORKERS) {
+  if (started != worker_threads) {
     request_shutdown(SIGTERM);
   } else {
     int signal_number;
@@ -720,5 +736,6 @@ int main(int argc, char **argv) {
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_metrics_close(&metrics);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
-  return started == FRONT_WORKERS ? EXIT_SUCCESS : EXIT_FAILURE;
+  free(threads); free(workers);
+  return started == worker_threads ? EXIT_SUCCESS : EXIT_FAILURE;
 }

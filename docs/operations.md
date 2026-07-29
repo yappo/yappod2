@@ -100,15 +100,20 @@ Yappod2サーバーはログファイルを追記モードで開きます。フ�
 
 ## 同時処理とタイムアウト
 
-coreとfrontはそれぞれ16個のワーカースレッドを作ります。設定でワーカー数を変更することはできません。`[daemon]`の制限は次の意味です。
+coreとfrontは、`[daemon].worker_threads`で指定した数のワーカースレッドをそれぞれ作ります。
+デフォルトは16です。両プロセスへ同じ値を適用し、接続を受け付けた一つのworkerが一つのHTTP要求を
+処理します。`[daemon]`の関連する設定は次の意味です。
 
 | キー | 制限する対象 |
 |---|---|
+| `worker_threads` | coreとfrontがそれぞれ作成するワーカースレッド数です。 |
 | `max_inflight` | 同時に受理する検索、取得、更新の件数です。 |
 | `max_inflight_bytes` | 受理中のリクエスト本文の合計バイト数です。 |
 | `request_timeout_ms` | frontのクライアントソケット、frontのlibcurlによるcoreへの接続と要求全体、coreが受理したソケットの読み書き期限です。 |
 
-上限を超えた処理は`503 overloaded`になります。要求本文1件の絶対上限は公開API、内部HTTPともに1 MiBです。
+実際に同時処理できる要求数は、ワーカースレッド数と`max_inflight`の小さい方を超えません。
+`max_inflight`または`max_inflight_bytes`を超えた処理は`503 overloaded`になります。
+要求本文1件の絶対上限は公開API、内部HTTPともに1 MiBです。
 coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
 
 タイムアウト値を増やす前に、coreへの接続、索引の大きさ、同時実行数、クライアント切断、ディスクI/Oを確認します。search-webの`yappod_timeout_ms`、起動待ちの`startup_timeout_ms`、LLMや埋め込みのタイムアウトは別の待ち時間です。

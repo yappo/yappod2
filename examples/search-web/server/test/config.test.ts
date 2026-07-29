@@ -23,10 +23,24 @@ afterEach(async () => {
 
 describe("web config", () => {
   it("loads the Web startup timeout independently from the yappod request timeout", async () => {
-    const path = await configFile("[web]\nyappod_timeout_ms=5000\nstartup_timeout_ms=30000\n");
+    const path = await configFile(
+      "[daemon]\nworker_threads=3\n[web]\nyappod_timeout_ms=5000\nstartup_timeout_ms=30000\n",
+    );
     await expect(loadWebConfig(path)).resolves.toMatchObject({
+      daemon: { workerThreads: 3 },
       web: { yappodTimeoutMs: 5000, startupTimeoutMs: 30000 },
     });
+  });
+
+  it("defaults and validates the daemon worker count", async () => {
+    const defaults = await configFile("[daemon]\n");
+    await expect(loadWebConfig(defaults)).resolves.toMatchObject({
+      daemon: { workerThreads: 16 },
+    });
+    const invalid = await configFile("[daemon]\nworker_threads=1025\n");
+    await expect(loadWebConfig(invalid)).rejects.toThrow(
+      "daemon.worker_threads must be an integer from 1 to 1024",
+    );
   });
 
   it("requires the shared config file", async () => {

@@ -363,7 +363,7 @@ yappod_core [--foreground] --index INDEX_DIR [--port PORT]
 `--foreground`を指定するとforkせず、PIDファイルとログファイルを作りません。標準出力と標準エラーは
 呼び出し元から継承し、`SIGTERM`または`SIGINT`を受けるまでコマンドは終了しません。
 
-coreは16本のワーカースレッドで内部接続を受け、1秒ごとに新しいマニフェストを確認します。公開済み世代を検出すると、検証に成功したスナップショットへ切り替えます。`SIGTERM`または`SIGINT`で待ち受けを閉じて終了します。
+coreは`daemon.worker_threads`本のワーカースレッドで内部接続を受け、1秒ごとに新しいマニフェストを確認します。既定値は16本です。公開済み世代を検出すると、検証に成功したスナップショットへ切り替えます。`SIGTERM`または`SIGINT`で待ち受けを閉じて終了します。
 
 coreは内部HTTP/1.1を受理しますが、外部クライアント向けHTTPサーバーではありません。通常の利用者はfrontへ接続してください。front/core間の形式は[frontとcoreの通信仕様](yappod-core-protocol.md)で説明します。
 
@@ -388,7 +388,7 @@ yappod_front [--foreground] --index INDEX_DIR --core-host HOST
 
 `--foreground`を省略すると、frontは索引に少なくとも一つのセグメントがあることを確認し、HTTPポートを確保してからforkします。`--config`形式では`front.pid`、`front.log`、`front.error`を`daemon.run_directory`へ保存します。直接指定形式では実行時のディレクトリへ保存します。`--foreground`を指定するとforkせず、PIDファイルとログファイルを作りません。標準出力と標準エラーは呼び出し元から継承します。
 
-frontは16本のワーカースレッドでHTTP/1.xリクエストを処理します。検索、RAG向けの本文取得、文書更新はcoreへ依頼し、
+frontは`daemon.worker_threads`本のワーカースレッドでHTTP/1.xリクエストを処理します。既定値は16本です。検索、RAG向けの本文取得、文書更新はcoreへ依頼し、
 結果をHTTPレスポンスへ変換します。文書を本文断片へ分割する`POST /v2/passages:prepare`、ヘルスチェック、メトリクスは
 front自身が処理します。対応するHTTP仕様は[`yappod_front` APIリファレンス](yappod-front-api.md)、メトリクスは
 [監視とメトリクス](observability.md)を参照してください。

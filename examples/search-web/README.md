@@ -77,6 +77,7 @@ search-webは1つのアプリケーションTOMLをYappod2サーバー、索引�
 | `core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontからcoreへ検索や更新を依頼する内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 | `front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontの待ち受け先であり、search-webサーバーの接続先です。 |
 | `front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontのHTTPポートです。 |
+| `worker_threads` | 整数 | 1〜1024 | `16` | 任意 | coreとfrontが、それぞれ接続処理に使用するワーカースレッド数です。 |
 | `max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreが、それぞれ処理中として受理するリクエストの件数上限です。 |
 | `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontは処理中のHTTP本文、coreは処理中の検索・更新データについて、それぞれの合計バイト数を制限します。 |
 | `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | frontのlibcurlによるcoreへの接続と内部HTTP要求全体、およびcoreが受理したソケットの送受信期限です。 |
