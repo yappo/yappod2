@@ -46,6 +46,7 @@ void YAP_V2_core_http_response_free(YAP_V2_CORE_HTTP_RESPONSE *response);
 int YAP_V2_core_http_parse_head(const unsigned char *input, size_t input_bytes,
                                 YAP_V2_CORE_HTTP_REQUEST *request);
 int YAP_V2_core_http_read_request(FILE *stream, size_t max_body_bytes,
+                                  size_t max_ingest_body_bytes,
                                   YAP_V2_CORE_HTTP_REQUEST *request);
 int YAP_V2_core_http_write_response(FILE *stream, int status, const char *content_type,
                                     const char *allow, int accept_query,

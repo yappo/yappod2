@@ -171,11 +171,13 @@ int YAP_V2_core_http_parse_head(const unsigned char *input, size_t input_bytes,
 }
 
 int YAP_V2_core_http_read_request(FILE *stream, size_t max_body_bytes,
+                                  size_t max_ingest_body_bytes,
                                   YAP_V2_CORE_HTTP_REQUEST *request) {
   unsigned char *head;
-  size_t used = 0U;
+  size_t used = 0U, request_limit;
   int status;
-  if (stream == NULL || request == NULL || max_body_bytes == 0U)
+  if (stream == NULL || request == NULL || max_body_bytes == 0U ||
+      max_ingest_body_bytes == 0U)
     return YAP_V2_CORE_HTTP_INVALID_ARGUMENT;
   head = malloc(YAP_V2_CORE_HTTP_MAX_HEADER_BYTES);
   if (head == NULL) return YAP_V2_CORE_HTTP_NO_MEMORY;
@@ -197,7 +199,9 @@ int YAP_V2_core_http_read_request(FILE *stream, size_t max_body_bytes,
   status = YAP_V2_core_http_parse_head(head, used, request);
   free(head);
   if (status != YAP_V2_CORE_HTTP_OK) return status;
-  if (request->have_content_length && request->content_length > max_body_bytes)
+  request_limit = strcmp(request->target, "/v2/documents:batch") == 0 ?
+                  max_ingest_body_bytes : max_body_bytes;
+  if (request->have_content_length && request->content_length > request_limit)
     return YAP_V2_CORE_HTTP_TOO_LARGE;
   if (!request->have_content_length || request->content_length == 0U)
     return YAP_V2_CORE_HTTP_OK;
@@ -306,7 +310,9 @@ int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout
   int result = YAP_V2_CORE_HTTP_IO_ERROR;
   if (host == NULL || port < 1 || port > 65535 || timeout_ms == 0U ||
       method == NULL || target == NULL || response == NULL ||
-      (body_bytes != 0U && body == NULL) || body_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
+      (body_bytes != 0U && body == NULL) ||
+      body_bytes > (strcmp(target, "/v2/documents:batch") == 0 ?
+                    YAP_V2_HTTP_MAX_INGEST_BODY_BYTES : YAP_V2_HTTP_MAX_BODY_BYTES) ||
       build_url(host, port, target, url, sizeof(url)) != 0)
     return YAP_V2_CORE_HTTP_INVALID_ARGUMENT;
   YAP_V2_core_http_response_free(response);

@@ -3,9 +3,11 @@
 
 #include <stddef.h>
 
+#include "config/yappo_runtime_policy_v2.h"
 #include "server/yappo_observability_v2.h"
 
 #define YAP_V2_HTTP_MAX_BODY_BYTES (1024U * 1024U)
+#define YAP_V2_HTTP_MAX_INGEST_BODY_BYTES YAP_V2_MAX_INGEST_BODY_BYTES
 
 typedef enum {
   YAP_V2_HTTP_SEARCH = 1,

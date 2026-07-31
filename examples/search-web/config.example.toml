@@ -26,6 +26,8 @@ worker_threads = 16
 max_inflight = 4
 max_inflight_bytes = 4194304
 request_timeout_ms = 5000
+ingest_max_body_bytes = 67108864
+ingest_timeout_ms = 60000
 # 文書登録を認証する場合だけ16文字以上のトークンを設定します。
 # write_token = "replace-with-16-or-more-characters"
 

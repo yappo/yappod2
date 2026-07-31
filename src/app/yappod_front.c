@@ -66,6 +66,7 @@ static char log_file[YAP_APPLICATION_PATH_BYTES] = "front.log";
 static char error_file[YAP_APPLICATION_PATH_BYTES] = "front.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
+static YAP_V2_RUNTIME_LIMITER ingest_limiter;
 static YAP_V2_METRICS metrics;
 static void usage(FILE *output, const char *program) {
   fprintf(output,
@@ -249,20 +250,22 @@ static int value_start(const char *line, size_t prefix, const char **value) {
   return 0;
 }
 
-static int parse_content_length(const char *value, size_t *length) {
+static int parse_content_length(const char *value, size_t maximum, size_t *length) {
   char *end = NULL;
   unsigned long long parsed;
   errno = 0;
   parsed = strtoull(value, &end, 10);
   while (*end == ' ' || *end == '\t') end++;
   if (errno != 0 || end == value || (*end != '\r' && *end != '\n') || parsed == 0U ||
-      parsed > YAP_V2_HTTP_MAX_BODY_BYTES || parsed > SIZE_MAX) return -1;
+      parsed > maximum || parsed > SIZE_MAX) return -1;
   *length = (size_t)parsed;
   return 0;
 }
 
 static int parse_headers(FILE *stream, http_request_t *request) {
   size_t total = 0U;
+  size_t body_limit = request->endpoint == ENDPOINT_INGEST ?
+                      runtime_policy.ingest_max_body_bytes : YAP_V2_HTTP_MAX_BODY_BYTES;
   int have_type = 0, have_authorization = 0;
   for (;;) {
     char *line = NULL;
@@ -286,8 +289,9 @@ static int parse_headers(FILE *stream, http_request_t *request) {
       request->json_content_type = 1;
     } else if (strncasecmp(line, "Content-Length:", 15U) == 0) {
       value_start(line, 15U, &value);
-      if (request->have_content_length || parse_content_length(value, &request->content_length) != 0) {
-        int too_large = errno == ERANGE || strtoull(value, NULL, 10) > YAP_V2_HTTP_MAX_BODY_BYTES;
+      if (request->have_content_length ||
+          parse_content_length(value, body_limit, &request->content_length) != 0) {
+        int too_large = errno == ERANGE || strtoull(value, NULL, 10) > body_limit;
         free(line);
         return too_large ? -2 : -1;
       }
@@ -396,6 +400,8 @@ static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
   memset(result, 0, sizeof(*result));
   YAP_V2_core_http_response_init(&response);
   if (YAP_V2_core_http_client_request(worker->core_host, worker->core_port,
+                                      endpoint == ENDPOINT_INGEST ?
+                                      runtime_policy.ingest_timeout_ms :
                                       runtime_policy.request_timeout_ms,
                                       method, target,
                                       endpoint == ENDPOINT_INGEST ? authorization : NULL,
@@ -487,7 +493,8 @@ static int handle_client(FILE *stream, const worker_t *worker) {
   char *line = NULL;
   unsigned char *body = NULL;
   core_result_t result;
-  int read_status, header_status, response_status = 500, admitted = 0;
+  YAP_V2_RUNTIME_LIMITER *admission_limiter = NULL;
+  int read_status, header_status, response_status = 500;
   uint64_t started = 0U;
   read_status = read_line(stream, &line);
   if (read_status <= 0 || parse_request_line(line, &request) != 0) {
@@ -495,6 +502,8 @@ static int handle_client(FILE *stream, const worker_t *worker) {
     return send_json_error(stream, 400, "invalid_request", "Bad Request");
   }
   free(line);
+  if (request.endpoint == ENDPOINT_INGEST)
+    (void)YAP_V2_socket_set_deadline(fileno(stream), runtime_policy.ingest_timeout_ms);
   header_status = parse_headers(stream, &request);
   if (header_status != 0) {
     response_status = header_status == -2 ? 413 : header_status == -3 ? 415 : 400;
@@ -542,14 +551,16 @@ static int handle_client(FILE *stream, const worker_t *worker) {
                               "unauthorized", "Unauthorized");
     goto observed;
   }
-  if (YAP_V2_runtime_limiter_acquire(&runtime_limiter, request.content_length) != YAP_V2_OK) {
+  admission_limiter = request.endpoint == ENDPOINT_INGEST ?
+                      &ingest_limiter : &runtime_limiter;
+  if (YAP_V2_runtime_limiter_acquire(admission_limiter, request.content_length) != YAP_V2_OK) {
+    admission_limiter = NULL;
     response_status = 503;
     (void)discard_request_body(stream, request.content_length);
     (void)send_endpoint_error(stream, request.endpoint, response_status,
                               "overloaded", "Service Unavailable");
     goto observed;
   }
-  admitted = 1;
   body = malloc(request.content_length);
   if (body == NULL || fread(body, 1U, request.content_length, stream) != request.content_length) {
     response_status = body == NULL ? 500 : 400;
@@ -584,7 +595,8 @@ static int handle_client(FILE *stream, const worker_t *worker) {
                               result.body, result.body_bytes);
   free(result.body);
 observed:
-  if (admitted) YAP_V2_runtime_limiter_release(&runtime_limiter, request.content_length);
+  if (admission_limiter != NULL)
+    YAP_V2_runtime_limiter_release(admission_limiter, request.content_length);
   free(body);
   YAP_V2_metrics_record(&metrics, observe_operation(request.endpoint), response_status,
                         YAP_V2_monotonic_microseconds() - started);
@@ -688,16 +700,26 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
-  if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
-      YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {
-    fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
-    free(threads); free(workers);
-    return EXIT_FAILURE;
+  memset(&ingest_limiter, 0, sizeof(ingest_limiter));
+  {
+    YAP_V2_RUNTIME_POLICY ingest_policy = runtime_policy;
+    ingest_policy.max_inflight = 1U;
+    ingest_policy.max_inflight_bytes = runtime_policy.ingest_max_body_bytes;
+    if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
+        YAP_V2_runtime_limiter_init(&ingest_limiter, &ingest_policy) != YAP_V2_OK ||
+        YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {
+      fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
+      YAP_V2_runtime_limiter_close(&ingest_limiter);
+      YAP_V2_runtime_limiter_close(&runtime_limiter);
+      free(threads); free(workers);
+      return EXIT_FAILURE;
+    }
   }
   listen_socket = create_listener(listen_host, port);
   if (listen_socket < 0) {
     fprintf(stderr, "Cannot listen on port %d: %s\n", port, strerror(errno));
     YAP_V2_metrics_close(&metrics);
+    YAP_V2_runtime_limiter_close(&ingest_limiter);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
     free(threads); free(workers);
     return EXIT_FAILURE;
@@ -706,6 +728,9 @@ int main(int argc, char **argv) {
     daemon_status = daemonize_process();
     if (daemon_status != 0) {
       (void)close(listen_socket);
+      YAP_V2_metrics_close(&metrics);
+      YAP_V2_runtime_limiter_close(&ingest_limiter);
+      YAP_V2_runtime_limiter_close(&runtime_limiter);
       free(threads); free(workers);
       return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -713,6 +738,7 @@ int main(int argc, char **argv) {
   if (prepare_signal_wait(&shutdown_signals) != 0) {
     (void)close(listen_socket); listen_socket = -1;
     YAP_V2_metrics_close(&metrics);
+    YAP_V2_runtime_limiter_close(&ingest_limiter);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
     free(threads); free(workers);
     return EXIT_FAILURE;
@@ -735,6 +761,7 @@ int main(int argc, char **argv) {
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_metrics_close(&metrics);
+  YAP_V2_runtime_limiter_close(&ingest_limiter);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
   free(threads); free(workers);
   return started == worker_threads ? EXIT_SUCCESS : EXIT_FAILURE;

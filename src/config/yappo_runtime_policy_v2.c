@@ -23,6 +23,8 @@ void YAP_V2_runtime_policy_init(YAP_V2_RUNTIME_POLICY *policy) {
   policy->max_inflight = YAP_V2_DEFAULT_MAX_INFLIGHT;
   policy->max_inflight_bytes = YAP_V2_DEFAULT_MAX_INFLIGHT_BYTES;
   policy->request_timeout_ms = YAP_V2_DEFAULT_TIMEOUT_MS;
+  policy->ingest_max_body_bytes = YAP_V2_DEFAULT_INGEST_MAX_BODY_BYTES;
+  policy->ingest_timeout_ms = YAP_V2_DEFAULT_INGEST_TIMEOUT_MS;
 }
 
 static int read_size(toml_table_t *table, const char *key, size_t maximum, size_t *output,
@@ -81,6 +83,15 @@ int YAP_V2_runtime_policy_load_config(YAP_V2_RUNTIME_POLICY *policy, const char 
                        error, error_size);
   if (status != YAP_V2_OK) { toml_free(root); return status; }
   policy->request_timeout_ms = (uint32_t)timeout;
+  if (status == YAP_V2_OK)
+    status = read_size(daemon, "ingest_max_body_bytes", YAP_V2_MAX_INGEST_BODY_BYTES,
+                       &policy->ingest_max_body_bytes, error, error_size);
+  timeout = policy->ingest_timeout_ms;
+  if (status == YAP_V2_OK)
+    status = read_size(daemon, "ingest_timeout_ms", YAP_V2_MAX_INGEST_TIMEOUT_MS,
+                       &timeout, error, error_size);
+  if (status != YAP_V2_OK) { toml_free(root); return status; }
+  policy->ingest_timeout_ms = (uint32_t)timeout;
   token = toml_string_in(daemon, "write_token");
   if (!token.ok && toml_key_exists(daemon, "write_token")) {
     set_error(error, error_size, "daemon.write_token must be a string");
@@ -180,7 +191,7 @@ int YAP_V2_authorize_write(const YAP_V2_RUNTIME_POLICY *policy, const char *auth
 
 int YAP_V2_socket_set_deadline(int fd, uint32_t timeout_ms) {
   struct timeval timeout;
-  if (fd < 0 || timeout_ms == 0U || timeout_ms > YAP_V2_MAX_TIMEOUT_MS)
+  if (fd < 0 || timeout_ms == 0U || timeout_ms > YAP_V2_MAX_INGEST_TIMEOUT_MS)
     return YAP_V2_INVALID_ARGUMENT;
   timeout.tv_sec = (time_t)(timeout_ms / 1000U);
   timeout.tv_usec = (suseconds_t)((timeout_ms % 1000U) * 1000U);

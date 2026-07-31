@@ -33,6 +33,7 @@ static const char valid[] =
   "[daemon]\nrun_directory='./run'\ncore_host='127.0.0.1'\ncore_port=18401\n"
   "front_host='127.0.0.1'\nfront_port=18400\nworker_threads=3\nmax_inflight=8\n"
   "max_inflight_bytes=8192\nrequest_timeout_ms=2500\n"
+  "ingest_max_body_bytes=33554432\ningest_timeout_ms=120000\n"
   "[web]\nhost='127.0.0.1'\n"
   "[llm]\nauthorization_token_env='LLM_API_KEY'\n";
 
@@ -49,6 +50,8 @@ static void test_loads_shared_config_and_resolves_paths(void **state) {
   assert_int_equal(config.runtime_policy.worker_threads, 3U);
   assert_int_equal(config.runtime_policy.max_inflight, 8U);
   assert_int_equal(config.runtime_policy.request_timeout_ms, 2500U);
+  assert_int_equal(config.runtime_policy.ingest_max_body_bytes, 33554432U);
+  assert_int_equal(config.runtime_policy.ingest_timeout_ms, 120000U);
   assert_int_equal(unlink(path), 0); free(path);
 }
 

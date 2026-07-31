@@ -233,6 +233,11 @@ static void test_memory_limit_rejects_before_body_allocation(void **state) {
   context_t *ctx=*state; char *response=post(ctx,"/v2/search","{\"query\":\"apple\",\"mode\":\"lexical\"}");
   assert_non_null(strstr(response,"503 Service Unavailable"));
   assert_non_null(strstr(response,"\"code\":\"overloaded\""));free(response);
+  response = post(ctx, "/v2/documents:batch",
+                  "{\"operations\":[{\"operation\":\"delete\",\"id\":\"missing\"}]}");
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "\"accepted\":1"));
+  free(response);
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
