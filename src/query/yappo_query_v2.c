@@ -391,8 +391,46 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
   return YAP_V2_OK;
 }
 
+static int add_u64(uint64_t *total, uint64_t value) {
+  if (*total > UINT64_MAX - value)
+    return YAP_V2_OUT_OF_RANGE;
+  *total += value;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_query_corpus_stats_build(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                    const YAP_V2_QUERY_SEGMENT *segments,
+                                    size_t segment_count,
+                                    YAP_V2_QUERY_CORPUS_STATS *stats) {
+  size_t i, field;
+  int status = YAP_V2_OK;
+  if (snapshot == NULL || segments == NULL || stats == NULL || segment_count == 0U ||
+      segment_count != YAP_V2_snapshot_segment_count(snapshot))
+    return YAP_V2_INVALID_ARGUMENT;
+  memset(stats, 0, sizeof(*stats));
+  stats->generation = YAP_V2_snapshot_generation(snapshot);
+  for (i = 0U; status == YAP_V2_OK && i < segment_count; i++) {
+    const YAP_V2_LEXICAL_SEGMENT *lexical = segments[i].lexical;
+    const YAP_V2_SEGMENT *documents = YAP_V2_snapshot_segment_documents(snapshot, i);
+    if (lexical == NULL)
+      continue;
+    if (documents == NULL || lexical->document_count != documents->document_count ||
+        lexical->passage_count != documents->passage_count)
+      return YAP_V2_CONFLICT;
+    status = add_u64(&stats->document_count, lexical->document_count);
+    if (status == YAP_V2_OK)
+      status = add_u64(&stats->passage_count, lexical->passage_count);
+    for (field = 0U; status == YAP_V2_OK && field < 3U; field++)
+      status = add_u64(&stats->field_token_count[field], lexical->field_token_count[field]);
+  }
+  if (status != YAP_V2_OK)
+    memset(stats, 0, sizeof(*stats));
+  return status;
+}
+
 int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                          const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
+                         const YAP_V2_QUERY_CORPUS_STATS *stats,
                          const YAP_V2_QUERY_REQUEST *request, YAP_V2_QUERY_HIT *hits,
                          size_t hit_capacity, size_t *hit_count) {
   CANDIDATE_SET lexical, vector;
@@ -402,7 +440,8 @@ int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
   int status = YAP_V2_OK;
   memset(&lexical, 0, sizeof(lexical));
   memset(&vector, 0, sizeof(vector));
-  if (snapshot == NULL || segments == NULL || request == NULL || hits == NULL || hit_count == NULL ||
+  if (snapshot == NULL || segments == NULL || stats == NULL || request == NULL || hits == NULL ||
+      hit_count == NULL || stats->generation != YAP_V2_snapshot_generation(snapshot) ||
       segment_count == 0U || segment_count != YAP_V2_snapshot_segment_count(snapshot) ||
       request->top_k == 0U || request->candidate_k < request->top_k || hit_capacity < request->top_k ||
       request->mode < YAP_V2_SEARCH_LEXICAL || request->mode > YAP_V2_SEARCH_HYBRID ||

@@ -71,6 +71,7 @@ typedef struct {
   YAP_V2_SNAPSHOT_MANAGER manager;
   YAP_V2_SEARCH_SNAPSHOT *snapshot;
   YAP_V2_QUERY_SEGMENT *query;
+  YAP_V2_QUERY_CORPUS_STATS corpus_stats;
   YAP_V2_LEXICAL_SEGMENT *lexical;
   YAP_V2_VECTOR_SEGMENT *vectors;
   YAP_V2_ANN_SEGMENT *ann;
@@ -204,7 +205,8 @@ static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
       &runtime->ann[i], &runtime->metadata[i]);
     if (status != YAP_V2_OK) return status;
   }
-  return YAP_V2_OK;
+  return YAP_V2_query_corpus_stats_build(runtime->snapshot, runtime->query,
+                                         runtime->count, &runtime->corpus_stats);
 }
 
 static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
@@ -232,6 +234,7 @@ static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
   YAP_V2_VECTOR_SEGMENT *vectors = NULL;
   YAP_V2_ANN_SEGMENT *ann = NULL;
   YAP_V2_METADATA_INDEX *metadata = NULL;
+  YAP_V2_QUERY_CORPUS_STATS corpus_stats;
   YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL;
   unsigned char *reused = NULL;
   unsigned char *opened = NULL;
@@ -313,6 +316,9 @@ static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
     if (!YAP_V2_snapshot_matches_manifest(snapshot, &manifest))
       status = YAP_V2_CONFLICT;
   }
+  if (status == YAP_V2_OK)
+    status = YAP_V2_query_corpus_stats_build(snapshot, query,
+                                             manifest.segment_count, &corpus_stats);
   if (status == YAP_V2_OK) {
     for (i = 0U; i < runtime->count; i++)
       if (!reused[i])
@@ -324,6 +330,7 @@ static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
     YAP_V2_manifest_free(&runtime->manifest);
     runtime->manifest = manifest; YAP_V2_manifest_init(&manifest);
     runtime->query = query; query = NULL;
+    runtime->corpus_stats = corpus_stats;
     runtime->lexical = lexical; lexical = NULL;
     runtime->vectors = vectors; vectors = NULL;
     runtime->ann = ann; ann = NULL;
@@ -780,8 +787,9 @@ static int http_execute_loaded(HTTP_RUNTIME *runtime, const char *index_dir,
   hits = calloc(execution_limit, sizeof(*hits));
   if (hits == NULL) goto unavailable;
   request.top_k = execution_limit; request.candidate_k = execution_limit < 100U ? 100U : execution_limit;
-  status = YAP_V2_query_execute(runtime->snapshot, runtime->query, runtime->count, &request,
-                                hits, execution_limit, &hit_count);
+  status = YAP_V2_query_execute(runtime->snapshot, runtime->query, runtime->count,
+                                &runtime->corpus_stats, &request, hits,
+                                execution_limit, &hit_count);
   if (status == YAP_V2_INVALID_ARGUMENT || status == YAP_V2_INVALID_FORMAT) goto bad_request;
   if (status != YAP_V2_OK) goto unavailable;
   if (offset > hit_count) goto bad_request;
