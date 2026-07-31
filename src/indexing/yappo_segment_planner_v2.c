@@ -61,6 +61,20 @@ size_t YAP_V2_segment_planner_payload_limit(void) {
   return test_payload_limit == 0U ? YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES : test_payload_limit;
 }
 
+YAP_V2_SEGMENT_SIZE_POLICY YAP_V2_segment_planner_size_policy(void) {
+  YAP_V2_SEGMENT_SIZE_POLICY policy;
+  if (test_payload_limit != 0U) {
+    policy.target_payload_bytes = test_payload_limit;
+    policy.soft_max_payload_bytes = test_payload_limit;
+    policy.hard_max_payload_bytes = test_payload_limit;
+    return policy;
+  }
+  policy.target_payload_bytes = 128U * 1024U * 1024U;
+  policy.soft_max_payload_bytes = 192U * 1024U * 1024U;
+  policy.hard_max_payload_bytes = YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES;
+  return policy;
+}
+
 void YAP_V2_segment_planner_set_payload_limit_for_testing(size_t payload_limit) {
   test_payload_limit = payload_limit;
 }
@@ -446,6 +460,67 @@ static int plan_add(YAP_V2_SEGMENT_PLAN *plan, size_t first, size_t count,
   return YAP_V2_OK;
 }
 
+static size_t slice_largest_payload(const YAP_V2_SEGMENT_SLICE *slice) {
+  size_t largest = 0U;
+  size_t i;
+  for (i = 0U; i < YAP_V2_SEGMENT_COMPONENT_COUNT; i++)
+    if (slice->payload_bytes[i] > largest) largest = slice->payload_bytes[i];
+  return largest;
+}
+
+static int range_slice(const YAP_V2_CONFIG *config,
+                       const YAP_V2_SEGMENT_UNIT *units,
+                       const UNIT_SIZE *unit_sizes, size_t first, size_t count,
+                       size_t segment_id_bytes, size_t payload_limit,
+                       YAP_V2_SEGMENT_SLICE *slice) {
+  SIZER sizer = {0};
+  size_t i;
+  int status = YAP_V2_OK;
+  for (i = first; status == YAP_V2_OK && i < first + count; i++) {
+    size_t required;
+    const char *component;
+    status = projected_fits(config, &sizer, &units[i], &unit_sizes[i],
+                            segment_id_bytes, payload_limit, &required,
+                            &component);
+    if (status == YAP_V2_OK) status = sizer_add(&sizer, &units[i], &unit_sizes[i]);
+  }
+  if (status == YAP_V2_OK) {
+    memset(slice, 0, sizeof(*slice));
+    slice->first = first;
+    slice->count = count;
+    status = component_sizes(config, &sizer, segment_id_bytes,
+                             slice->payload_bytes);
+  }
+  sizer_free(&sizer);
+  return status;
+}
+
+static int merge_small_tail(const YAP_V2_CONFIG *config,
+                            const YAP_V2_SEGMENT_UNIT *units,
+                            const UNIT_SIZE *unit_sizes,
+                            size_t segment_id_bytes,
+                            YAP_V2_SEGMENT_SIZE_POLICY policy,
+                            YAP_V2_SEGMENT_PLAN *plan) {
+  YAP_V2_SEGMENT_SLICE *previous;
+  YAP_V2_SEGMENT_SLICE *tail;
+  YAP_V2_SEGMENT_SLICE merged;
+  int status;
+  if (plan->count < 2U) return YAP_V2_OK;
+  previous = &plan->slices[plan->count - 2U];
+  tail = &plan->slices[plan->count - 1U];
+  if (slice_largest_payload(tail) >= policy.target_payload_bytes / 2U ||
+      previous->first + previous->count != tail->first)
+    return YAP_V2_OK;
+  status = range_slice(config, units, unit_sizes, previous->first,
+                       previous->count + tail->count, segment_id_bytes,
+                       policy.soft_max_payload_bytes, &merged);
+  if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) return YAP_V2_OK;
+  if (status != YAP_V2_OK) return status;
+  *previous = merged;
+  plan->count--;
+  return YAP_V2_OK;
+}
+
 void YAP_V2_segment_plan_init(YAP_V2_SEGMENT_PLAN *plan) {
   if (plan != NULL) memset(plan, 0, sizeof(*plan));
 }
@@ -494,50 +569,85 @@ int YAP_V2_segment_plan(const YAP_V2_CONFIG *config,
                         size_t segment_id_bytes, size_t payload_limit,
                         YAP_V2_SEGMENT_PLAN *plan,
                         YAP_V2_SEGMENT_CAPACITY_ERROR *capacity_error) {
+  YAP_V2_SEGMENT_SIZE_POLICY policy;
+  policy.target_payload_bytes = payload_limit;
+  policy.soft_max_payload_bytes = payload_limit;
+  policy.hard_max_payload_bytes = payload_limit;
+  return YAP_V2_segment_plan_with_policy(config, units, unit_count,
+                                         segment_id_bytes, policy, plan,
+                                         capacity_error);
+}
+
+int YAP_V2_segment_plan_with_policy(
+  const YAP_V2_CONFIG *config, const YAP_V2_SEGMENT_UNIT *units,
+  size_t unit_count, size_t segment_id_bytes,
+  YAP_V2_SEGMENT_SIZE_POLICY policy, YAP_V2_SEGMENT_PLAN *plan,
+  YAP_V2_SEGMENT_CAPACITY_ERROR *capacity_error) {
   SIZER sizer = {0};
+  UNIT_SIZE *unit_sizes = NULL;
   size_t first = 0U;
   size_t i;
   int status = YAP_V2_OK;
   if (config == NULL || (unit_count > 0U && units == NULL) || segment_id_bytes == 0U ||
-      payload_limit == 0U || plan == NULL) return YAP_V2_INVALID_ARGUMENT;
+      policy.target_payload_bytes == 0U ||
+      policy.target_payload_bytes > policy.soft_max_payload_bytes ||
+      policy.soft_max_payload_bytes > policy.hard_max_payload_bytes ||
+      policy.hard_max_payload_bytes > YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES ||
+      plan == NULL) return YAP_V2_INVALID_ARGUMENT;
   YAP_V2_segment_plan_init(plan);
   if (capacity_error != NULL) memset(capacity_error, 0, sizeof(*capacity_error));
   plan->prepared_units = unit_count == 0U ? NULL : calloc(unit_count, sizeof(PREPARED_UNIT));
-  if (unit_count > 0U && plan->prepared_units == NULL) return YAP_V2_ALLOCATION_FAILED;
+  unit_sizes = unit_count == 0U ? NULL : calloc(unit_count, sizeof(*unit_sizes));
+  if (unit_count > 0U && (plan->prepared_units == NULL || unit_sizes == NULL)) {
+    free(unit_sizes);
+    YAP_V2_segment_plan_free(plan);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
   plan->prepared_unit_count = unit_count;
   for (i = 0U; status == YAP_V2_OK && i < unit_count; i++) {
-    UNIT_SIZE unit_size;
     PREPARED_UNIT *prepared = &((PREPARED_UNIT *)plan->prepared_units)[i];
+    status = prepare_unit(config, &units[i], &unit_sizes[i], prepared);
+  }
+  for (i = 0U; status == YAP_V2_OK && i < unit_count; i++) {
     size_t required = 0U;
     const char *component = NULL;
-    status = prepare_unit(config, &units[i], &unit_size, prepared);
-    if (status != YAP_V2_OK) break;
-    status = projected_fits(config, &sizer, &units[i], &unit_size, segment_id_bytes,
-                            payload_limit, &required, &component);
+    status = projected_fits(config, &sizer, &units[i], &unit_sizes[i],
+                            segment_id_bytes, policy.target_payload_bytes,
+                            &required, &component);
     if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED && i > first) {
       status = plan_add(plan, first, i - first, config, &sizer, segment_id_bytes);
       sizer_free(&sizer);
       first = i;
       if (status == YAP_V2_OK)
-        status = projected_fits(config, &sizer, &units[i], &unit_size, segment_id_bytes,
-                                payload_limit, &required, &component);
+        status = projected_fits(config, &sizer, &units[i], &unit_sizes[i],
+                                segment_id_bytes, policy.target_payload_bytes,
+                                &required, &component);
+    }
+    if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
+      status = projected_fits(config, &sizer, &units[i], &unit_sizes[i],
+                              segment_id_bytes, policy.hard_max_payload_bytes,
+                              &required, &component);
     }
     if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
       if (capacity_error != NULL) {
         capacity_error->component = component;
         capacity_error->required_bytes = required;
-        capacity_error->limit_bytes = payload_limit;
+        capacity_error->limit_bytes = policy.hard_max_payload_bytes;
         capacity_error->document_id = units[i].document != NULL ? units[i].document->id
                                                                  : units[i].tombstone;
       }
     } else if (status == YAP_V2_OK) {
-      status = sizer_add(&sizer, &units[i], &unit_size);
+      status = sizer_add(&sizer, &units[i], &unit_sizes[i]);
     }
-    term_map_free(&unit_size.terms);
   }
   if (status == YAP_V2_OK)
     status = plan_add(plan, first, unit_count - first, config, &sizer, segment_id_bytes);
   sizer_free(&sizer);
+  if (status == YAP_V2_OK)
+    status = merge_small_tail(config, units, unit_sizes, segment_id_bytes,
+                              policy, plan);
+  for (i = 0U; i < unit_count; i++) term_map_free(&unit_sizes[i].terms);
+  free(unit_sizes);
   if (status != YAP_V2_OK) YAP_V2_segment_plan_free(plan);
   return status;
 }

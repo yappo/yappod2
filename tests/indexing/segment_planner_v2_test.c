@@ -214,10 +214,54 @@ static void test_greedy_prefix_and_single_document_capacity_error(void **state) 
   ytest_env_destroy(&env);
 }
 
+static void test_size_policy_merges_a_small_tail_within_soft_limit(void **state) {
+  enum { UNIT_COUNT = 21 };
+  ytest_env_t env;
+  YAP_V2_CONFIG config;
+  YAP_V2_SEGMENT_UNIT units[UNIT_COUNT];
+  YAP_V2_SEGMENT_PLAN plan;
+  YAP_V2_SEGMENT_SIZE_POLICY policy = {52U, 78U, 100U};
+  size_t i;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  load_config(&env, &config);
+  memset(units, 0, sizeof(units));
+  for (i = 0U; i < UNIT_COUNT; i++) {
+    units[i].tombstone.data = (const unsigned char *)"";
+    units[i].tombstone.len = 0U;
+  }
+  YAP_V2_segment_plan_init(&plan);
+  assert_int_equal(YAP_V2_segment_plan_with_policy(
+                     &config, units, UNIT_COUNT, 1U, policy, &plan, NULL),
+                   YAP_V2_OK);
+  assert_int_equal(plan.count, 2U);
+  assert_int_equal(plan.slices[0].first, 0U);
+  assert_int_equal(plan.slices[0].count, 10U);
+  assert_int_equal(plan.slices[1].first, 10U);
+  assert_int_equal(plan.slices[1].count, 11U);
+  assert_true(largest_payload(&plan.slices[0], NULL) <=
+              policy.target_payload_bytes);
+  assert_true(largest_payload(&plan.slices[1], NULL) <=
+              policy.soft_max_payload_bytes);
+  YAP_V2_segment_plan_free(&plan);
+  ytest_env_destroy(&env);
+}
+
+static void test_default_size_policy_preserves_storage_hard_limit(void **state) {
+  YAP_V2_SEGMENT_SIZE_POLICY policy = YAP_V2_segment_planner_size_policy();
+  (void)state;
+  assert_int_equal(policy.target_payload_bytes, 128U * 1024U * 1024U);
+  assert_int_equal(policy.soft_max_payload_bytes, 192U * 1024U * 1024U);
+  assert_int_equal(policy.hard_max_payload_bytes,
+                   YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_exact_payload_sizes_include_block_metadata_vector_and_tombstones),
-    cmocka_unit_test(test_greedy_prefix_and_single_document_capacity_error)
+    cmocka_unit_test(test_greedy_prefix_and_single_document_capacity_error),
+    cmocka_unit_test(test_size_policy_merges_a_small_tail_within_soft_limit),
+    cmocka_unit_test(test_default_size_policy_preserves_storage_hard_limit)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

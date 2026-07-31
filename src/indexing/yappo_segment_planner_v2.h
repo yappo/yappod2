@@ -43,17 +43,29 @@ typedef struct {
   YAP_V2_BYTES_VIEW document_id;
 } YAP_V2_SEGMENT_CAPACITY_ERROR;
 
+typedef struct {
+  size_t target_payload_bytes;
+  size_t soft_max_payload_bytes;
+  size_t hard_max_payload_bytes;
+} YAP_V2_SEGMENT_SIZE_POLICY;
+
 void YAP_V2_segment_plan_init(YAP_V2_SEGMENT_PLAN *plan);
 void YAP_V2_segment_plan_free(YAP_V2_SEGMENT_PLAN *plan);
 int YAP_V2_segment_plan_bisect(YAP_V2_SEGMENT_PLAN *plan, size_t slice_index);
 int YAP_V2_segment_count_validate(size_t existing_count, size_t added_count);
 size_t YAP_V2_segment_planner_payload_limit(void);
+YAP_V2_SEGMENT_SIZE_POLICY YAP_V2_segment_planner_size_policy(void);
 void YAP_V2_segment_planner_set_payload_limit_for_testing(size_t payload_limit);
 int YAP_V2_segment_plan(const YAP_V2_CONFIG *config,
                         const YAP_V2_SEGMENT_UNIT *units, size_t unit_count,
                         size_t segment_id_bytes, size_t payload_limit,
                         YAP_V2_SEGMENT_PLAN *plan,
                         YAP_V2_SEGMENT_CAPACITY_ERROR *capacity_error);
+int YAP_V2_segment_plan_with_policy(
+  const YAP_V2_CONFIG *config, const YAP_V2_SEGMENT_UNIT *units,
+  size_t unit_count, size_t segment_id_bytes,
+  YAP_V2_SEGMENT_SIZE_POLICY policy, YAP_V2_SEGMENT_PLAN *plan,
+  YAP_V2_SEGMENT_CAPACITY_ERROR *capacity_error);
 
 int YAP_V2_segment_slice_write(const char *directory, const char *segment_id,
                                uint64_t generation, const YAP_V2_CONFIG *config,

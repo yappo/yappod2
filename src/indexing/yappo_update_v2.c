@@ -212,8 +212,9 @@ static int apply_operations(const char *index_dir,
     document_index++;
   }
   if (mkdir(segments_path, 0700) != 0 && errno != EEXIST) { status = YAP_V2_IO_ERROR; goto done; }
-  status = YAP_V2_segment_plan(&config, units, operation_count, 31U,
-                               YAP_V2_segment_planner_payload_limit(), &plan, &capacity_error);
+  status = YAP_V2_segment_plan_with_policy(
+    &config, units, operation_count, 31U,
+    YAP_V2_segment_planner_size_policy(), &plan, &capacity_error);
   if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
     (void)snprintf(error, error_size,
       "document '%.*s' requires %zu bytes in %s (limit %zu)",

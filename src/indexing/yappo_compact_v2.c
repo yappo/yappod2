@@ -239,8 +239,9 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
     units[i].vectors = vectors == NULL ? NULL : vectors + start * config.vector_dimensions;
   }
   if (passage_index != passages_count) { status = YAP_V2_CONFLICT; set_error(error, error_size, "passages are not grouped with their parent documents"); goto done; }
-  status = YAP_V2_segment_plan(&config, units, documents_count, 35U,
-                               YAP_V2_segment_planner_payload_limit(), &plan, &capacity_error);
+  status = YAP_V2_segment_plan_with_policy(
+    &config, units, documents_count, 35U,
+    YAP_V2_segment_planner_size_policy(), &plan, &capacity_error);
   if (status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED) {
     (void)snprintf(error, error_size,
       "document '%.*s' requires %zu bytes in %s (limit %zu)",
