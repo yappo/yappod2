@@ -52,7 +52,10 @@ static void test_probe_json_and_compaction_status(void **state) {
   assert_int_equal(operational.compaction_generation, 8U);
   assert_int_equal(YAP_V2_operational_state_json(&operational, "test-service", &json, &json_bytes), YAP_V2_OK);
   assert_non_null(strstr(json, "\"generation\":7")); assert_non_null(strstr(json, "\"precomputed_ready\""));
-  assert_non_null(strstr(json, "\"succeeded\"")); assert_int_equal(strlen(json), json_bytes); free(json);
+  assert_non_null(strstr(json, "\"succeeded\""));
+  assert_non_null(strstr(json, "\"segment_health\""));
+  assert_non_null(strstr(json, "\"small_segment_threshold_bytes\":67108864"));
+  assert_int_equal(strlen(json), json_bytes); free(json);
   assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "compaction.state"), 0);
   write_text(path, "invalid\n");
   assert_int_equal(YAP_V2_operational_probe_index(env.tmp_root, &operational, error, sizeof(error)), YAP_V2_OK);
@@ -78,6 +81,18 @@ static void test_metrics_are_thread_safe_and_bounded(void **state) {
   YAP_V2_metrics_record(&metrics, YAP_V2_OBSERVE_SEARCH, 503, 2000000U);
   YAP_V2_metrics_record(&metrics, YAP_V2_OBSERVE_INGEST, 400, 100U);
   YAP_V2_operational_state_init(&operational); operational.ready = 1; operational.generation = 9U;
+  operational.segment_count = 3U;
+  operational.document_records = 40U;
+  operational.passage_records = 80U;
+  operational.tombstone_records = 2U;
+  operational.component_file_bytes = 123456U;
+  operational.smallest_segment_bytes = 1024U;
+  operational.largest_segment_bytes = 120000U;
+  operational.small_segment_run = 2U;
+  operational.small_segment_threshold_bytes = 67108864U;
+  operational.auto_compaction_trigger_segments = 4U;
+  operational.auto_compaction_enabled = 1;
+  operational.auto_compaction_needed = 0;
   operational.embedding_configured = 1; operational.compaction_state = YAP_V2_COMPACTION_RUNNING;
   assert_int_equal(YAP_V2_metrics_render(&metrics, &operational, 2U, 100U, 4U, 4096U,
                                          &output, &output_bytes), YAP_V2_OK);
@@ -87,6 +102,16 @@ static void test_metrics_are_thread_safe_and_bounded(void **state) {
   assert_non_null(strstr(output, "operation=\"search\",le=\"0.010\"} 1000"));
   assert_non_null(strstr(output, "operation=\"search\",le=\"+Inf\"} 1001"));
   assert_non_null(strstr(output, "yappod_v2_manifest_generation 9"));
+  assert_non_null(strstr(output, "yappod_v2_manifest_segments 3"));
+  assert_non_null(strstr(output, "yappod_v2_manifest_document_records 40"));
+  assert_non_null(strstr(output, "yappod_v2_manifest_passage_records 80"));
+  assert_non_null(strstr(output, "yappod_v2_manifest_tombstone_records 2"));
+  assert_non_null(strstr(output, "yappod_v2_manifest_component_file_bytes 123456"));
+  assert_non_null(strstr(output, "yappod_v2_smallest_segment_bytes 1024"));
+  assert_non_null(strstr(output, "yappod_v2_largest_segment_bytes 120000"));
+  assert_non_null(strstr(output, "yappod_v2_small_segment_run 2"));
+  assert_non_null(strstr(output, "yappod_v2_auto_compaction_enabled 1"));
+  assert_non_null(strstr(output, "yappod_v2_auto_compaction_needed 0"));
   assert_non_null(strstr(output, "yappod_v2_compaction_state{state=\"running\"} 1"));
   assert_int_equal(strlen(output), output_bytes); free(output); YAP_V2_metrics_close(&metrics);
 }

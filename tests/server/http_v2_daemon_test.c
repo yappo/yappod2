@@ -106,6 +106,7 @@ static int setup_automatic_compaction(void **state) {
   policy_source =
     "[daemon]\n"
     "auto_compact_check_interval_ms=1000\n"
+    "auto_compact_small_segment_bytes=1048576\n"
     "auto_compact_min_small_segments=4\n";
   return setup(state);
 }
@@ -159,7 +160,7 @@ static double elapsed_seconds(struct timespec start, struct timespec end) {
 static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;char *response=NULL,*query_response=NULL;
   const char *body="{\"query\":\"apple\",\"vector\":[1,0],\"mode\":\"hybrid\",\"scope\":\"documents\",\"limit\":1}";char request[1024];
   response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"status\":\"live\""));free(response);response=NULL;
-  response=get(ctx,"/health/ready");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"ready\":true"));assert_non_null(strstr(response,"\"generation\":1"));assert_non_null(strstr(response,"\"state\":\"precomputed_ready\""));free(response);response=NULL;
+  response=get(ctx,"/health/ready");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"ready\":true"));assert_non_null(strstr(response,"\"generation\":1"));assert_non_null(strstr(response,"\"segment_health\""));assert_non_null(strstr(response,"\"document_records\":2"));assert_non_null(strstr(response,"\"state\":\"precomputed_ready\""));free(response);response=NULL;
   response=post(ctx,"/v2/passages:prepare","{\"id\":\"doc-new\",\"body\":\"Fresh APPLE.\"}");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"model_id\":\"embed-v1\""));assert_non_null(strstr(response,"\"dimensions\":2"));assert_non_null(strstr(response,"\"text\":\"fresh apple.\""));free(response);response=NULL;
   query_response=query(ctx,"/v2/search",body);assert_non_null(strstr(query_response,"200 OK"));assert_non_null(strstr(query_response,"Accept-Query: application/json"));assert_non_null(strstr(query_response,"\"id\":\"doc-fruit\""));
   response=post(ctx,"/v2/search",body);assert_string_equal(response,query_response);free(response);response=NULL;free(query_response);query_response=NULL;
@@ -180,6 +181,10 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   response=query(ctx,"/v2/documents:batch","{}");assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: POST"));assert_null(strstr(response,"Accept-Query:"));free(response);response=NULL;
   response=get(ctx,"/metrics");assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"text/plain; version=0.0.4"));
   assert_non_null(strstr(response,"yappod_v2_manifest_generation 1"));
+  assert_non_null(strstr(response,"yappod_v2_manifest_segments 1"));
+  assert_non_null(strstr(response,"yappod_v2_manifest_document_records 2"));
+  assert_non_null(strstr(response,"yappod_v2_small_segment_run 1"));
+  assert_non_null(strstr(response,"yappod_v2_auto_compaction_needed 0"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 2"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"retrieve\",status_class=\"2xx\"} 2"));
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
@@ -295,6 +300,12 @@ static void test_core_automatically_compacts_small_segments(void **state) {
   }
   assert_true(generation >= 5U);
   assert_true(segments < 4U);
+  response = get(ctx, "/metrics");
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(
+    response, "yappod_v2_small_segment_threshold_bytes 1048576"));
+  assert_non_null(strstr(response, "yappod_v2_auto_compaction_needed 0"));
+  free(response);
   response = post(
     ctx, "/v2/search",
     "{\"query\":\"automaticword\",\"mode\":\"lexical\","

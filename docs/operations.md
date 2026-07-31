@@ -149,6 +149,12 @@ coreは既定で30秒ごとにマニフェストを確認します。全コン�
 
 `/metrics`の`yappod_v2_compaction_state`と`yappod_v2_compaction_generation`で状態を確認できます。`interrupted`や`failed`の場合は、索引とログを保存してから`verify`を実行します。詳細は[索引の更新と保守](index-lifecycle.md)を参照してください。
 
+断片化の確認には、世代数ではなく`yappod_v2_manifest_segments`、
+`yappod_v2_small_segment_run`、`yappod_v2_auto_compaction_needed`を使います。
+`auto_compaction_needed`が1のまま次の確認間隔を複数回過ぎた場合は、`compaction_state`、coreの
+エラーログ、空き容量を確認します。文書記録数には古い版が含まれるため、利用者から見える文書数と
+同じ値として扱わないでください。
+
 ## 更新APIの認証
 
 `[daemon].write_token`を設定すると、`POST /v2/documents:batch`に`Authorization: Bearer <token>`が必要です。トークンは16〜255バイトで、空白を含められません。検索、取得、本文断片準備、ヘルスチェック、メトリクスにはこのトークンを要求しません。
@@ -181,5 +187,7 @@ coreは既定で30秒ごとにマニフェストを確認します。全コン�
 - `yappod_v2_inflight_requests`と上限の接近を確認します。
 - `yappod_v2_manifest_generation`が更新後に進むかを確認します。
 - `yappod_v2_compaction_state`が`running`のまま残っていないかを確認します。
+- `yappod_v2_auto_compaction_needed`が1のまま継続していないかを確認します。
+- `yappod_v2_manifest_segments`と`yappod_v2_small_segment_run`が保守後に減っているか確認します。
 
 Prometheusによる収集設定、全メトリクス、PromQL、アラート例は[監視とメトリクス](observability.md)に掲載しています。

@@ -561,6 +561,18 @@ if(YAPPOD_TESTS_NODAEMON)
   )
   target_include_directories(search_quality_metrics_test PRIVATE ${QUALITY_TEST_DIR})
 
+  add_yappod_cmocka_test(
+    segment_health_regression
+    ${QUALITY_TEST_DIR}/segment_health_regression_test.c
+    LABEL standalone
+    EXTRA_SOURCES ${QUALITY_TEST_DIR}/v2_quality_fixture.c
+    LIBRARIES yappod_server
+  )
+  target_include_directories(segment_health_regression_test PRIVATE
+    ${QUALITY_TEST_DIR})
+  target_link_libraries(segment_health_regression_test PRIVATE
+    yappod_components yappod::yyjson)
+
   add_executable(v2_load_probe ${QUALITY_TEST_DIR}/v2_load_probe.c)
   yappod_enable_warnings(v2_load_probe)
   target_include_directories(v2_load_probe PRIVATE ${TEST_COMMON_DIR})
