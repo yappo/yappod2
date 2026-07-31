@@ -7,6 +7,8 @@ typedef struct {
 
 void YAP_V2_writer_lock_init(YAP_V2_WRITER_LOCK *lock);
 int YAP_V2_writer_lock_acquire(YAP_V2_WRITER_LOCK *lock, const char *index_dir);
+int YAP_V2_compaction_lock_acquire(YAP_V2_WRITER_LOCK *lock,
+                                   const char *index_dir);
 void YAP_V2_writer_lock_release(YAP_V2_WRITER_LOCK *lock);
 
 #endif

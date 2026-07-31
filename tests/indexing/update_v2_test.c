@@ -411,6 +411,101 @@ static void test_compaction_splits_output_and_builds_segment_local_bm25_stats(vo
   ytest_env_destroy(&env);
 }
 
+typedef struct {
+  ytest_env_t *env;
+  int called;
+  uint64_t update_generation;
+} COMPACTION_UPDATE_HOOK;
+
+static void append_update_during_compaction(const char *point, void *context) {
+  COMPACTION_UPDATE_HOOK *hook = context;
+  yyjson_doc *document;
+  if (strcmp(point, "before_publish_lock") != 0) return;
+  hook->called++;
+  document = execute(hook->env, YAP_V2_HTTP_INGEST,
+    "{\"operations\":[{\"operation\":\"upsert\","
+    "\"id\":\"doc-concurrent\",\"body\":\"while\","
+    "\"vectors\":[[0,1]]}]}", 200);
+  hook->update_generation = yyjson_get_uint(
+    yyjson_obj_get(yyjson_doc_get_root(document), "generation"));
+  yyjson_doc_free(document);
+}
+
+static void test_incremental_compaction_preserves_concurrent_append(void **state) {
+  ytest_env_t env;
+  YAP_V2_COMPACTION_RESULT result;
+  COMPACTION_UPDATE_HOOK hook;
+  char error[256] = {0};
+  size_t segments;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  apply_live_changes(&env);
+  memset(&hook, 0, sizeof(hook));
+  hook.env = &env;
+  YAP_V2_compaction_set_hook_for_testing(
+    append_update_during_compaction, &hook);
+  YAP_V2_compaction_result_init(&result);
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error,
+                                  sizeof(error)), YAP_V2_OK);
+  YAP_V2_compaction_set_hook_for_testing(NULL, NULL);
+  assert_int_equal(hook.called, 1);
+  assert_int_equal(hook.update_generation, 3U);
+  assert_int_equal(result.generation, 4U);
+  assert_int_equal(manifest_generation(&env, &segments), 4U);
+  assert_int_equal(segments, 2U);
+  assert_int_equal(search_count(&env, "fresh", "doc-a"), 1U);
+  assert_int_equal(search_count(&env, "while", "doc-concurrent"), 1U);
+  assert_int_equal(search_count(&env, "gone", NULL), 0U);
+  YAP_V2_compaction_result_free(&result);
+  ytest_env_destroy(&env);
+}
+
+static void test_incremental_compaction_keeps_boundary_tombstone(void **state) {
+  ytest_env_t env;
+  YAP_V2_COMPACTION_RESULT result;
+  YAP_V2_MANIFEST manifest;
+  yyjson_doc *document;
+  char request[512], manifest_path[PATH_MAX], error[256] = {0};
+  size_t i;
+  int tombstone_found = 0;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  document = execute(&env, YAP_V2_HTTP_INGEST,
+    "{\"operations\":[{\"operation\":\"delete\",\"id\":\"doc-b\"}]}",
+    200);
+  yyjson_doc_free(document);
+  for (i = 0U; i < 7U; i++) {
+    assert_true(snprintf(request, sizeof(request),
+      "{\"operations\":[{\"operation\":\"upsert\","
+      "\"id\":\"extra-%zu\",\"body\":\"tiny\",\"vectors\":[[1,0]]}]}",
+      i) > 0);
+    document = execute(&env, YAP_V2_HTTP_INGEST, request, 200);
+    yyjson_doc_free(document);
+  }
+  assert_int_equal(manifest_generation(&env, NULL), 9U);
+  YAP_V2_compaction_result_init(&result);
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &result, error,
+                                  sizeof(error)), YAP_V2_OK);
+  assert_int_equal(result.generation, 10U);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path),
+                                   env.tmp_root, "manifest.json"), 0);
+  assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
+  assert_true(manifest.segment_count < 9U);
+  assert_string_equal(manifest.segments[0].id, "seg-1");
+  for (i = 0U; i < manifest.segment_count; i++)
+    if (manifest.segments[i].tombstone_count > 0U)
+      tombstone_found = 1;
+  assert_true(tombstone_found);
+  assert_int_equal(search_count(&env, "gone", NULL), 0U);
+  assert_int_equal(search_count(&env, "tiny", NULL), 7U);
+  YAP_V2_manifest_free(&manifest);
+  YAP_V2_compaction_result_free(&result);
+  ytest_env_destroy(&env);
+}
+
 static void run_crashing_compaction(ytest_env_t *env, const char *point) {
   pid_t child = fork(); int child_status;
   assert_true(child >= 0);
@@ -459,6 +554,8 @@ int main(void) {
     cmocka_unit_test(test_update_accepts_more_than_legacy_limit_and_rejects_over_max),
     cmocka_unit_test(test_compaction_live_only_preserves_all_search_modes),
     cmocka_unit_test(test_compaction_splits_output_and_builds_segment_local_bm25_stats),
+    cmocka_unit_test(test_incremental_compaction_preserves_concurrent_append),
+    cmocka_unit_test(test_incremental_compaction_keeps_boundary_tombstone),
     cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
