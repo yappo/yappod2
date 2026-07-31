@@ -24,7 +24,8 @@ HTTP APIを提供するときは、`yappod_core`と`yappod_front`の二つのサ
 
 索引は複数の「セグメント」から構成されます。セグメントは、ある時点で登録された文書、検索用の語句一覧、本文断片、
 ベクトルなどを一組のファイルとして保存したものです。更新時は既存ファイルを直接書き換えず、新しいセグメントを追加します。
-`manifest.json`には、現在の検索で使用するセグメントと索引の世代番号が記録されます。
+バイナリファイルの`manifest.yap2`には、現在の検索で使用するセグメントと索引の世代番号が
+記録されます。
 
 ## 主な機能
 
@@ -93,8 +94,11 @@ cmake --install build --prefix "$HOME/yappod2"
   --input examples/documents.lexical.ndjson
 ```
 
-成功すると、索引ディレクトリに`config.toml`、`manifest.json`、`segments/`が作成されます。
+成功すると、索引ディレクトリに`config.toml`、`manifest.yap2`、`segments/`が作成されます。
 出力先がすでに存在する場合は上書きしません。
+
+旧JSON形式の`manifest.json`を持つ索引は読み込めません。ファイル名だけを変更せず、元の正式入力から
+新しい索引ディレクトリへ再作成してください。
 
 ```sh
 ./build/search \

@@ -161,7 +161,7 @@ static int build_index(const YAP_APPLICATION_CONFIG *application, const char *in
   (void)snprintf(temporary, length + 16U, "%s.tmp.XXXXXX", index_dir);
   if (mkdtemp(temporary) == NULL ||
       join_path(copied_config, sizeof(copied_config), temporary, "config.toml") != 0 ||
-      join_path(manifest_path, sizeof(manifest_path), temporary, "manifest.json") != 0 ||
+      join_path(manifest_path, sizeof(manifest_path), temporary, "manifest.yap2") != 0 ||
       join_path(segments_path, sizeof(segments_path), temporary, "segments") != 0 ||
       mkdir(segments_path, 0700) != 0) {
     (void)snprintf(error, error_size, "cannot initialize index: %s", strerror(errno));

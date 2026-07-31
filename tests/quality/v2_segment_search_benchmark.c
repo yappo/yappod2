@@ -239,7 +239,7 @@ static int create_index(const char *index_dir, const BENCHMARK_OPTIONS *options)
       fflush(stderr);
     }
   }
-  if (ytest_path_join(path, sizeof(path), index_dir, "manifest.json") != 0 ||
+  if (ytest_path_join(path, sizeof(path), index_dir, "manifest.yap2") != 0 ||
       YAP_V2_manifest_save_atomic(path, &manifest) != YAP_V2_OK)
     goto manifest_done;
   status = 0;

@@ -180,7 +180,7 @@ static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   memset(runtime, 0, sizeof(*runtime));
   YAP_V2_manifest_init(&runtime->manifest); YAP_V2_snapshot_manager_init(&runtime->manager);
   if (path_join(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
-      path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0)
+      path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0)
     return YAP_V2_INVALID_ARGUMENT;
   status = YAP_V2_config_load(config_path, &runtime->config, error, sizeof(error));
   if (status != YAP_V2_OK) return status;
@@ -243,7 +243,7 @@ static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
   int status, changed = 0;
   YAP_V2_manifest_init(&manifest);
   YAP_V2_manifest_segment_map_init(&previous_segments);
-  if (path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0)
+  if (path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0)
     return YAP_V2_INVALID_ARGUMENT;
   status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &manifest);
   if (status != YAP_V2_OK) goto done;

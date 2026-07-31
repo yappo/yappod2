@@ -144,7 +144,7 @@ target_link_libraries(yappod_config PRIVATE yappod_common yappod::tomlc99)
 add_library(yappod_storage STATIC ${YAPPOD_STORAGE_SOURCES})
 add_library(yappod::storage ALIAS yappod_storage)
 target_include_directories(yappod_storage PUBLIC ${SRC_DIR})
-target_link_libraries(yappod_storage PRIVATE yappod_config yappod::yyjson Threads::Threads)
+target_link_libraries(yappod_storage PRIVATE yappod_config Threads::Threads)
 
 add_library(yappod_components STATIC ${YAPPOD_COMPONENTS_SOURCES})
 add_library(yappod::components ALIAS yappod_components)

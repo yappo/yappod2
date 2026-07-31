@@ -149,7 +149,7 @@ int YAP_Test_v2_quality_index_create_segments(const char *index_dir,
       return -1;
     }
   }
-  if (ytest_path_join(path, sizeof(path), index_dir, "manifest.json") != 0 ||
+  if (ytest_path_join(path, sizeof(path), index_dir, "manifest.yap2") != 0 ||
       YAP_V2_manifest_save_atomic(path, &manifest) != YAP_V2_OK) {
     YAP_V2_manifest_free(&manifest);
     return -1;

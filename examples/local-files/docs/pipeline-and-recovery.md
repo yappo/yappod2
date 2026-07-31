@@ -129,11 +129,8 @@ manifest.json
 索引作成後に次を確認します。
 
 - `config.toml`の形式、トークナイザー、文書分割、ベクトル、メタデータが要求と一致します。
-- `manifest.json`の世代が索引作成結果と一致します。
-- セグメントの文書合計が受理件数と一致します。
-- 全コンポーネントの実サイズとSHA-256がマニフェストに一致します。
-- 語彙コンポーネントとメタデータコンポーネントが存在します。
-- 複合検索では`vectors.yap2`と`vectors.usearch`も存在します。
+- `yappo_makeindex verify`が`manifest.yap2`と全コンポーネントを検証し、報告した世代が索引作成結果と一致します。
+- 索引作成結果の受理件数を`local-files-build.json`へ保存します。
 
 成功すると索引直下へ次の`local-files-build.json`を保存します。
 
@@ -186,6 +183,6 @@ rm -rf examples/data/local-files
 - 該当分割ファイルの記述子と実際のSHA-256です。
 - 埋め込み処理用の`progress.json`、`checkpoint.json`、ジャーナル末尾です。
 - 標準エラー出力と`failures-*.ndjson`です。
-- 索引の`manifest.json`と`yappo_makeindex verify`結果です。
+- 索引の`manifest.yap2`と`yappo_makeindex verify`結果です。
 
 未知の例外だけを追加調査する場合は`YAPPOD_EXAMPLE_DEBUG=1`を付けて再実行します。通常の設定不一致を解決する最初の手段ではありません。

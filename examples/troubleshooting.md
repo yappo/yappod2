@@ -166,8 +166,8 @@ Wikipediaの処理は、既存の正式出力を無条件に上書きしませ�
 |---|---|---|---|
 | `cannot read shared config` | `--config`がない、または読めません。 | `Config`の絶対パスを確認します。 | [`config.example.toml`](search-web/config.example.toml)と比較して同じコマンドを再実行します。 |
 | `invalid shared config`、`unknown key`、`must be`、`is required` | TOML構文、キー名、型、範囲、必須項目が不正です。 | [`search-webの設定`](search-web/README.md#起動に必要な設定)で表示されたキーを確認します。 | 不要な任意セクションは見出しごと削除し、必要なキーを揃えます。 |
-| `index path already exists` | `build`で既存索引を上書きしようとしました。 | `index.directory`と、その中の`manifest.json`を確認します。 | 既存索引を使うなら`start`、作り直すなら未使用の`index.directory`を指定します。 |
-| `not a valid index` | ディレクトリはありますが、有効な索引ではありません。 | `config.toml`、`manifest.json`、`segments/`を確認します。 | ファイルを継ぎ足さず、正しい入力から別ディレクトリへ索引を作成します。 |
+| `index path already exists` | `build`で既存索引を上書きしようとしました。 | `index.directory`と、その中の`manifest.yap2`を確認します。 | 既存索引を使うなら`start`、作り直すなら未使用の`index.directory`を指定します。 |
+| `not a valid index` | ディレクトリはありますが、有効な索引ではありません。 | `config.toml`、`manifest.yap2`、`segments/`を確認します。 | ファイルを継ぎ足さず、正しい入力から別ディレクトリへ索引を作成します。 |
 | `yappod binaries not found`または`cannot run` | Yappod2実行ファイルが未作成、または設定したパスが不正です。 | `build/yappod_core`、`build/yappod_front`と設定パスを確認します。 | `cmake --build build -j`を実行します。 |
 | `dependencies not found` | search-webのnpm依存パッケージがありません。 | `examples/search-web/node_modules`を確認します。 | `(cd examples/search-web && npm ci)`を実行します。 |
 

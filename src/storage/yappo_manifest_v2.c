@@ -3,16 +3,17 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <yyjson.h>
 
-#define YAP_V2_MAX_MANIFEST_BYTES (16U * 1024U * 1024U)
+#define YAP_V2_MANIFEST_PAYLOAD_VERSION 1U
+#define YAP_V2_MANIFEST_PAYLOAD_HEADER_BYTES 40U
+#define YAP_V2_MANIFEST_SEGMENT_FIXED_BYTES 32U
+#define YAP_V2_MANIFEST_COMPONENT_FIXED_BYTES 56U
 
 static size_t segment_id_hash(const char *value) {
   size_t hash = (size_t)1469598103934665603ULL;
@@ -113,102 +114,118 @@ int YAP_V2_manifest_segment_map_find(const YAP_V2_MANIFEST_SEGMENT_MAP *map,
   return YAP_V2_NOT_FOUND;
 }
 
-static int exact_keys(yyjson_val *object, const char *const *names, size_t expected) {
-  yyjson_obj_iter iterator;
-  yyjson_val *key;
-  size_t seen = 0U;
-  if (!yyjson_is_obj(object) || yyjson_obj_size(object) != expected)
-    return 0;
-  iterator = yyjson_obj_iter_with(object);
-  while ((key = yyjson_obj_iter_next(&iterator)) != NULL) {
-    const char *name = yyjson_get_str(key);
-    size_t i;
-    int found = 0;
-    for (i = 0U; names[i] != NULL; i++)
-      if (strcmp(name, names[i]) == 0) {
-        found = 1;
-        break;
-      }
-    if (!found)
-      return 0;
-    seen++;
-  }
-  return seen == expected;
+typedef struct {
+  const unsigned char *data;
+  size_t len;
+  size_t offset;
+} MANIFEST_READER;
+
+static void put_u32_le(unsigned char *output, uint32_t value) {
+  output[0] = (unsigned char)(value & 0xffU);
+  output[1] = (unsigned char)((value >> 8) & 0xffU);
+  output[2] = (unsigned char)((value >> 16) & 0xffU);
+  output[3] = (unsigned char)((value >> 24) & 0xffU);
 }
 
-static int hex_decode(yyjson_val *value, unsigned char output[32]) {
-  const char *text;
+static void put_u64_le(unsigned char *output, uint64_t value) {
   size_t i;
-  if (!yyjson_is_str(value) || yyjson_get_len(value) != 64U)
-    return YAP_V2_INVALID_FORMAT;
-  text = yyjson_get_str(value);
-  for (i = 0U; i < 32U; i++) {
-    unsigned char a = (unsigned char)text[i * 2U], b = (unsigned char)text[i * 2U + 1U];
-    int high = (a >= '0' && a <= '9') ? a - '0' : (a >= 'a' && a <= 'f') ? a - 'a' + 10 : -1;
-    int low = (b >= '0' && b <= '9') ? b - '0' : (b >= 'a' && b <= 'f') ? b - 'a' + 10 : -1;
-    if (high < 0 || low < 0)
-      return YAP_V2_INVALID_FORMAT;
-    output[i] = (unsigned char)((high << 4) | low);
+  for (i = 0U; i < 8U; i++)
+    output[i] = (unsigned char)((value >> (i * 8U)) & 0xffU);
+}
+
+static uint32_t get_u32_le(const unsigned char *input) {
+  return (uint32_t)input[0] | ((uint32_t)input[1] << 8) | ((uint32_t)input[2] << 16) |
+         ((uint32_t)input[3] << 24);
+}
+
+static uint64_t get_u64_le(const unsigned char *input) {
+  uint64_t value = 0U;
+  size_t i;
+  for (i = 0U; i < 8U; i++) value |= (uint64_t)input[i] << (i * 8U);
+  return value;
+}
+
+static uint32_t crc32c(const unsigned char *data, size_t len) {
+  uint32_t crc = UINT32_C(0xffffffff);
+  size_t i;
+  for (i = 0U; i < len; i++) {
+    unsigned int bit;
+    crc ^= data[i];
+    for (bit = 0U; bit < 8U; bit++)
+      crc = (crc >> 1U) ^ (UINT32_C(0x82f63b78) & (uint32_t)-(int32_t)(crc & 1U));
   }
+  return ~crc;
+}
+
+static int reader_take(MANIFEST_READER *reader, size_t bytes, const unsigned char **value) {
+  if (reader->offset > reader->len || bytes > reader->len - reader->offset)
+    return YAP_V2_INVALID_FORMAT;
+  *value = reader->data + reader->offset;
+  reader->offset += bytes;
   return YAP_V2_OK;
 }
 
-static int value_u64(yyjson_val *object, const char *key, uint64_t *output) {
-  yyjson_val *value = yyjson_obj_get(object, key);
-  if (!yyjson_is_uint(value))
-    return YAP_V2_INVALID_FORMAT;
-  *output = yyjson_get_uint(value);
-  return YAP_V2_OK;
-}
-
-static int parse_component(yyjson_val *value, YAP_V2_COMPONENT_DESCRIPTOR *component) {
-  static const char *const keys[] = {"name", "file_type", "records", "file_bytes", "sha256", NULL};
-  yyjson_val *name, *type;
-  int status;
-  if (!exact_keys(value, keys, 5U))
-    return YAP_V2_INVALID_FORMAT;
-  name = yyjson_obj_get(value, "name");
-  type = yyjson_obj_get(value, "file_type");
-  if (!yyjson_is_str(name) || yyjson_get_len(name) == 0U ||
-      yyjson_get_len(name) > YAP_V2_MAX_COMPONENT_NAME_BYTES || !yyjson_is_uint(type) ||
-      yyjson_get_uint(type) > UINT32_MAX)
-    return YAP_V2_INVALID_FORMAT;
-  memset(component, 0, sizeof(*component));
-  memcpy(component->name, yyjson_get_str(name), yyjson_get_len(name));
-  component->file_type = (uint32_t)yyjson_get_uint(type);
-  status = value_u64(value, "records", &component->record_count);
-  if (status == YAP_V2_OK)
-    status = value_u64(value, "file_bytes", &component->file_bytes);
-  if (status == YAP_V2_OK)
-    status = hex_decode(yyjson_obj_get(value, "sha256"), component->checksum);
+static int reader_u32(MANIFEST_READER *reader, uint32_t *value) {
+  const unsigned char *bytes;
+  int status = reader_take(reader, 4U, &bytes);
+  if (status == YAP_V2_OK) *value = get_u32_le(bytes);
   return status;
 }
 
-static int parse_segment(yyjson_val *value, YAP_V2_SEGMENT_DESCRIPTOR *segment) {
-  static const char *const keys[] = {"id",         "documents",  "passages",
-                                     "tombstones", "components", NULL};
-  yyjson_val *id, *components, *item;
-  yyjson_arr_iter iterator;
-  int status = YAP_V2_OK;
-  if (!exact_keys(value, keys, 5U))
-    return YAP_V2_INVALID_FORMAT;
-  id = yyjson_obj_get(value, "id");
-  components = yyjson_obj_get(value, "components");
-  if (!yyjson_is_str(id) || yyjson_get_len(id) == 0U ||
-      yyjson_get_len(id) > YAP_V2_MAX_IDENTIFIER_BYTES || !yyjson_is_arr(components) ||
-      yyjson_arr_size(components) == 0U || yyjson_arr_size(components) > YAP_V2_MAX_COMPONENTS)
-    return YAP_V2_INVALID_FORMAT;
+static int reader_u64(MANIFEST_READER *reader, uint64_t *value) {
+  const unsigned char *bytes;
+  int status = reader_take(reader, 8U, &bytes);
+  if (status == YAP_V2_OK) *value = get_u64_le(bytes);
+  return status;
+}
+
+static int parse_component(MANIFEST_READER *reader,
+                           YAP_V2_COMPONENT_DESCRIPTOR *component) {
+  const unsigned char *checksum;
+  const unsigned char *name;
+  uint32_t name_bytes;
+  int status;
+  memset(component, 0, sizeof(*component));
+  status = reader_u32(reader, &name_bytes);
+  if (status == YAP_V2_OK) status = reader_u32(reader, &component->file_type);
+  if (status == YAP_V2_OK) status = reader_u64(reader, &component->record_count);
+  if (status == YAP_V2_OK) status = reader_u64(reader, &component->file_bytes);
+  if (status == YAP_V2_OK) status = reader_take(reader, sizeof(component->checksum), &checksum);
+  if (status == YAP_V2_OK && (name_bytes == 0U || name_bytes > YAP_V2_MAX_COMPONENT_NAME_BYTES))
+    status = YAP_V2_INVALID_FORMAT;
+  if (status == YAP_V2_OK) status = reader_take(reader, name_bytes, &name);
+  if (status == YAP_V2_OK && memchr(name, '\0', name_bytes) != NULL)
+    status = YAP_V2_INVALID_FORMAT;
+  if (status != YAP_V2_OK) return status;
+  memcpy(component->checksum, checksum, sizeof(component->checksum));
+  memcpy(component->name, name, name_bytes);
+  return YAP_V2_OK;
+}
+
+static int parse_segment(MANIFEST_READER *reader, YAP_V2_SEGMENT_DESCRIPTOR *segment) {
+  const unsigned char *id;
+  uint32_t id_bytes;
+  uint32_t component_count;
+  uint32_t i;
+  int status;
   memset(segment, 0, sizeof(*segment));
-  memcpy(segment->id, yyjson_get_str(id), yyjson_get_len(id));
-  status = value_u64(value, "documents", &segment->document_count);
-  if (status == YAP_V2_OK)
-    status = value_u64(value, "passages", &segment->passage_count);
-  if (status == YAP_V2_OK)
-    status = value_u64(value, "tombstones", &segment->tombstone_count);
-  yyjson_arr_iter_init(components, &iterator);
-  while (status == YAP_V2_OK && (item = yyjson_arr_iter_next(&iterator)) != NULL) {
+  status = reader_u32(reader, &id_bytes);
+  if (status == YAP_V2_OK) status = reader_u32(reader, &component_count);
+  if (status == YAP_V2_OK) status = reader_u64(reader, &segment->document_count);
+  if (status == YAP_V2_OK) status = reader_u64(reader, &segment->passage_count);
+  if (status == YAP_V2_OK) status = reader_u64(reader, &segment->tombstone_count);
+  if (status == YAP_V2_OK &&
+      (id_bytes == 0U || id_bytes > YAP_V2_MAX_IDENTIFIER_BYTES || component_count == 0U ||
+       component_count > YAP_V2_MAX_COMPONENTS))
+    status = YAP_V2_INVALID_FORMAT;
+  if (status == YAP_V2_OK) status = reader_take(reader, id_bytes, &id);
+  if (status == YAP_V2_OK && memchr(id, '\0', id_bytes) != NULL)
+    status = YAP_V2_INVALID_FORMAT;
+  if (status != YAP_V2_OK) return status;
+  memcpy(segment->id, id, id_bytes);
+  for (i = 0U; status == YAP_V2_OK && i < component_count; i++) {
     YAP_V2_COMPONENT_DESCRIPTOR component;
-    status = parse_component(item, &component);
+    status = parse_component(reader, &component);
     if (status == YAP_V2_OK)
       status = YAP_V2_segment_descriptor_add_component(segment, &component);
   }
@@ -216,70 +233,87 @@ static int parse_segment(yyjson_val *value, YAP_V2_SEGMENT_DESCRIPTOR *segment) 
 }
 
 int YAP_V2_manifest_load(const char *path, YAP_V2_MANIFEST *manifest) {
-  static const char *const keys[] = {"format_version", "generation", "config_fingerprint",
-                                     "segments", NULL};
   FILE *file;
   struct stat stat_buffer;
-  char *data;
+  unsigned char *data;
   size_t read_bytes;
-  yyjson_doc *document;
-  yyjson_read_err error;
-  yyjson_val *root, *segments, *item, *version;
-  yyjson_arr_iter iterator;
+  size_t file_size;
+  const unsigned char *fingerprint;
+  MANIFEST_READER reader;
+  YAP_V2_FILE_HEADER header;
   YAP_V2_MANIFEST parsed;
+  uint32_t payload_version;
+  uint32_t segment_count;
+  uint32_t i;
   int status = YAP_V2_OK;
   if (path == NULL || manifest == NULL)
     return YAP_V2_INVALID_ARGUMENT;
   file = fopen(path, "rb");
   if (file == NULL)
     return YAP_V2_IO_ERROR;
-  if (fstat(fileno(file), &stat_buffer) != 0 || stat_buffer.st_size < 0 ||
-      (uint64_t)stat_buffer.st_size > YAP_V2_MAX_MANIFEST_BYTES) {
+  if (fstat(fileno(file), &stat_buffer) != 0 || stat_buffer.st_size < 0) {
+    fclose(file);
+    return YAP_V2_IO_ERROR;
+  }
+  if (stat_buffer.st_size < (off_t)(YAP_V2_FILE_HEADER_BYTES +
+                                    YAP_V2_MANIFEST_PAYLOAD_HEADER_BYTES)) {
+    fclose(file);
+    return YAP_V2_INVALID_FORMAT;
+  }
+  if ((uint64_t)stat_buffer.st_size > YAP_V2_MAX_MANIFEST_BYTES) {
     fclose(file);
     return YAP_V2_OUT_OF_RANGE;
   }
-  data = (char *)malloc((size_t)stat_buffer.st_size + 1U);
+  file_size = (size_t)stat_buffer.st_size;
+  data = malloc(file_size);
   if (data == NULL) {
     fclose(file);
     return YAP_V2_ALLOCATION_FAILED;
   }
-  read_bytes = fread(data, 1U, (size_t)stat_buffer.st_size, file);
-  if (read_bytes != (size_t)stat_buffer.st_size || fclose(file) != 0) {
+  read_bytes = fread(data, 1U, file_size, file);
+  if (read_bytes != file_size) {
+    fclose(file);
     free(data);
     return YAP_V2_IO_ERROR;
   }
-  data[read_bytes] = '\0';
-  document = yyjson_read_opts(data, read_bytes, YYJSON_READ_NOFLAG, NULL, &error);
-  free(data);
-  if (document == NULL)
-    return YAP_V2_INVALID_FORMAT;
-  root = yyjson_doc_get_root(document);
+  if (fclose(file) != 0) {
+    free(data);
+    return YAP_V2_IO_ERROR;
+  }
   YAP_V2_manifest_init(&parsed);
-  if (!exact_keys(root, keys, 4U)) {
+  status = YAP_V2_file_header_decode(data, &header);
+  if (status == YAP_V2_OK &&
+      (header.file_type != YAP_V2_FILE_MANIFEST ||
+       header.payload_bytes != file_size - YAP_V2_FILE_HEADER_BYTES))
     status = YAP_V2_INVALID_FORMAT;
-    goto done;
-  }
-  version = yyjson_obj_get(root, "format_version");
-  segments = yyjson_obj_get(root, "segments");
-  if (!yyjson_is_uint(version) || yyjson_get_uint(version) != YAP_V2_FORMAT_VERSION ||
-      !yyjson_is_arr(segments)) {
+  if (status == YAP_V2_OK &&
+      crc32c(data + YAP_V2_FILE_HEADER_BYTES, (size_t)header.payload_bytes) !=
+        header.payload_crc32c)
+    status = YAP_V2_CHECKSUM_MISMATCH;
+  reader.data = data + YAP_V2_FILE_HEADER_BYTES;
+  reader.len = file_size - YAP_V2_FILE_HEADER_BYTES;
+  reader.offset = 0U;
+  if (status == YAP_V2_OK) status = reader_u32(&reader, &payload_version);
+  if (status == YAP_V2_OK) status = reader_u32(&reader, &segment_count);
+  if (status == YAP_V2_OK) status = reader_take(&reader, 32U, &fingerprint);
+  if (status == YAP_V2_OK &&
+      (payload_version != YAP_V2_MANIFEST_PAYLOAD_VERSION ||
+       segment_count > YAP_V2_MAX_SEGMENTS))
     status = YAP_V2_INVALID_FORMAT;
-    goto done;
+  if (status == YAP_V2_OK) {
+    parsed.generation = header.generation;
+    memcpy(parsed.config_fingerprint, fingerprint, sizeof(parsed.config_fingerprint));
   }
-  status = value_u64(root, "generation", &parsed.generation);
-  if (status == YAP_V2_OK)
-    status = hex_decode(yyjson_obj_get(root, "config_fingerprint"), parsed.config_fingerprint);
-  yyjson_arr_iter_init(segments, &iterator);
-  while (status == YAP_V2_OK && (item = yyjson_arr_iter_next(&iterator)) != NULL) {
+  for (i = 0U; status == YAP_V2_OK && i < segment_count; i++) {
     YAP_V2_SEGMENT_DESCRIPTOR segment;
-    status = parse_segment(item, &segment);
+    status = parse_segment(&reader, &segment);
     if (status == YAP_V2_OK)
       status = YAP_V2_manifest_add_segment(&parsed, &segment);
   }
+  if (status == YAP_V2_OK && reader.offset != reader.len) status = YAP_V2_INVALID_FORMAT;
   if (status == YAP_V2_OK)
     status = YAP_V2_manifest_validate(&parsed);
-done:
-  yyjson_doc_free(document);
+  free(data);
   if (status == YAP_V2_OK) {
     YAP_V2_manifest_free(manifest);
     *manifest = parsed;
@@ -305,49 +339,87 @@ int YAP_V2_manifest_load_for_config(const char *path, const YAP_V2_CONFIG *confi
   return status;
 }
 
-static int write_hex(FILE *file, const unsigned char bytes[32]) {
-  static const char digits[] = "0123456789abcdef";
-  size_t i;
-  if (fputc('"', file) == EOF)
-    return -1;
-  for (i = 0U; i < 32U; i++)
-    if (fputc(digits[bytes[i] >> 4], file) == EOF || fputc(digits[bytes[i] & 15U], file) == EOF)
-      return -1;
-  return fputc('"', file) == EOF ? -1 : 0;
+static int add_size(size_t *total, size_t additional) {
+  if (additional > SIZE_MAX - *total) return YAP_V2_OUT_OF_RANGE;
+  *total += additional;
+  return YAP_V2_OK;
 }
 
-static int write_json(FILE *file, const YAP_V2_MANIFEST *manifest) {
-  size_t i, j;
-  if (fprintf(file, "{\"format_version\":%u,\"generation\":%" PRIu64 ",\"config_fingerprint\":",
-              manifest->format_version, manifest->generation) < 0 ||
-      write_hex(file, manifest->config_fingerprint) != 0 || fputs(",\"segments\":[", file) == EOF)
-    return -1;
+static int manifest_payload_size(const YAP_V2_MANIFEST *manifest, size_t *payload_bytes) {
+  size_t total = YAP_V2_MANIFEST_PAYLOAD_HEADER_BYTES;
+  size_t i;
   for (i = 0U; i < manifest->segment_count; i++) {
     const YAP_V2_SEGMENT_DESCRIPTOR *segment = &manifest->segments[i];
-    if (i > 0U && fputc(',', file) == EOF)
-      return -1;
-    if (fprintf(file,
-                "{\"id\":\"%s\",\"documents\":%" PRIu64 ",\"passages\":%" PRIu64
-                ",\"tombstones\":%" PRIu64 ",\"components\":[",
-                segment->id, segment->document_count, segment->passage_count,
-                segment->tombstone_count) < 0)
-      return -1;
+    size_t j;
+    int status = add_size(&total, YAP_V2_MANIFEST_SEGMENT_FIXED_BYTES + strlen(segment->id));
+    if (status != YAP_V2_OK) return status;
     for (j = 0U; j < segment->component_count; j++) {
       const YAP_V2_COMPONENT_DESCRIPTOR *component = &segment->components[j];
-      if (j > 0U && fputc(',', file) == EOF)
-        return -1;
-      if (fprintf(file,
-                  "{\"name\":\"%s\",\"file_type\":%u,\"records\":%" PRIu64
-                  ",\"file_bytes\":%" PRIu64 ",\"sha256\":",
-                  component->name, component->file_type, component->record_count,
-                  component->file_bytes) < 0 ||
-          write_hex(file, component->checksum) != 0 || fputc('}', file) == EOF)
-        return -1;
+      status = add_size(&total,
+                        YAP_V2_MANIFEST_COMPONENT_FIXED_BYTES + strlen(component->name));
+      if (status != YAP_V2_OK) return status;
     }
-    if (fputs("]}", file) == EOF)
-      return -1;
   }
-  return fputs("]}", file) == EOF ? -1 : 0;
+  if (total > YAP_V2_MAX_MANIFEST_BYTES - YAP_V2_FILE_HEADER_BYTES)
+    return YAP_V2_OUT_OF_RANGE;
+  *payload_bytes = total;
+  return YAP_V2_OK;
+}
+
+static int encode_manifest(const YAP_V2_MANIFEST *manifest, unsigned char *file_data,
+                           size_t file_size) {
+  YAP_V2_FILE_HEADER header;
+  unsigned char *payload = file_data + YAP_V2_FILE_HEADER_BYTES;
+  size_t offset = 0U;
+  size_t i;
+  put_u32_le(payload + offset, YAP_V2_MANIFEST_PAYLOAD_VERSION);
+  offset += 4U;
+  put_u32_le(payload + offset, (uint32_t)manifest->segment_count);
+  offset += 4U;
+  memcpy(payload + offset, manifest->config_fingerprint, 32U);
+  offset += 32U;
+  for (i = 0U; i < manifest->segment_count; i++) {
+    const YAP_V2_SEGMENT_DESCRIPTOR *segment = &manifest->segments[i];
+    size_t id_bytes = strlen(segment->id);
+    size_t j;
+    put_u32_le(payload + offset, (uint32_t)id_bytes);
+    offset += 4U;
+    put_u32_le(payload + offset, (uint32_t)segment->component_count);
+    offset += 4U;
+    put_u64_le(payload + offset, segment->document_count);
+    offset += 8U;
+    put_u64_le(payload + offset, segment->passage_count);
+    offset += 8U;
+    put_u64_le(payload + offset, segment->tombstone_count);
+    offset += 8U;
+    memcpy(payload + offset, segment->id, id_bytes);
+    offset += id_bytes;
+    for (j = 0U; j < segment->component_count; j++) {
+      const YAP_V2_COMPONENT_DESCRIPTOR *component = &segment->components[j];
+      size_t name_bytes = strlen(component->name);
+      put_u32_le(payload + offset, (uint32_t)name_bytes);
+      offset += 4U;
+      put_u32_le(payload + offset, component->file_type);
+      offset += 4U;
+      put_u64_le(payload + offset, component->record_count);
+      offset += 8U;
+      put_u64_le(payload + offset, component->file_bytes);
+      offset += 8U;
+      memcpy(payload + offset, component->checksum, 32U);
+      offset += 32U;
+      memcpy(payload + offset, component->name, name_bytes);
+      offset += name_bytes;
+    }
+  }
+  if (offset != file_size - YAP_V2_FILE_HEADER_BYTES) return YAP_V2_CONFLICT;
+  memset(&header, 0, sizeof(header));
+  header.format_version = YAP_V2_FORMAT_VERSION;
+  header.header_bytes = YAP_V2_FILE_HEADER_BYTES;
+  header.file_type = YAP_V2_FILE_MANIFEST;
+  header.generation = manifest->generation;
+  header.payload_bytes = offset;
+  header.payload_crc32c = crc32c(payload, offset);
+  return YAP_V2_file_header_encode(&header, file_data);
 }
 
 static int fsync_parent(const char *path) {
@@ -377,7 +449,10 @@ static int fsync_parent(const char *path) {
 
 int YAP_V2_manifest_save_atomic(const char *path, const YAP_V2_MANIFEST *manifest) {
   FILE *file = NULL;
+  unsigned char *file_data = NULL;
   char *temporary;
+  size_t payload_bytes;
+  size_t file_size;
   size_t length;
   int status;
   int write_failed = 0;
@@ -389,23 +464,38 @@ int YAP_V2_manifest_save_atomic(const char *path, const YAP_V2_MANIFEST *manifes
   if (status != YAP_V2_OK) {
     return status;
   }
+  status = manifest_payload_size(manifest, &payload_bytes);
+  if (status != YAP_V2_OK) return status;
+  file_size = YAP_V2_FILE_HEADER_BYTES + payload_bytes;
+  file_data = malloc(file_size);
+  if (file_data == NULL) return YAP_V2_ALLOCATION_FAILED;
+  status = encode_manifest(manifest, file_data, file_size);
+  if (status != YAP_V2_OK) {
+    free(file_data);
+    return status;
+  }
   length = strlen(path);
   if (length > SIZE_MAX - 5U) {
+    free(file_data);
     return YAP_V2_OUT_OF_RANGE;
   }
   temporary = (char *)malloc(length + 5U);
   if (temporary == NULL) {
+    free(file_data);
     return YAP_V2_ALLOCATION_FAILED;
   }
   (void)snprintf(temporary, length + 5U, "%s.tmp", path);
   file = fopen(temporary, "wb");
   if (file == NULL) {
+    free(file_data);
     free(temporary);
     return YAP_V2_IO_ERROR;
   }
-  if (write_json(file, manifest) != 0 || fflush(file) != 0 || fsync(fileno(file)) != 0) {
+  if (fwrite(file_data, 1U, file_size, file) != file_size || fflush(file) != 0 ||
+      fsync(fileno(file)) != 0) {
     write_failed = 1;
   }
+  free(file_data);
   if (fclose(file) != 0) {
     write_failed = 1;
   }

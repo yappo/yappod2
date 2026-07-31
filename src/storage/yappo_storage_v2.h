@@ -14,6 +14,7 @@
 #define YAP_V2_MAX_SEGMENT_DOCUMENTS 1000000U
 #define YAP_V2_MAX_SEGMENT_PASSAGES 4000000U
 #define YAP_V2_MAX_SEGMENT_PAYLOAD_BYTES (256U * 1024U * 1024U)
+#define YAP_V2_MAX_MANIFEST_BYTES (128U * 1024U * 1024U)
 #define YAP_V2_MAX_COMPONENTS 8U
 #define YAP_V2_MAX_COMPONENT_NAME_BYTES 63U
 
@@ -25,7 +26,8 @@ typedef enum {
   YAP_V2_FILE_METADATA = 5,
   YAP_V2_FILE_VECTORS = 6,
   YAP_V2_FILE_TOMBSTONES = 7,
-  YAP_V2_FILE_ANN = 8
+  YAP_V2_FILE_ANN = 8,
+  YAP_V2_FILE_MANIFEST = 9
 } YAP_V2_FILE_TYPE;
 
 typedef struct {
@@ -51,6 +53,9 @@ typedef struct {
   unsigned char config_fingerprint[32];
   YAP_V2_SEGMENT_DESCRIPTOR *segments;
   size_t segment_count;
+  size_t segment_capacity;
+  size_t *segment_slots;
+  size_t segment_slot_capacity;
 } YAP_V2_MANIFEST;
 
 typedef struct {

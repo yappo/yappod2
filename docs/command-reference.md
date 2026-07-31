@@ -250,7 +250,7 @@ yappo_makeindex verify --config CONFIG
 ### 検証内容
 
 - 索引内`config.toml`の型、値、互換条件
-- `manifest.json`の形式、世代、設定指紋、セグメントとコンポーネント記述子
+- `manifest.yap2`の形式、世代、設定指紋、セグメントとコンポーネント記述子
 - マニフェストが参照する各ファイルの存在、大きさ、SHA-256
 - `.yap2`共通ヘッダーのマジック値、版、種類、世代、ペイロード長、CRC32C
 - 文書、語彙、転置リスト、出現位置、メタデータ、ベクトル、削除標識の内部境界と参照整合性
@@ -279,7 +279,7 @@ search (--config CONFIG | --index INDEX_DIR) --mode lexical|vector|hybrid
 | オプション | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | `--index`と一方だけ必須 | `[index].directory`から検索対象の索引を読みます。 |
-| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | `--config`と一方だけ必須 | 索引を直接指定します。アプリケーションTOMLとの一致確認は行いません。 |
+| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.yap2`を含む索引ディレクトリ | なし | `--config`と一方だけ必須 | 索引を直接指定します。アプリケーションTOMLとの一致確認は行いません。 |
 | `--mode MODE` | 文字列 | `lexical`、`vector`、`hybrid` | なし | 必須 | 使用する検索方式を指定します。 |
 | `--query TEXT` | 文字列 | 空でないUTF-8文字列 | なし | `lexical`または`hybrid`では必須 | 検索する語句を指定します。`vector`では省略できます。 |
 | `--vector N,N,...` | 浮動小数点数の配列 | comma区切りの有限値。要素数は索引の`dimensions`と同数 | なし | `vector`または`hybrid`では必須 | 空要素、末尾comma、NaN、無限大、float32の範囲外を拒否します。 |
@@ -305,7 +305,7 @@ yappo_compact (--config CONFIG | --index INDEX_DIR)
 | オプション | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | `--index`と一方だけ必須 | `[index].directory`から整理対象の索引を読みます。 |
-| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | `--config`と一方だけ必須 | 整理する索引を直接指定します。 |
+| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.yap2`を含む索引ディレクトリ | なし | `--config`と一方だけ必須 | 整理する索引を直接指定します。 |
 
 ### 処理
 
@@ -351,7 +351,7 @@ yappod_core [--foreground] --index INDEX_DIR [--port PORT]
 |---|---|---|---|---|---|
 | `--foreground` | フラグ | 指定するか省略 | 省略 | 任意 | `fork`、PIDファイル作成、標準出力と標準エラーのリダイレクトを行わず、呼び出したプロセスのまま実行します。 |
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | `--index`形式を使わない場合に必須。ほかのオプションとは併用不可 | 索引、coreのホスト名とポート、実行時ファイルのディレクトリ、処理上限、トークンを読みます。通常はこちらを使用します。 |
-| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | `--config`を使わない場合に必須 | 索引を直接指定します。実行時設定はデフォルトになります。 |
+| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.yap2`を含む索引ディレクトリ | なし | `--config`を使わない場合に必須 | 索引を直接指定します。実行時設定はデフォルトになります。 |
 | `--port PORT` | 整数 | 1〜65535 | `18401` | 任意。`--index`形式でだけ指定可能 | frontから検索や更新の依頼を受ける内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 
 `--config`形式では`daemon.core_host`を待ち受けアドレスとして使います。`--index`形式ではホストを指定せず、`getaddrinfo`で受動接続用のアドレスを取得して待ち受けます。
@@ -387,7 +387,7 @@ yappod_front [--foreground] --index INDEX_DIR --core-host HOST
 |---|---|---|---|---|---|
 | `--foreground` | フラグ | 指定するか省略 | 省略 | 任意 | `fork`、PIDファイル作成、標準出力と標準エラーのリダイレクトを行わず、呼び出したプロセスのまま実行します。 |
 | `--config CONFIG` | 文字列 | 読み取り可能なアプリケーションTOML | なし | 直接指定形式を使わない場合に必須。ほかのオプションとは併用不可 | 索引、frontのホスト名とポート、core接続先、実行時ファイルのディレクトリ、処理上限、書き込み用トークンを読みます。通常はこちらを使用します。 |
-| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.json`を含む索引ディレクトリ | なし | 直接指定形式では必須 | front自身が準備完了とmetricsを判定する索引です。coreも同じ索引を開いている必要があります。 |
+| `--index INDEX_DIR` | 文字列 | `config.toml`と`manifest.yap2`を含む索引ディレクトリ | なし | 直接指定形式では必須 | front自身が準備完了とmetricsを判定する索引です。coreも同じ索引を開いている必要があります。 |
 | `--core-host HOST` | 文字列 | 空でないホスト名またはIPアドレス | なし | 直接指定形式では必須 | coreへ接続するホストです。 |
 | `--port PORT` | 整数 | 1〜65535 | `18400` | 任意。直接指定形式でだけ指定可能 | frontがHTTPリクエストを受け付けるポートです。 |
 | `--core-port PORT` | 整数 | 1〜65535 | `18401` | 任意。直接指定形式でだけ指定可能 | frontからcoreへ検索や更新を依頼する専用ポートです。 |

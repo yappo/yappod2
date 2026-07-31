@@ -540,7 +540,7 @@ int YAP_V2_compaction_needed(
   if (join_path(config_path, sizeof(config_path), index_dir,
                 "config.toml") != 0 ||
       join_path(manifest_path, sizeof(manifest_path), index_dir,
-                "manifest.json") != 0)
+                "manifest.yap2") != 0)
     return YAP_V2_OUT_OF_RANGE;
   YAP_V2_manifest_init(&manifest);
   status = YAP_V2_config_load(config_path, &config, config_error,
@@ -600,7 +600,7 @@ static int compact_internal(
   if (compacted != NULL) *compacted = 0;
   if (small_segment_count != NULL) *small_segment_count = 0U;
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
-      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0 ||
+      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0 ||
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0)
     return YAP_V2_OUT_OF_RANGE;
   status = YAP_V2_compaction_lock_acquire(&compaction_lock, index_dir);

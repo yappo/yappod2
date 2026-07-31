@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <cmocka.h>
 
@@ -39,19 +40,48 @@ static void fill_fingerprint(YAP_V2_MANIFEST *manifest, unsigned char seed) {
   }
 }
 
+static void fill_maximum_segment(YAP_V2_SEGMENT_DESCRIPTOR *segment, size_t ordinal) {
+  YAP_V2_COMPONENT_DESCRIPTOR component;
+  size_t prefix_bytes;
+  size_t i;
+
+  memset(segment, 0, sizeof(*segment));
+  assert_true(snprintf(segment->id, sizeof(segment->id), "seg-%06zu-", ordinal) > 0);
+  prefix_bytes = strlen(segment->id);
+  memset(segment->id + prefix_bytes, 's', YAP_V2_MAX_IDENTIFIER_BYTES - prefix_bytes);
+  segment->id[YAP_V2_MAX_IDENTIFIER_BYTES] = '\0';
+  segment->document_count = 1U;
+  segment->passage_count = 1U;
+  for (i = 0U; i < YAP_V2_MAX_COMPONENTS; i++) {
+    memset(&component, 0, sizeof(component));
+    assert_true(snprintf(component.name, sizeof(component.name), "component-%zu-", i) > 0);
+    prefix_bytes = strlen(component.name);
+    memset(component.name + prefix_bytes, (int)('a' + i),
+           YAP_V2_MAX_COMPONENT_NAME_BYTES - prefix_bytes);
+    component.name[YAP_V2_MAX_COMPONENT_NAME_BYTES] = '\0';
+    component.file_type = (uint32_t)i + 1U;
+    component.record_count = 1U;
+    component.file_bytes = component.file_type == YAP_V2_FILE_ANN
+      ? 1U : YAP_V2_FILE_HEADER_BYTES;
+    memset(component.checksum, (int)i + 1, sizeof(component.checksum));
+    assert_int_equal(YAP_V2_segment_descriptor_add_component(segment, &component), YAP_V2_OK);
+  }
+}
+
 static void test_manifest_roundtrip_and_atomic_publish(void **state) {
   ytest_env_t env;
   YAP_V2_MANIFEST manifest;
   YAP_V2_MANIFEST loaded;
   YAP_V2_CONFIG config;
   YAP_V2_SEGMENT_DESCRIPTOR segment;
+  YAP_V2_FILE_HEADER header;
   char path[PATH_MAX];
-  char *json = NULL;
-  size_t json_size = 0U;
+  char *data = NULL;
+  size_t data_size = 0U;
 
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "manifest.yap2"), 0);
 
   YAP_V2_manifest_init(&manifest);
   YAP_V2_config_init(&config);
@@ -59,11 +89,13 @@ static void test_manifest_roundtrip_and_atomic_publish(void **state) {
   fill_segment(&segment, "seg-000001", 1U);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
-  assert_int_equal(ytest_read_file(path, &json, &json_size), 0);
-  assert_true(json_size > 0U);
-  assert_null(strstr(json, ".tmp"));
-  free(json);
-  json = NULL;
+  assert_int_equal(ytest_read_file(path, &data, &data_size), 0);
+  assert_true(data_size > YAP_V2_FILE_HEADER_BYTES);
+  assert_int_equal(YAP_V2_file_header_decode((const unsigned char *)data, &header), YAP_V2_OK);
+  assert_int_equal(header.file_type, YAP_V2_FILE_MANIFEST);
+  assert_int_equal(header.payload_bytes, data_size - YAP_V2_FILE_HEADER_BYTES);
+  free(data);
+  data = NULL;
 
   YAP_V2_manifest_init(&loaded);
   assert_int_equal(YAP_V2_manifest_load(path, &loaded), YAP_V2_OK);
@@ -106,23 +138,80 @@ static void test_manifest_roundtrip_and_atomic_publish(void **state) {
   ytest_env_destroy(&env);
 }
 
-static void test_manifest_rejects_malformed_json(void **state) {
+static void test_manifest_rejects_corrupt_binary(void **state) {
   ytest_env_t env;
   YAP_V2_MANIFEST manifest;
+  YAP_V2_SEGMENT_DESCRIPTOR segment;
   char path[PATH_MAX];
-  static const char malformed[] = "{\"format_version\":2,\"generation\":1,\"segments\":[]}";
+  char *data = NULL;
+  size_t data_size = 0U;
+  static const char malformed[] = "{broken";
 
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "manifest.yap2"), 0);
   assert_int_equal(ytest_write_file(path, malformed, sizeof(malformed) - 1U), 0);
   YAP_V2_manifest_init(&manifest);
   assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_INVALID_FORMAT);
+  fill_fingerprint(&manifest, 4U);
+  fill_segment(&segment, "seg-corrupt", 7U);
+  assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
+  assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
+  assert_int_equal(ytest_read_file(path, &data, &data_size), 0);
+  assert_true(data_size > YAP_V2_FILE_HEADER_BYTES);
+  data[data_size - 1U] ^= 1;
+  assert_int_equal(ytest_write_file(path, data, data_size), 0);
+  free(data);
+  data = NULL;
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_CHECKSUM_MISMATCH);
   YAP_V2_manifest_free(&manifest);
-  assert_int_equal(ytest_write_file(path, "{broken", 7U), 0);
+  ytest_env_destroy(&env);
+}
+
+static void test_manifest_roundtrips_maximum_segment_count(void **state) {
+  ytest_env_t env;
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_MANIFEST loaded;
+  YAP_V2_SEGMENT_DESCRIPTOR segment;
+  struct stat info;
+  char path[PATH_MAX];
+  uint64_t expected_file_bytes;
+  size_t i;
+
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "manifest.yap2"), 0);
   YAP_V2_manifest_init(&manifest);
-  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_INVALID_FORMAT);
+  fill_fingerprint(&manifest, 80U);
+  for (i = 0U; i < YAP_V2_MAX_SEGMENTS; i++) {
+    fill_maximum_segment(&segment, i);
+    assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OK);
+  }
+  fill_segment(&segment, "seg-over-limit", 1U);
+  assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &segment), YAP_V2_OUT_OF_RANGE);
+  assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
+  assert_int_equal(stat(path, &info), 0);
+  assert_true(info.st_size > 0);
+  assert_true((uint64_t)info.st_size <= YAP_V2_MAX_MANIFEST_BYTES);
+  expected_file_bytes = YAP_V2_FILE_HEADER_BYTES + 40U +
+    (uint64_t)YAP_V2_MAX_SEGMENTS *
+      (32U + YAP_V2_MAX_IDENTIFIER_BYTES +
+       YAP_V2_MAX_COMPONENTS * (56U + YAP_V2_MAX_COMPONENT_NAME_BYTES));
+  assert_int_equal((uint64_t)info.st_size, expected_file_bytes);
   YAP_V2_manifest_free(&manifest);
+
+  YAP_V2_manifest_init(&loaded);
+  assert_int_equal(YAP_V2_manifest_load(path, &loaded), YAP_V2_OK);
+  assert_int_equal(loaded.segment_count, YAP_V2_MAX_SEGMENTS);
+  assert_memory_equal(loaded.segments[0].id, "seg-000000-", 11U);
+  assert_memory_equal(loaded.segments[YAP_V2_MAX_SEGMENTS - 1U].id,
+                      "seg-099999-", 11U);
+  assert_int_equal(strlen(loaded.segments[0].id), YAP_V2_MAX_IDENTIFIER_BYTES);
+  assert_int_equal(loaded.segments[0].component_count, YAP_V2_MAX_COMPONENTS);
+  assert_int_equal(strlen(loaded.segments[0].components[0].name),
+                   YAP_V2_MAX_COMPONENT_NAME_BYTES);
+  assert_int_equal(YAP_V2_manifest_validate(&loaded), YAP_V2_OK);
+  YAP_V2_manifest_free(&loaded);
   ytest_env_destroy(&env);
 }
 
@@ -192,7 +281,8 @@ static void test_tombstone_component_verification(void **state) {
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_manifest_roundtrip_and_atomic_publish),
-    cmocka_unit_test(test_manifest_rejects_malformed_json),
+    cmocka_unit_test(test_manifest_rejects_corrupt_binary),
+    cmocka_unit_test(test_manifest_roundtrips_maximum_segment_count),
     cmocka_unit_test(test_tombstone_component_verification),
   };
 

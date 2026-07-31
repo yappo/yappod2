@@ -97,7 +97,7 @@ int YAP_V2_operational_probe_index_with_policy(
   YAP_V2_operational_state_init(state); read_compaction_status(index_dir, state);
   YAP_V2_manifest_init(&manifest);
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
-      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0) {
+      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0) {
     set_error(error, error_size, "index path is too long"); return YAP_V2_OUT_OF_RANGE;
   }
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));

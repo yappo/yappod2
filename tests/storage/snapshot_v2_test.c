@@ -74,7 +74,7 @@ static void test_reload_latest_wins_and_snapshot_lifetime(void **state) {
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), env.tmp_root,
-                                   "manifest.json"), 0);
+                                   "manifest.yap2"), 0);
   YAP_V2_config_init(&config);
   write_segment(env.tmp_root, "seg-old", 1U, old_documents, 2U, NULL, &first[0]);
   publish(manifest_path, &config, 1U, first, 1U);
@@ -122,7 +122,7 @@ static void test_failed_reload_keeps_current(void **state) {
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), env.tmp_root,
-                                   "manifest.json"), 0);
+                                   "manifest.yap2"), 0);
   YAP_V2_config_init(&config);
   write_segment(env.tmp_root, "seg", 1U, &doc, 1U, NULL, &segment);
   publish(manifest_path, &config, 1U, &segment, 1U);

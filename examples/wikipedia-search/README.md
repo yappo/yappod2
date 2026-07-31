@@ -52,7 +52,7 @@ cp examples/wikipedia-search/wikipedia-search.example.toml \
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
 | `format_version` | 整数 | `2` | なし | 必須 | 現在の索引形式です。 |
-| `index.directory` | 文字列 | 新しく作成する索引、または`config.toml`と`manifest.json`を含む既存索引のディレクトリ。TOMLからの相対パスを解決した後で4095バイト以下 | なし | 必須 | 作成または起動する索引です。既存の語彙索引をベクトル対応へ変更するときは別のパスを指定します。 |
+| `index.directory` | 文字列 | 新しく作成する索引、または`config.toml`と`manifest.yap2`を含む既存索引のディレクトリ。TOMLからの相対パスを解決した後で4095バイト以下 | なし | 必須 | 作成または起動する索引です。既存の語彙索引をベクトル対応へ変更するときは別のパスを指定します。 |
 | `tokenizer.id` | 文字列 | 1〜255バイト | `unicode_nfkc_casefold_v2` | 任意。ただし`[tokenizer]`セクション自体は必須 | 索引互換性を識別する値です。任意の文字列で別実装へ切り替わる設定ではありません。 |
 | `chunking.max_chars` | 整数 | 1〜1048576 | `1200` | 任意。ただし`[chunking]`セクション自体は必須 | 一つの本文断片に含める最大文字数です。 |
 | `chunking.overlap_chars` | 整数 | 0以上かつ`chunking.max_chars`未満 | `200` | 任意。ただし`[chunking]`セクション自体は必須 | 隣接する本文断片の重なりです。 |
@@ -300,7 +300,9 @@ examples/wikipedia-search/scripts/build_index.sh \
   --config examples/wikipedia-search/wikipedia-search.toml
 ```
 
-設定だけを変更して既存の語彙索引へベクトルコンポーネントを追加することはできません。新しい索引の`config.toml`、`manifest.json`、`vectors.yap2`、`vectors.usearch`を確認し、`yappo_makeindex verify`を実行してください。
+設定だけを変更して既存の語彙索引へベクトルコンポーネントを追加することはできません。新しい索引の
+`config.toml`とベクトル用ファイルを確認し、`yappo_makeindex verify`で`manifest.yap2`を含む
+索引全体を検証してください。
 
 ```sh
 ./build/search \

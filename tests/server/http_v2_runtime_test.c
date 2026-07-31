@@ -71,7 +71,7 @@ static void create_index(ytest_env_t *env) {
   YAP_V2_manifest_init(&manifest); manifest.generation = 1U;
   assert_int_equal(YAP_V2_config_fingerprint(&config, manifest.config_fingerprint), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &descriptor), YAP_V2_OK);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
   YAP_V2_manifest_free(&manifest);
 }
@@ -263,7 +263,7 @@ static void test_runtime_reload_reuses_reorders_and_replaces_segments(void **sta
   assert_runtime_search_id(&runtime, "banana", "doc-live", 2U);
 
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path),
-                                   env.tmp_root, "manifest.json"), 0);
+                                   env.tmp_root, "manifest.yap2"), 0);
   YAP_V2_manifest_init(&manifest);
   assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
   assert_int_equal(manifest.segment_count, 2U);
