@@ -15,12 +15,22 @@ typedef struct {
   YAP_V2_TOMBSTONES tombstones;
 } SNAPSHOT_SEGMENT;
 
+typedef struct {
+  YAP_V2_BYTES_VIEW id;
+  size_t segment_ordinal;
+  size_t document_ordinal;
+  const YAP_V2_DOCUMENT_VIEW *document;
+  int occupied;
+} VISIBILITY_ENTRY;
+
 struct YAP_V2_SEARCH_SNAPSHOT {
   pthread_mutex_t references_lock;
   size_t references;
   YAP_V2_MANIFEST manifest;
   SNAPSHOT_SEGMENT **segments;
   size_t segment_count;
+  VISIBILITY_ENTRY *visibility;
+  size_t visibility_capacity;
 };
 
 typedef struct {
@@ -34,6 +44,16 @@ typedef struct {
 static int bytes_equal(YAP_V2_BYTES_VIEW left, YAP_V2_BYTES_VIEW right) {
   return left.len == right.len && left.data != NULL && right.data != NULL &&
          memcmp(left.data, right.data, left.len) == 0;
+}
+
+static uint64_t bytes_hash(YAP_V2_BYTES_VIEW value) {
+  uint64_t hash = UINT64_C(1469598103934665603);
+  size_t i;
+  for (i = 0U; i < value.len; i++) {
+    hash ^= value.data[i];
+    hash *= UINT64_C(1099511628211);
+  }
+  return hash;
 }
 
 static char *copy_string(const char *value) {
@@ -50,6 +70,7 @@ static char *copy_string(const char *value) {
 static void snapshot_destroy(YAP_V2_SEARCH_SNAPSHOT *snapshot) {
   size_t i;
   if (snapshot == NULL) return;
+  free(snapshot->visibility);
   for (i = 0U; i < snapshot->segment_count; i++) {
     SNAPSHOT_SEGMENT *segment = snapshot->segments[i];
     int destroy = 0;
@@ -71,6 +92,77 @@ static void snapshot_destroy(YAP_V2_SEARCH_SNAPSHOT *snapshot) {
   YAP_V2_manifest_free(&snapshot->manifest);
   pthread_mutex_destroy(&snapshot->references_lock);
   free(snapshot);
+}
+
+static VISIBILITY_ENTRY *visibility_entry(YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                          YAP_V2_BYTES_VIEW id) {
+  size_t index, probes;
+  if (snapshot->visibility_capacity == 0U) return NULL;
+  index = (size_t)(bytes_hash(id) & (uint64_t)(snapshot->visibility_capacity - 1U));
+  for (probes = 0U; probes < snapshot->visibility_capacity; probes++) {
+    VISIBILITY_ENTRY *entry = &snapshot->visibility[index];
+    if (!entry->occupied || bytes_equal(entry->id, id)) return entry;
+    index = (index + 1U) & (snapshot->visibility_capacity - 1U);
+  }
+  return NULL;
+}
+
+static const VISIBILITY_ENTRY *visibility_lookup(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                                 YAP_V2_BYTES_VIEW id) {
+  size_t index, probes;
+  if (snapshot->visibility_capacity == 0U) return NULL;
+  index = (size_t)(bytes_hash(id) & (uint64_t)(snapshot->visibility_capacity - 1U));
+  for (probes = 0U; probes < snapshot->visibility_capacity; probes++) {
+    const VISIBILITY_ENTRY *entry = &snapshot->visibility[index];
+    if (!entry->occupied) return NULL;
+    if (bytes_equal(entry->id, id)) return entry;
+    index = (index + 1U) & (snapshot->visibility_capacity - 1U);
+  }
+  return NULL;
+}
+
+static int snapshot_build_visibility(YAP_V2_SEARCH_SNAPSHOT *snapshot) {
+  size_t record_count = 0U, capacity = 1U, s, i;
+  for (s = 0U; s < snapshot->segment_count; s++) {
+    const SNAPSHOT_SEGMENT *segment = snapshot->segments[s];
+    if (segment->documents.document_count > SIZE_MAX - record_count)
+      return YAP_V2_OUT_OF_RANGE;
+    record_count += segment->documents.document_count;
+    if (segment->tombstones.count > SIZE_MAX - record_count)
+      return YAP_V2_OUT_OF_RANGE;
+    record_count += segment->tombstones.count;
+  }
+  if (record_count == 0U) return YAP_V2_OK;
+  if (record_count > SIZE_MAX / 2U) return YAP_V2_OUT_OF_RANGE;
+  while (capacity < record_count * 2U) {
+    if (capacity > SIZE_MAX / 2U) return YAP_V2_OUT_OF_RANGE;
+    capacity *= 2U;
+  }
+  snapshot->visibility = (VISIBILITY_ENTRY *)calloc(capacity, sizeof(*snapshot->visibility));
+  if (snapshot->visibility == NULL) return YAP_V2_ALLOCATION_FAILED;
+  snapshot->visibility_capacity = capacity;
+  for (s = 0U; s < snapshot->segment_count; s++) {
+    SNAPSHOT_SEGMENT *segment = snapshot->segments[s];
+    for (i = 0U; i < segment->tombstones.count; i++) {
+      VISIBILITY_ENTRY *entry = visibility_entry(snapshot, segment->tombstones.document_ids[i]);
+      if (entry == NULL) return YAP_V2_CONFLICT;
+      entry->id = segment->tombstones.document_ids[i];
+      entry->segment_ordinal = s;
+      entry->document_ordinal = SIZE_MAX;
+      entry->document = NULL;
+      entry->occupied = 1;
+    }
+    for (i = 0U; i < segment->documents.document_count; i++) {
+      VISIBILITY_ENTRY *entry = visibility_entry(snapshot, segment->documents.documents[i].id);
+      if (entry == NULL) return YAP_V2_CONFLICT;
+      entry->id = segment->documents.documents[i].id;
+      entry->segment_ordinal = s;
+      entry->document_ordinal = i;
+      entry->document = &segment->documents.documents[i];
+      entry->occupied = 1;
+    }
+  }
+  return YAP_V2_OK;
 }
 
 static void snapshot_retain(YAP_V2_SEARCH_SNAPSHOT *snapshot) {
@@ -202,6 +294,7 @@ static int snapshot_load(const MANAGER_STATE *state,
         snapshot->segments[i]->tombstones.count != descriptor->tombstone_count)
       status = YAP_V2_CONFLICT;
   }
+  if (status == YAP_V2_OK) status = snapshot_build_visibility(snapshot);
   if (status != YAP_V2_OK) { snapshot_destroy(snapshot); return status; }
   *snapshot_out = snapshot;
   return YAP_V2_OK;
@@ -298,47 +391,24 @@ const YAP_V2_SEGMENT *YAP_V2_snapshot_segment_documents(const YAP_V2_SEARCH_SNAP
   return &snapshot->segments[segment_ordinal]->documents;
 }
 
-static int segment_has_document(const SNAPSHOT_SEGMENT *segment, YAP_V2_BYTES_VIEW id,
-                                size_t *ordinal) {
-  size_t i;
-  for (i = 0U; i < segment->documents.document_count; i++)
-    if (bytes_equal(segment->documents.documents[i].id, id)) {
-      if (ordinal != NULL) *ordinal = i;
-      return 1;
-    }
-  return 0;
-}
-
-static int segment_has_tombstone(const SNAPSHOT_SEGMENT *segment, YAP_V2_BYTES_VIEW id) {
-  size_t i;
-  for (i = 0U; i < segment->tombstones.count; i++)
-    if (bytes_equal(segment->tombstones.document_ids[i], id)) return 1;
-  return 0;
-}
-
 int YAP_V2_snapshot_document_visible(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                                      size_t segment_ordinal, YAP_V2_BYTES_VIEW document_id) {
-  size_t i;
+  const VISIBILITY_ENTRY *entry;
   if (snapshot == NULL || segment_ordinal >= snapshot->segment_count ||
-      document_id.data == NULL || document_id.len == 0U ||
-      !segment_has_document(snapshot->segments[segment_ordinal], document_id, NULL)) return 0;
-  for (i = snapshot->segment_count; i-- > segment_ordinal + 1U; )
-    if (segment_has_document(snapshot->segments[i], document_id, NULL) ||
-        segment_has_tombstone(snapshot->segments[i], document_id)) return 0;
-  return 1;
+      document_id.data == NULL || document_id.len == 0U) return 0;
+  entry = visibility_lookup(snapshot, document_id);
+  return entry != NULL && entry->document != NULL && entry->segment_ordinal == segment_ordinal;
 }
 
 int YAP_V2_snapshot_lookup_document(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                                     YAP_V2_BYTES_VIEW document_id, YAP_V2_DOCUMENT_HIT *hit) {
-  size_t i, ordinal;
+  const VISIBILITY_ENTRY *entry;
   if (snapshot == NULL || document_id.data == NULL || document_id.len == 0U || hit == NULL)
     return YAP_V2_INVALID_ARGUMENT;
-  for (i = snapshot->segment_count; i-- > 0U; ) {
-    if (segment_has_document(snapshot->segments[i], document_id, &ordinal)) {
-      hit->segment_ordinal = i; hit->document_ordinal = ordinal;
-      hit->document = &snapshot->segments[i]->documents.documents[ordinal]; return YAP_V2_OK;
-    }
-    if (segment_has_tombstone(snapshot->segments[i], document_id)) return YAP_V2_NOT_FOUND;
-  }
-  return YAP_V2_NOT_FOUND;
+  entry = visibility_lookup(snapshot, document_id);
+  if (entry == NULL || entry->document == NULL) return YAP_V2_NOT_FOUND;
+  hit->segment_ordinal = entry->segment_ordinal;
+  hit->document_ordinal = entry->document_ordinal;
+  hit->document = entry->document;
+  return YAP_V2_OK;
 }
