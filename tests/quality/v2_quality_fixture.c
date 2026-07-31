@@ -29,7 +29,8 @@ static int add_component(YAP_V2_SEGMENT_DESCRIPTOR *segment,
   return YAP_V2_segment_descriptor_add_component(segment, component);
 }
 
-int YAP_Test_v2_quality_index_create(const char *index_dir) {
+int YAP_Test_v2_quality_index_create_segments(const char *index_dir,
+                                              size_t segment_count) {
   static const char *const topics[3] = {"red", "green", "blue"};
   YAP_V2_CONFIG config;
   YAP_V2_DOCUMENT_VIEW documents[FIXTURE_DOCUMENTS];
@@ -44,12 +45,11 @@ int YAP_Test_v2_quality_index_create(const char *index_dir) {
   char ids[FIXTURE_DOCUMENTS][32], passage_ids[FIXTURE_DOCUMENTS][40];
   char urls[FIXTURE_DOCUMENTS][64], titles[FIXTURE_DOCUMENTS][64];
   char bodies[FIXTURE_DOCUMENTS][96], metadata[FIXTURE_DOCUMENTS][48];
-  char segments_dir[PATH_MAX], segment_dir[PATH_MAX], path[PATH_MAX];
+  char segment_id[64], segments_dir[PATH_MAX], segment_dir[PATH_MAX], path[PATH_MAX];
   FILE *file = NULL;
-  size_t i;
-  int status = -1;
+  size_t i, segment_index;
 
-  if (index_dir == NULL ||
+  if (index_dir == NULL || segment_count == 0U || segment_count > FIXTURE_DOCUMENTS ||
       ytest_path_join(path, sizeof(path), index_dir, "config.toml") != 0)
     return -1;
   file = fopen(path, "wb");
@@ -92,53 +92,72 @@ int YAP_Test_v2_quality_index_create(const char *index_dir) {
     values[i * FIXTURE_DIMENSIONS + topic] = 1.0f;
   }
 
-  if (ytest_path_join(segments_dir, sizeof(segments_dir), index_dir, "segments") != 0 ||
-      ytest_path_join(segment_dir, sizeof(segment_dir), segments_dir, "quality-seg-1") != 0 ||
-      ytest_mkdir_p(segment_dir, 0700) != 0 ||
-      ytest_path_join(path, sizeof(path), segment_dir, "documents.yap2") != 0 ||
-      YAP_V2_segment_write(path, "quality-seg-1", 1U, documents, FIXTURE_DOCUMENTS,
-                           passages, FIXTURE_DOCUMENTS, &descriptor) != YAP_V2_OK ||
-      YAP_V2_lexical_write(segment_dir, 1U, documents, FIXTURE_DOCUMENTS, passages,
-                           FIXTURE_DOCUMENTS, lexical) != YAP_V2_OK ||
-      add_component(&descriptor, &lexical[0]) != YAP_V2_OK ||
-      add_component(&descriptor, &lexical[1]) != YAP_V2_OK ||
-      add_component(&descriptor, &lexical[2]) != YAP_V2_OK)
-    return -1;
-
-  embeddings.values = values;
-  embeddings.input_count = FIXTURE_DOCUMENTS;
-  embeddings.dimensions = FIXTURE_DIMENSIONS;
-  if (ytest_path_join(path, sizeof(path), segment_dir, "vectors.yap2") != 0 ||
-      YAP_V2_vectors_write(path, 1U, &config, passages, FIXTURE_DOCUMENTS, &embeddings,
-                           &vectors_component) != YAP_V2_OK ||
-      add_component(&descriptor, &vectors_component) != YAP_V2_OK)
-    return -1;
-  YAP_V2_vector_segment_init(&vector_segment);
-  if (YAP_V2_vector_segment_open(path, 1U, &config, &vector_segment, NULL) != YAP_V2_OK)
-    return -1;
-  if (ytest_path_join(path, sizeof(path), segment_dir, "vectors.usearch") == 0 &&
-      YAP_V2_ann_build_save(path, &vector_segment, 16U, 128U, 64U, &ann_component) ==
-        YAP_ANN_OK &&
-      add_component(&descriptor, &ann_component) == YAP_V2_OK)
-    status = 0;
-  YAP_V2_vector_segment_close(&vector_segment);
-  if (status != 0) return -1;
-
-  if (ytest_path_join(path, sizeof(path), segment_dir, "metadata.yap2") != 0 ||
-      YAP_V2_metadata_write(path, 1U, &config, documents, FIXTURE_DOCUMENTS,
-                            &metadata_component) != YAP_V2_OK ||
-      add_component(&descriptor, &metadata_component) != YAP_V2_OK)
-    return -1;
-
   YAP_V2_manifest_init(&manifest);
   manifest.generation = 1U;
   if (YAP_V2_config_fingerprint(&config, manifest.config_fingerprint) != YAP_V2_OK ||
-      YAP_V2_manifest_add_segment(&manifest, &descriptor) != YAP_V2_OK ||
-      ytest_path_join(path, sizeof(path), index_dir, "manifest.json") != 0 ||
+      ytest_path_join(segments_dir, sizeof(segments_dir), index_dir, "segments") != 0 ||
+      ytest_mkdir_p(segments_dir, 0700) != 0) {
+    YAP_V2_manifest_free(&manifest);
+    return -1;
+  }
+  for (segment_index = 0U; segment_index < segment_count; segment_index++) {
+    size_t first = segment_index * FIXTURE_DOCUMENTS / segment_count;
+    size_t end = (segment_index + 1U) * FIXTURE_DOCUMENTS / segment_count;
+    size_t count = end - first;
+    int ann_status;
+    if (snprintf(segment_id, sizeof(segment_id), "quality-seg-%zu", segment_index + 1U) < 0 ||
+        ytest_path_join(segment_dir, sizeof(segment_dir), segments_dir, segment_id) != 0 ||
+        ytest_mkdir_p(segment_dir, 0700) != 0 ||
+        ytest_path_join(path, sizeof(path), segment_dir, "documents.yap2") != 0 ||
+        YAP_V2_segment_write(path, segment_id, 1U, documents + first, count,
+                             passages + first, count, &descriptor) != YAP_V2_OK ||
+        YAP_V2_lexical_write(segment_dir, 1U, documents + first, count, passages + first,
+                             count, lexical) != YAP_V2_OK ||
+        add_component(&descriptor, &lexical[0]) != YAP_V2_OK ||
+        add_component(&descriptor, &lexical[1]) != YAP_V2_OK ||
+        add_component(&descriptor, &lexical[2]) != YAP_V2_OK) {
+      YAP_V2_manifest_free(&manifest);
+      return -1;
+    }
+    embeddings.values = values + first * FIXTURE_DIMENSIONS;
+    embeddings.input_count = count;
+    embeddings.dimensions = FIXTURE_DIMENSIONS;
+    if (ytest_path_join(path, sizeof(path), segment_dir, "vectors.yap2") != 0 ||
+        YAP_V2_vectors_write(path, 1U, &config, passages + first, count, &embeddings,
+                             &vectors_component) != YAP_V2_OK ||
+        add_component(&descriptor, &vectors_component) != YAP_V2_OK) {
+      YAP_V2_manifest_free(&manifest);
+      return -1;
+    }
+    YAP_V2_vector_segment_init(&vector_segment);
+    if (YAP_V2_vector_segment_open(path, 1U, &config, &vector_segment, NULL) != YAP_V2_OK) {
+      YAP_V2_manifest_free(&manifest);
+      return -1;
+    }
+    ann_status = ytest_path_join(path, sizeof(path), segment_dir, "vectors.usearch") == 0 &&
+                 YAP_V2_ann_build_save(path, &vector_segment, 16U, 128U, 64U,
+                                       &ann_component) == YAP_ANN_OK &&
+                 add_component(&descriptor, &ann_component) == YAP_V2_OK ? 0 : -1;
+    YAP_V2_vector_segment_close(&vector_segment);
+    if (ann_status != 0 ||
+        ytest_path_join(path, sizeof(path), segment_dir, "metadata.yap2") != 0 ||
+        YAP_V2_metadata_write(path, 1U, &config, documents + first, count,
+                              &metadata_component) != YAP_V2_OK ||
+        add_component(&descriptor, &metadata_component) != YAP_V2_OK ||
+        YAP_V2_manifest_add_segment(&manifest, &descriptor) != YAP_V2_OK) {
+      YAP_V2_manifest_free(&manifest);
+      return -1;
+    }
+  }
+  if (ytest_path_join(path, sizeof(path), index_dir, "manifest.json") != 0 ||
       YAP_V2_manifest_save_atomic(path, &manifest) != YAP_V2_OK) {
     YAP_V2_manifest_free(&manifest);
     return -1;
   }
   YAP_V2_manifest_free(&manifest);
   return 0;
+}
+
+int YAP_Test_v2_quality_index_create(const char *index_dir) {
+  return YAP_Test_v2_quality_index_create_segments(index_dir, 1U);
 }
