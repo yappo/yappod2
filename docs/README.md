@@ -11,6 +11,7 @@
 | コマンドの引数を調べます | [コマンドリファレンス](command-reference.md) |
 | 入力NDJSONと索引作成を理解します | [索引作成](indexing.md) |
 | 検索方式とRAG向け取得を理解します | [検索](search.md) |
+| セグメント、世代、検索中の更新反映を理解します | [セグメント、世代、検索スナップショット](segments-and-generations.md) |
 | 保存形式を確認します | [索引形式](index-format.md) |
 | 更新、検証、コンパクションを運用します | [索引の更新と保守](index-lifecycle.md) |
 | HTTP APIを利用します | [`yappod_front` API](yappod-front-api.md) |
