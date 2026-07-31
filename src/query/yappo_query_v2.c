@@ -235,14 +235,30 @@ static int lexical_accept(void *opaque, uint32_t object_type, uint64_t object_or
 
 static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                            const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
+                           const YAP_V2_LEXICAL_CORPUS_STATS *corpus_stats,
                            const YAP_V2_QUERY_REQUEST *request, CANDIDATE_SET *candidates) {
   YAP_V2_LEXICAL_QUERY_PLAN plan;
+  const YAP_V2_LEXICAL_SEGMENT **lexical_segments;
   size_t s;
   int status;
   YAP_V2_lexical_query_plan_init(&plan);
   status = YAP_V2_lexical_query_plan_prepare(request->query, &plan);
   if (status != YAP_V2_OK)
     return status;
+  lexical_segments = (const YAP_V2_LEXICAL_SEGMENT **)calloc(
+    segment_count, sizeof(*lexical_segments));
+  if (lexical_segments == NULL) {
+    YAP_V2_lexical_query_plan_free(&plan);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  for (s = 0U; s < segment_count; s++)
+    lexical_segments[s] = segments[s].lexical;
+  status = YAP_V2_lexical_query_plan_bind(&plan, lexical_segments, segment_count);
+  free(lexical_segments);
+  if (status != YAP_V2_OK) {
+    YAP_V2_lexical_query_plan_free(&plan);
+    return status;
+  }
   for (s = 0U; s < segment_count; s++) {
     const YAP_V2_SEGMENT *documents = YAP_V2_snapshot_segment_documents(snapshot, s);
     YAP_V2_LEXICAL_SEARCH_OPTIONS options;
@@ -281,7 +297,7 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     accept_context.filter_enabled = filter_enabled;
     options.accept = lexical_accept;
     options.accept_context = &accept_context;
-    status = YAP_V2_lexical_search_prepared(segments[s].lexical, &plan, &options,
+    status = YAP_V2_lexical_search_prepared(&plan, s, corpus_stats, &options,
                                             local, local_limit, &local_count);
     for (i = 0U; status == YAP_V2_OK && i < local_count; i++) {
       CANDIDATE candidate;
@@ -417,11 +433,12 @@ int YAP_V2_query_corpus_stats_build(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     if (documents == NULL || lexical->document_count != documents->document_count ||
         lexical->passage_count != documents->passage_count)
       return YAP_V2_CONFLICT;
-    status = add_u64(&stats->document_count, lexical->document_count);
+    status = add_u64(&stats->lexical.document_count, lexical->document_count);
     if (status == YAP_V2_OK)
-      status = add_u64(&stats->passage_count, lexical->passage_count);
+      status = add_u64(&stats->lexical.passage_count, lexical->passage_count);
     for (field = 0U; status == YAP_V2_OK && field < 3U; field++)
-      status = add_u64(&stats->field_token_count[field], lexical->field_token_count[field]);
+      status = add_u64(&stats->lexical.field_token_count[field],
+                       lexical->field_token_count[field]);
   }
   if (status != YAP_V2_OK)
     memset(stats, 0, sizeof(*stats));
@@ -460,7 +477,8 @@ int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     status = YAP_V2_ALLOCATION_FAILED; goto done;
   }
   if (request->mode != YAP_V2_SEARCH_VECTOR)
-    status = collect_lexical(snapshot, segments, segment_count, request, &lexical);
+    status = collect_lexical(snapshot, segments, segment_count, &stats->lexical,
+                             request, &lexical);
   if (status == YAP_V2_OK && request->mode != YAP_V2_SEARCH_LEXICAL)
     status = collect_vector(snapshot, segments, segment_count, request, &vector);
   if (status != YAP_V2_OK) goto done;

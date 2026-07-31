@@ -103,11 +103,11 @@ static void test_hybrid_filter_and_scope_aggregation(void **state) {
   assert_int_equal(YAP_V2_query_corpus_stats_build(snapshot, &runtime, 1U,
                                                    &corpus_stats), YAP_V2_OK);
   assert_int_equal(corpus_stats.generation, YAP_V2_snapshot_generation(snapshot));
-  assert_int_equal(corpus_stats.document_count, 2U);
-  assert_int_equal(corpus_stats.passage_count, 2U);
-  assert_int_equal(corpus_stats.field_token_count[0], 4U);
-  assert_int_equal(corpus_stats.field_token_count[1], 3U);
-  assert_int_equal(corpus_stats.field_token_count[2], 4U);
+  assert_int_equal(corpus_stats.lexical.document_count, 2U);
+  assert_int_equal(corpus_stats.lexical.passage_count, 2U);
+  assert_int_equal(corpus_stats.lexical.field_token_count[0], 4U);
+  assert_int_equal(corpus_stats.lexical.field_token_count[1], 3U);
+  assert_int_equal(corpus_stats.lexical.field_token_count[2], 4U);
   YAP_V2_query_request_init(&request); request.query = bytes("apple");
   request.query_vector = query_vector; request.query_dimensions = 2U;
   request.filter_json = bytes("{\"eq\":{\"field\":\"category\",\"value\":\"fruit\"}}");

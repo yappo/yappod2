@@ -363,6 +363,33 @@ const YAP_V2_TERM_ENTRY *YAP_V2_lexical_term_find(const YAP_V2_LEXICAL_SEGMENT *
   return NULL;
 }
 
+int YAP_V2_lexical_term_type_frequency(const YAP_V2_LEXICAL_SEGMENT *segment,
+                                       const YAP_V2_TERM_ENTRY *term,
+                                       uint32_t object_type, uint64_t *frequency) {
+  const unsigned char *postings;
+  size_t low = 0U, high;
+  if (segment == NULL || term == NULL || frequency == NULL ||
+      (object_type != YAP_V2_LEXICAL_DOCUMENT && object_type != YAP_V2_LEXICAL_PASSAGE) ||
+      term->document_frequency > SIZE_MAX)
+    return YAP_V2_INVALID_ARGUMENT;
+  postings = (const unsigned char *)segment->maps[1] + YAP_V2_FILE_HEADER_BYTES +
+             (size_t)term->postings_offset + 20U;
+  high = (size_t)term->document_frequency;
+  while (low < high) {
+    YAP_V2_POSTING posting;
+    size_t middle = low + (high - low) / 2U;
+    parse_posting(postings + middle * POSTING_BYTES, &posting);
+    if (posting.object_type < YAP_V2_LEXICAL_PASSAGE)
+      low = middle + 1U;
+    else
+      high = middle;
+  }
+  *frequency = object_type == YAP_V2_LEXICAL_DOCUMENT
+                 ? (uint64_t)low
+                 : term->document_frequency - (uint64_t)low;
+  return YAP_V2_OK;
+}
+
 int YAP_V2_posting_iterator_init(const YAP_V2_LEXICAL_SEGMENT *segment,
                                  const YAP_V2_TERM_ENTRY *term, YAP_V2_POSTING_ITERATOR *iterator) {
   if (segment == NULL || term == NULL || iterator == NULL)

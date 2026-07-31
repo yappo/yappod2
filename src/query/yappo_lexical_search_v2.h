@@ -28,15 +28,29 @@ typedef struct {
   YAP_V2_BYTES_VIEW *terms;
   size_t *token_terms;
   size_t term_count;
+  const YAP_V2_LEXICAL_SEGMENT **segments;
+  const YAP_V2_TERM_ENTRY **segment_terms;
+  uint64_t *type_frequency[2];
+  size_t segment_count;
 } YAP_V2_LEXICAL_QUERY_PLAN;
+
+typedef struct {
+  uint64_t document_count;
+  uint64_t passage_count;
+  uint64_t field_token_count[3];
+} YAP_V2_LEXICAL_CORPUS_STATS;
 
 void YAP_V2_lexical_search_options_init(YAP_V2_LEXICAL_SEARCH_OPTIONS *options);
 void YAP_V2_lexical_query_plan_init(YAP_V2_LEXICAL_QUERY_PLAN *plan);
 void YAP_V2_lexical_query_plan_free(YAP_V2_LEXICAL_QUERY_PLAN *plan);
 int YAP_V2_lexical_query_plan_prepare(YAP_V2_BYTES_VIEW query,
                                       YAP_V2_LEXICAL_QUERY_PLAN *plan);
-int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
-                                   const YAP_V2_LEXICAL_QUERY_PLAN *plan,
+int YAP_V2_lexical_query_plan_bind(YAP_V2_LEXICAL_QUERY_PLAN *plan,
+                                   const YAP_V2_LEXICAL_SEGMENT *const *segments,
+                                   size_t segment_count);
+int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_QUERY_PLAN *plan,
+                                   size_t segment_index,
+                                   const YAP_V2_LEXICAL_CORPUS_STATS *stats,
                                    const YAP_V2_LEXICAL_SEARCH_OPTIONS *options,
                                    YAP_V2_LEXICAL_HIT *hits, size_t hit_capacity,
                                    size_t *hit_count);

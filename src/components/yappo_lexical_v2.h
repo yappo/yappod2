@@ -114,6 +114,9 @@ int YAP_V2_lexical_segment_open(const char *segment_dir, uint64_t expected_gener
                                 YAP_V2_LEXICAL_SEGMENT *segment);
 const YAP_V2_TERM_ENTRY *YAP_V2_lexical_term_find(const YAP_V2_LEXICAL_SEGMENT *segment,
                                                   YAP_V2_BYTES_VIEW term);
+int YAP_V2_lexical_term_type_frequency(const YAP_V2_LEXICAL_SEGMENT *segment,
+                                       const YAP_V2_TERM_ENTRY *term,
+                                       uint32_t object_type, uint64_t *frequency);
 int YAP_V2_posting_iterator_init(const YAP_V2_LEXICAL_SEGMENT *segment,
                                  const YAP_V2_TERM_ENTRY *term, YAP_V2_POSTING_ITERATOR *iterator);
 int YAP_V2_posting_iterator_next(YAP_V2_POSTING_ITERATOR *iterator, YAP_V2_POSTING *posting);
