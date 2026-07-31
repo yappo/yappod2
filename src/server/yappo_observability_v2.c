@@ -31,6 +31,10 @@ static void set_error(char *error, size_t capacity, const char *message) {
   if (error != NULL && capacity > 0U) (void)snprintf(error, capacity, "%s", message);
 }
 
+static uint64_t saturated_add(uint64_t left, uint64_t right) {
+  return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
 static int join_path(char *output, size_t capacity, const char *left, const char *right) {
   int written = snprintf(output, capacity, "%s/%s", left, right);
   return written < 0 || (size_t)written >= capacity ? -1 : 0;
@@ -82,11 +86,14 @@ static void read_compaction_status(const char *index_dir, YAP_V2_OPERATIONAL_STA
     state->compaction_state = YAP_V2_COMPACTION_INTERRUPTED;
 }
 
-int YAP_V2_operational_probe_index(const char *index_dir, YAP_V2_OPERATIONAL_STATE *state,
-                                   char *error, size_t error_size) {
+int YAP_V2_operational_probe_index_with_policy(
+    const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+    YAP_V2_OPERATIONAL_STATE *state, char *error, size_t error_size) {
   YAP_V2_CONFIG config; YAP_V2_MANIFEST manifest; char config_path[4096], manifest_path[4096];
-  char config_error[256] = {0}; int status;
-  if (index_dir == NULL || state == NULL) return YAP_V2_INVALID_ARGUMENT;
+  char config_error[256] = {0}; size_t i, run = 0U; int status;
+  if (index_dir == NULL || policy == NULL || state == NULL ||
+      YAP_V2_compaction_policy_validate(policy) != YAP_V2_OK)
+    return YAP_V2_INVALID_ARGUMENT;
   YAP_V2_operational_state_init(state); read_compaction_status(index_dir, state);
   YAP_V2_manifest_init(&manifest);
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
@@ -97,7 +104,40 @@ int YAP_V2_operational_probe_index(const char *index_dir, YAP_V2_OPERATIONAL_STA
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }
   status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
   if (status != YAP_V2_OK) { set_error(error, error_size, "index snapshot is invalid"); goto done; }
-  state->ready = 1; state->generation = manifest.generation; state->segment_count = manifest.segment_count;
+  state->ready = 1; state->generation = manifest.generation;
+  state->segment_count = manifest.segment_count;
+  state->small_segment_threshold_bytes = policy->small_segment_bytes;
+  state->auto_compaction_trigger_segments = policy->min_small_segments;
+  state->auto_compaction_enabled = policy->enabled;
+  for (i = 0U; i < manifest.segment_count; i++) {
+    const YAP_V2_SEGMENT_DESCRIPTOR *segment = &manifest.segments[i];
+    uint64_t segment_bytes = 0U;
+    size_t j;
+    state->document_records =
+      saturated_add(state->document_records, segment->document_count);
+    state->passage_records =
+      saturated_add(state->passage_records, segment->passage_count);
+    state->tombstone_records =
+      saturated_add(state->tombstone_records, segment->tombstone_count);
+    for (j = 0U; j < segment->component_count; j++)
+      segment_bytes = saturated_add(
+        segment_bytes, segment->components[j].file_bytes);
+    state->component_file_bytes =
+      saturated_add(state->component_file_bytes, segment_bytes);
+    if (i == 0U || segment_bytes < state->smallest_segment_bytes)
+      state->smallest_segment_bytes = segment_bytes;
+    if (segment_bytes > state->largest_segment_bytes)
+      state->largest_segment_bytes = segment_bytes;
+    if (segment_bytes < policy->small_segment_bytes) {
+      run++;
+      if (run > state->small_segment_run)
+        state->small_segment_run = run;
+    } else {
+      run = 0U;
+    }
+  }
+  state->auto_compaction_needed = policy->enabled &&
+    state->small_segment_run >= policy->min_small_segments;
   state->embedding_configured = config.vector_metric != YAP_V2_VECTOR_DISABLED;
   state->embedding_dimensions = config.vector_dimensions;
   memcpy(state->embedding_model_id, config.vector_model_id, strlen(config.vector_model_id) + 1U);
@@ -105,19 +145,65 @@ done:
   YAP_V2_manifest_free(&manifest); return status;
 }
 
+int YAP_V2_operational_probe_index(
+    const char *index_dir, YAP_V2_OPERATIONAL_STATE *state,
+    char *error, size_t error_size) {
+  YAP_V2_COMPACTION_POLICY policy;
+  YAP_V2_compaction_policy_init(&policy);
+  return YAP_V2_operational_probe_index_with_policy(
+    index_dir, &policy, state, error, error_size);
+}
+
 int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const char *service,
                                   char **json, size_t *json_bytes) {
-  yyjson_mut_doc *document; yyjson_mut_val *root, *embedding, *compaction; char *rendered;
+  yyjson_mut_doc *document;
+  yyjson_mut_val *root, *embedding, *compaction, *segment_health;
+  char *rendered;
   if (state == NULL || service == NULL || json == NULL || json_bytes == NULL) return YAP_V2_INVALID_ARGUMENT;
   *json = NULL; *json_bytes = 0U; document = yyjson_mut_doc_new(NULL);
   if (document == NULL) return YAP_V2_ALLOCATION_FAILED;
-  root = yyjson_mut_obj(document); embedding = yyjson_mut_obj(document); compaction = yyjson_mut_obj(document);
+  root = yyjson_mut_obj(document); embedding = yyjson_mut_obj(document);
+  compaction = yyjson_mut_obj(document);
+  segment_health = yyjson_mut_obj(document);
   if (root == NULL || embedding == NULL || compaction == NULL ||
+      segment_health == NULL ||
       !yyjson_mut_obj_add_str(document, root, "status", state->ready ? "ready" : "not_ready") ||
       !yyjson_mut_obj_add_str(document, root, "service", service) ||
       !yyjson_mut_obj_add_bool(document, root, "ready", state->ready != 0) ||
       !yyjson_mut_obj_add_uint(document, root, "generation", state->generation) ||
       !yyjson_mut_obj_add_uint(document, root, "segments", state->segment_count) ||
+      !yyjson_mut_obj_add_uint(document, segment_health, "document_records",
+                              state->document_records) ||
+      !yyjson_mut_obj_add_uint(document, segment_health, "passage_records",
+                              state->passage_records) ||
+      !yyjson_mut_obj_add_uint(document, segment_health, "tombstone_records",
+                              state->tombstone_records) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "component_file_bytes",
+                              state->component_file_bytes) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "smallest_segment_bytes",
+                              state->smallest_segment_bytes) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "largest_segment_bytes",
+                              state->largest_segment_bytes) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "small_segment_run",
+                              state->small_segment_run) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "small_segment_threshold_bytes",
+                              state->small_segment_threshold_bytes) ||
+      !yyjson_mut_obj_add_uint(document, segment_health,
+                              "auto_compaction_trigger_segments",
+                              state->auto_compaction_trigger_segments) ||
+      !yyjson_mut_obj_add_bool(document, segment_health,
+                              "auto_compaction_enabled",
+                              state->auto_compaction_enabled != 0) ||
+      !yyjson_mut_obj_add_bool(document, segment_health,
+                              "auto_compaction_needed",
+                              state->auto_compaction_needed != 0) ||
+      !yyjson_mut_obj_add_val(document, root, "segment_health",
+                             segment_health) ||
       !yyjson_mut_obj_add_str(document, embedding, "state",
         state->embedding_configured ? "precomputed_ready" : "disabled") ||
       !yyjson_mut_obj_add_str(document, embedding, "model_id", state->embedding_model_id) ||
@@ -147,10 +233,6 @@ int YAP_V2_metrics_init(YAP_V2_METRICS *metrics) {
 void YAP_V2_metrics_close(YAP_V2_METRICS *metrics) {
   if (metrics == NULL || !metrics->initialized) return;
   (void)pthread_mutex_destroy(&metrics->lock); memset(metrics, 0, sizeof(*metrics));
-}
-
-static uint64_t saturated_add(uint64_t left, uint64_t right) {
-  return UINT64_MAX - left < right ? UINT64_MAX : left + right;
 }
 
 void YAP_V2_metrics_record(YAP_V2_METRICS *metrics, YAP_V2_OBSERVE_OPERATION operation,
@@ -218,6 +300,18 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
   if (append(rendered,YAP_V2_METRICS_CAPACITY,&used,
       "# TYPE yappod_v2_ready gauge\nyappod_v2_ready %d\n"
       "# TYPE yappod_v2_manifest_generation gauge\nyappod_v2_manifest_generation %llu\n"
+      "# TYPE yappod_v2_manifest_segments gauge\nyappod_v2_manifest_segments %zu\n"
+      "# TYPE yappod_v2_manifest_document_records gauge\nyappod_v2_manifest_document_records %llu\n"
+      "# TYPE yappod_v2_manifest_passage_records gauge\nyappod_v2_manifest_passage_records %llu\n"
+      "# TYPE yappod_v2_manifest_tombstone_records gauge\nyappod_v2_manifest_tombstone_records %llu\n"
+      "# TYPE yappod_v2_manifest_component_file_bytes gauge\nyappod_v2_manifest_component_file_bytes %llu\n"
+      "# TYPE yappod_v2_smallest_segment_bytes gauge\nyappod_v2_smallest_segment_bytes %llu\n"
+      "# TYPE yappod_v2_largest_segment_bytes gauge\nyappod_v2_largest_segment_bytes %llu\n"
+      "# TYPE yappod_v2_small_segment_run gauge\nyappod_v2_small_segment_run %zu\n"
+      "# TYPE yappod_v2_small_segment_threshold_bytes gauge\nyappod_v2_small_segment_threshold_bytes %zu\n"
+      "# TYPE yappod_v2_auto_compaction_trigger_segments gauge\nyappod_v2_auto_compaction_trigger_segments %zu\n"
+      "# TYPE yappod_v2_auto_compaction_enabled gauge\nyappod_v2_auto_compaction_enabled %d\n"
+      "# TYPE yappod_v2_auto_compaction_needed gauge\nyappod_v2_auto_compaction_needed %d\n"
       "# TYPE yappod_v2_inflight_requests gauge\nyappod_v2_inflight_requests %zu\n"
       "# TYPE yappod_v2_inflight_request_bytes gauge\nyappod_v2_inflight_request_bytes %zu\n"
       "# TYPE yappod_v2_inflight_request_limit gauge\nyappod_v2_inflight_request_limit %zu\n"
@@ -225,7 +319,19 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
       "# TYPE yappod_v2_embedding_configured gauge\nyappod_v2_embedding_configured %d\n"
       "# TYPE yappod_v2_compaction_state gauge\nyappod_v2_compaction_state{state=\"%s\"} 1\n"
       "# TYPE yappod_v2_compaction_generation gauge\nyappod_v2_compaction_generation %llu\n",
-      state->ready != 0, (unsigned long long)state->generation, inflight, inflight_bytes,
+      state->ready != 0, (unsigned long long)state->generation,
+      state->segment_count,
+      (unsigned long long)state->document_records,
+      (unsigned long long)state->passage_records,
+      (unsigned long long)state->tombstone_records,
+      (unsigned long long)state->component_file_bytes,
+      (unsigned long long)state->smallest_segment_bytes,
+      (unsigned long long)state->largest_segment_bytes,
+      state->small_segment_run, state->small_segment_threshold_bytes,
+      state->auto_compaction_trigger_segments,
+      state->auto_compaction_enabled != 0,
+      state->auto_compaction_needed != 0,
+      inflight, inflight_bytes,
       max_inflight, max_inflight_bytes, state->embedding_configured != 0,
       YAP_V2_compaction_state_name(state->compaction_state),
       (unsigned long long)state->compaction_generation) != 0) goto range;

@@ -2,6 +2,7 @@
 #define YAPPO_OBSERVABILITY_V2_H
 
 #include "storage/yappo_compaction_status_v2.h"
+#include "config/yappo_compaction_policy_v2.h"
 #include "config/yappo_config_v2.h"
 
 #include <pthread.h>
@@ -19,6 +20,17 @@ typedef struct {
   int ready;
   uint64_t generation;
   size_t segment_count;
+  uint64_t document_records;
+  uint64_t passage_records;
+  uint64_t tombstone_records;
+  uint64_t component_file_bytes;
+  uint64_t smallest_segment_bytes;
+  uint64_t largest_segment_bytes;
+  size_t small_segment_run;
+  size_t small_segment_threshold_bytes;
+  size_t auto_compaction_trigger_segments;
+  int auto_compaction_enabled;
+  int auto_compaction_needed;
   int embedding_configured;
   char embedding_model_id[YAP_V2_MAX_MODEL_ID_BYTES + 1U];
   uint32_t embedding_dimensions;
@@ -39,6 +51,9 @@ typedef struct {
 void YAP_V2_operational_state_init(YAP_V2_OPERATIONAL_STATE *state);
 int YAP_V2_operational_probe_index(const char *index_dir, YAP_V2_OPERATIONAL_STATE *state,
                                    char *error, size_t error_size);
+int YAP_V2_operational_probe_index_with_policy(
+  const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+  YAP_V2_OPERATIONAL_STATE *state, char *error, size_t error_size);
 int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const char *service,
                                   char **json, size_t *json_bytes);
 int YAP_V2_metrics_init(YAP_V2_METRICS *metrics);

@@ -40,6 +40,7 @@ static char pid_file[YAP_APPLICATION_PATH_BYTES] = "core.pid";
 static char log_file[YAP_APPLICATION_PATH_BYTES] = "core.log";
 static char error_file[YAP_APPLICATION_PATH_BYTES] = "core.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
+static YAP_V2_COMPACTION_POLICY compaction_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_RUNTIME_LIMITER ingest_limiter;
 
@@ -245,11 +246,28 @@ static int handle_request(FILE *stream, const char *index_dir,
     }
     status = YAP_V2_http_runtime_state(http_runtime, &state);
     if (status == YAP_V2_OK &&
-        YAP_V2_operational_probe_index(index_dir, &disk_state, probe_error,
-                                       sizeof(probe_error)) == YAP_V2_OK) {
+        YAP_V2_operational_probe_index_with_policy(
+          index_dir, &compaction_policy, &disk_state, probe_error,
+          sizeof(probe_error)) == YAP_V2_OK) {
       state.compaction_state = disk_state.compaction_state;
       state.compaction_generation = disk_state.compaction_generation;
       state.compaction_updated_at_unix = disk_state.compaction_updated_at_unix;
+      if (state.generation == disk_state.generation) {
+        state.document_records = disk_state.document_records;
+        state.passage_records = disk_state.passage_records;
+        state.tombstone_records = disk_state.tombstone_records;
+        state.component_file_bytes = disk_state.component_file_bytes;
+        state.smallest_segment_bytes = disk_state.smallest_segment_bytes;
+        state.largest_segment_bytes = disk_state.largest_segment_bytes;
+        state.small_segment_run = disk_state.small_segment_run;
+        state.small_segment_threshold_bytes =
+          disk_state.small_segment_threshold_bytes;
+        state.auto_compaction_trigger_segments =
+          disk_state.auto_compaction_trigger_segments;
+        state.auto_compaction_enabled =
+          disk_state.auto_compaction_enabled;
+        state.auto_compaction_needed = disk_state.auto_compaction_needed;
+      }
     }
     http_status = status == YAP_V2_OK && state.ready ? 200 : 503;
     if (YAP_V2_operational_state_json(&state, "yappod_core", &json, &json_bytes) !=
@@ -384,7 +402,6 @@ int main(int argc, char **argv) {
   pthread_t *threads = NULL, reloader_thread, maintenance_thread;
   worker_t *workers = NULL;
   maintenance_t maintenance;
-  YAP_V2_COMPACTION_POLICY compaction_policy;
   size_t started = 0U, worker_threads;
   int foreground = 0, reloader_started = 0, maintenance_started = 0;
   YAP_V2_http_runtime_init(&http_runtime);

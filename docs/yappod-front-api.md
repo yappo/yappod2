@@ -379,7 +379,7 @@ frontのプロセスがHTTPリクエストを処理できる場合に、`200`と
 
 ## `GET /health/ready`
 
-coreへ接続でき、検証済みの索引を利用できる場合に、`200`、`ready: true`、世代、セグメント数、埋め込みと
+coreへ接続でき、検証済みの索引を利用できる場合に、`200`、`ready: true`、世代、セグメント数、索引構造、埋め込みと
 コンパクションの状態を返します。利用できない場合は`503`と`ready: false`を返します。`status`は`ready`または
 `not_ready`、`service`は`yappod_front`です。
 
@@ -390,6 +390,19 @@ coreへ接続でき、検証済みの索引を利用できる場合に、`200`�
   "ready": true,
   "generation": 8,
   "segments": 2,
+  "segment_health": {
+    "document_records": 120000,
+    "passage_records": 360000,
+    "tombstone_records": 12,
+    "component_file_bytes": 734003200,
+    "smallest_segment_bytes": 52428800,
+    "largest_segment_bytes": 681574400,
+    "small_segment_run": 1,
+    "small_segment_threshold_bytes": 67108864,
+    "auto_compaction_trigger_segments": 4,
+    "auto_compaction_enabled": true,
+    "auto_compaction_needed": false
+  },
   "embedding": {
     "state": "precomputed_ready",
     "model_id": "example-model-v1",
@@ -405,11 +418,13 @@ coreへ接続でき、検証済みの索引を利用できる場合に、`200`�
 
 語彙索引では`embedding.state`が`disabled`、`model_id`が空文字列、`dimensions`が0です。`compaction.state`は
 `idle`、`running`、`succeeded`、`failed`、`interrupted`、`unknown`のいずれかです。
+`segment_health`の記録数にはコンパクション前の古い文書版も含まれます。各フィールドの正確な
+意味は[監視とメトリクス](observability.md)を参照してください。
 
 ## `GET /metrics`
 
-Prometheusのテキスト形式で、リクエスト数、処理時間、処理中の件数とバイト数、マニフェストの世代、準備状態、
-埋め込み状態、コンパクション状態を返します。全メトリクス名、ラベル、バケット、収集例は
+Prometheusのテキスト形式で、リクエスト数、処理時間、処理中の件数とバイト数、マニフェストの世代、
+セグメント数と記録容量、自動コンパクション要否、準備状態、埋め込み状態、コンパクション状態を返します。全メトリクス名、ラベル、バケット、収集例は
 [監視とメトリクス](observability.md)を参照してください。
 
 ## APIを公開するときの注意

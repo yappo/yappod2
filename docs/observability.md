@@ -40,6 +40,19 @@ curl -fsS http://127.0.0.1:18400/health/ready
   "ready": true,
   "generation": 3,
   "segments": 2,
+  "segment_health": {
+    "document_records": 120000,
+    "passage_records": 360000,
+    "tombstone_records": 12,
+    "component_file_bytes": 734003200,
+    "smallest_segment_bytes": 52428800,
+    "largest_segment_bytes": 681574400,
+    "small_segment_run": 1,
+    "small_segment_threshold_bytes": 67108864,
+    "auto_compaction_trigger_segments": 4,
+    "auto_compaction_enabled": true,
+    "auto_compaction_needed": false
+  },
   "embedding": {
     "state": "disabled",
     "model_id": "",
@@ -60,6 +73,17 @@ curl -fsS http://127.0.0.1:18400/health/ready
 | `ready` | 検索を受けられるかを表す真偽値です。 |
 | `generation` | frontがディスク上のマニフェストから確認した世代です。 |
 | `segments` | マニフェストが参照するセグメント数です。 |
+| `segment_health.document_records` | 全descriptorの文書記録数の合計です。コンパクション前は同じ文書IDの古い版も含みます。 |
+| `segment_health.passage_records` | 全descriptorの本文断片記録数の合計です。 |
+| `segment_health.tombstone_records` | 全descriptorの削除標識数の合計です。 |
+| `segment_health.component_file_bytes` | 全descriptorに記録されたコンポーネントファイルサイズの合計です。実行時のファイル走査は行いません。 |
+| `segment_health.smallest_segment_bytes` | 1セグメント内のコンポーネントファイルサイズ合計の最小値です。 |
+| `segment_health.largest_segment_bytes` | 1セグメント内のコンポーネントファイルサイズ合計の最大値です。 |
+| `segment_health.small_segment_run` | 設定したサイズ未満のセグメントがマニフェスト上で連続する最大個数です。 |
+| `segment_health.small_segment_threshold_bytes` | 小セグメント判定に使う`auto_compact_small_segment_bytes`です。 |
+| `segment_health.auto_compaction_trigger_segments` | 自動実行を開始する`auto_compact_min_small_segments`です。 |
+| `segment_health.auto_compaction_enabled` | coreの自動コンパクション設定が有効かを表します。 |
+| `segment_health.auto_compaction_needed` | 現在のdescriptor構造が設定した自動実行条件を満たすかを表します。実行中かどうかは`compaction.state`で確認します。 |
 | `embedding.state` | ベクトル対応索引なら`precomputed_ready`、語彙索引なら`disabled`です。外部埋め込みサーバーの稼働状態ではありません。 |
 | `embedding.model_id` | 索引`config.toml`に保存されたベクトルモデルの識別子です。 |
 | `embedding.dimensions` | 索引に保存されたベクトルの次元数です。 |
@@ -174,6 +198,30 @@ frontから索引とcoreを利用できる場合は`1`、それ以外は`0`で�
 
 frontがディスク上のマニフェストから読んだ現在の世代です。更新後に増えない場合は、更新対象とfrontの`index.directory`が同じか、マニフェスト公開が成功したかを確認します。
 
+### 索引構造のゲージ
+
+次のゲージは、frontがマニフェストdescriptorから読み取った索引構造です。文書や転置索引の本文を
+開かずに計算するため、収集処理はセグメント数とコンポーネント数に比例します。
+
+| メトリクス | 意味 |
+|---|---|
+| `yappod_v2_manifest_segments` | 現在のセグメント数です。 |
+| `yappod_v2_manifest_document_records` | 文書記録数です。古い版を含むため、利用者から見える一意文書数とは限りません。 |
+| `yappod_v2_manifest_passage_records` | 本文断片記録数です。 |
+| `yappod_v2_manifest_tombstone_records` | 削除標識数です。 |
+| `yappod_v2_manifest_component_file_bytes` | descriptorに記録された全コンポーネントファイルサイズの合計です。 |
+| `yappod_v2_smallest_segment_bytes` | セグメント単位の記録サイズ合計の最小値です。セグメントが0個なら0です。 |
+| `yappod_v2_largest_segment_bytes` | セグメント単位の記録サイズ合計の最大値です。 |
+| `yappod_v2_small_segment_run` | 小セグメントが隣接する最大個数です。 |
+| `yappod_v2_small_segment_threshold_bytes` | 小セグメント判定のサイズ境界です。 |
+| `yappod_v2_auto_compaction_trigger_segments` | 自動コンパクションを開始する連続個数です。 |
+| `yappod_v2_auto_compaction_enabled` | 自動コンパクションが有効なら1、無効なら0です。 |
+| `yappod_v2_auto_compaction_needed` | 現在の構造が自動実行条件を満たすなら1です。 |
+
+世代数だけでは断片化を判断できません。更新直後に世代が増えるのは正常です。
+`yappod_v2_manifest_segments`と`yappod_v2_small_segment_run`が自動実行後も下がらない場合に、
+コンパクション状態、空き容量、coreのエラーログを確認してください。
+
 ### `yappod_v2_inflight_requests`
 
 frontが現在処理中として受理した検索、RAG向け取得、本文断片生成、文書更新の件数です。認証失敗と上限超過で拒否したリクエストは受理しないため含みません。
@@ -259,6 +307,12 @@ sum(rate(yappod_v2_requests_total[5m])) > 0.05
 yappod_v2_compaction_state{state="interrupted"} == 1
 ```
 
+自動実行条件を満たした状態が10分間続く例です。
+
+```promql
+min_over_time(yappod_v2_auto_compaction_needed[10m]) == 1
+```
+
 カウンターが0件の時間帯は比率の分母が0になります。実運用の規則では通信条件も加えてください。
 
 ## 現在提供していない情報
@@ -266,7 +320,7 @@ yappod_v2_compaction_state{state="interrupted"} == 1
 現行の`/metrics`には次の情報がありません。
 
 - 結果件数、ヒット率、検索文、検索方式または`scope`別の件数
-- セグメントごとの文書数、本文断片数、ファイルサイズ
+- セグメントIDごとの文書数、本文断片数、ファイルサイズ
 - プロセスのCPU、RSS、開いているファイル記述子、スレッド数
 - core単体のPrometheusエンドポイント
 - search-webサーバー、埋め込みAPI、LLM APIの処理時間とエラー

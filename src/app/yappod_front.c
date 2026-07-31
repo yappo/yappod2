@@ -65,6 +65,7 @@ static char pid_file[YAP_APPLICATION_PATH_BYTES] = "front.pid";
 static char log_file[YAP_APPLICATION_PATH_BYTES] = "front.log";
 static char error_file[YAP_APPLICATION_PATH_BYTES] = "front.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
+static YAP_V2_COMPACTION_POLICY compaction_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
 static YAP_V2_RUNTIME_LIMITER ingest_limiter;
 static YAP_V2_METRICS metrics;
@@ -438,7 +439,8 @@ static int handle_operational(FILE *stream, const worker_t *worker, endpoint_t e
   if (endpoint == ENDPOINT_LIVE)
     return send_response(stream, 200, "application/json; charset=utf-8", live,
                          sizeof(live) - 1U);
-  status = YAP_V2_operational_probe_index(worker->index_dir, &state, error, sizeof(error));
+  status = YAP_V2_operational_probe_index_with_policy(
+    worker->index_dir, &compaction_policy, &state, error, sizeof(error));
   if (status != YAP_V2_OK || !core_ready(worker)) state.ready = 0;
   if (endpoint == ENDPOINT_READY) {
     if (YAP_V2_operational_state_json(&state, "yappod_front", &body, &body_bytes) != YAP_V2_OK)
@@ -635,6 +637,7 @@ int main(int argc, char **argv) {
   worker_t *workers = NULL;
   size_t started = 0U, worker_threads;
   int foreground = 0, have_port = 0, have_core_port = 0;
+  YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
@@ -678,6 +681,7 @@ int main(int argc, char **argv) {
     listen_host = application.front_host;
     port = application.front_port;
     runtime_policy = application.runtime_policy;
+    compaction_policy = application.compaction_policy;
     if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
@@ -686,8 +690,10 @@ int main(int argc, char **argv) {
     YAP_V2_runtime_policy_init(&runtime_policy);
   }
   if (index_dir == NULL || core_host == NULL ||
-      YAP_V2_operational_probe_index(index_dir, &state, probe_error, sizeof(probe_error)) !=
-        YAP_V2_OK || !state.ready || state.segment_count == 0U) {
+      YAP_V2_operational_probe_index_with_policy(
+        index_dir, &compaction_policy, &state, probe_error,
+        sizeof(probe_error)) != YAP_V2_OK ||
+      !state.ready || state.segment_count == 0U) {
     fprintf(stderr, "Invalid v2 index: %s\n", probe_error);
     return EXIT_FAILURE;
   }

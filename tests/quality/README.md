@@ -11,6 +11,7 @@
 | `v2_search_quality` | 語彙、ベクトル、複合検索の固定検索文に対してnDCG@10とRecall@10を計算し、基準値を下回らないことを確認します。 |
 | `ann_v2` | 全ベクトルを比較した上位結果を正解集合とし、USearchによる近似検索のRecall@10、保存と再読み込み、入力検証を確認します。 |
 | `v2_daemon_reliability` | core/frontを使った検索と更新の並行実行、世代の可視性、P95、RSSを確認します。`YAPPOD_TESTS_DAEMON=ON`のときだけ構築します。 |
+| `segment_health_regression` | 固定索引へ40世代の更新と自動保守判定を順番に適用し、セグメント数が3以下、小セグメントの連続数が閾値未満に保たれ、全記録と検索結果が残ることを確認します。経過時間には依存しません。 |
 | `search_quality_metrics` | DCG、nDCG、Recall、MRR、処理時間の分位計算そのものを確認します。 |
 
 全試験を構築してから、対象だけを実行します。
@@ -18,11 +19,15 @@
 ```sh
 cmake --build build -j
 ctest --test-dir build \
-  -R '^(v2_search_quality|ann_v2|v2_daemon_reliability|search_quality_metrics)$' \
+  -R '^(v2_search_quality|ann_v2|v2_daemon_reliability|segment_health_regression|search_quality_metrics)$' \
   --output-on-failure
 ```
 
 終了状態0は、リポジトリに固定された基準を満たしたことを示します。異なるCPU、データ、コンパイラーの性能が同じであることまでは示しません。
+
+`segment_health_regression`の上限は処理時間ではなく、同じ入力列から得られるセグメント数と
+descriptor記録数です。CI実行環境の速度差で判定を変えず、更新世代が増えても検索が走査する
+セグメント構造を一定範囲へ戻せることを検証します。
 
 ## 品質指標
 
