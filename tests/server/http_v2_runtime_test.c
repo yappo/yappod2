@@ -17,6 +17,7 @@
 #include "storage/yappo_manifest_v2.h"
 #include "components/yappo_metadata_v2.h"
 #include "components/yappo_vector_v2.h"
+#include "indexing/yappo_compact_v2.h"
 
 static YAP_V2_BYTES_VIEW bytes(const char *text) {
   YAP_V2_BYTES_VIEW value = {(const unsigned char *)text, strlen(text)}; return value;
@@ -83,6 +84,48 @@ static yyjson_doc *execute(ytest_env_t *env, YAP_V2_HTTP_OPERATION operation, co
   assert_int_equal(status, expected_status); assert_non_null(response);
   document = yyjson_read(response, response_bytes, 0U); free(response); assert_non_null(document);
   return document;
+}
+
+static yyjson_doc *runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
+                                   YAP_V2_HTTP_OPERATION operation,
+                                   const char *request, int expected_status) {
+  char *response = NULL;
+  size_t response_bytes = 0U;
+  int http_status = 0;
+  yyjson_doc *document;
+  assert_int_equal(YAP_V2_http_runtime_execute(
+                     runtime, operation, (const unsigned char *)request,
+                     strlen(request), &http_status, &response,
+                     &response_bytes),
+                   0);
+  assert_int_equal(http_status, expected_status);
+  assert_non_null(response);
+  document = yyjson_read(response, response_bytes, 0U);
+  free(response);
+  assert_non_null(document);
+  return document;
+}
+
+static void assert_runtime_search_id(YAP_V2_HTTP_RUNTIME *runtime,
+                                     const char *query,
+                                     const char *expected_id,
+                                     uint64_t expected_generation) {
+  char request[512];
+  yyjson_doc *document;
+  yyjson_val *root;
+  yyjson_val *result;
+  assert_true(snprintf(request, sizeof(request),
+    "{\"query\":\"%s\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":1}",
+    query) > 0);
+  document = runtime_execute(runtime, YAP_V2_HTTP_SEARCH, request, 200);
+  root = yyjson_doc_get_root(document);
+  assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "generation")),
+                   expected_generation);
+  result = yyjson_arr_get_first(yyjson_obj_get(root, "results"));
+  assert_non_null(result);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(result, "id")),
+                      expected_id);
+  yyjson_doc_free(document);
 }
 
 static void copy_json_string(char *output, size_t capacity, yyjson_val *value) {
@@ -194,7 +237,68 @@ static void test_real_search_and_retrieve_runtime(void **state) {
   yyjson_doc_free(document); ytest_env_destroy(&env);
 }
 
+static void test_runtime_reload_reuses_reorders_and_replaces_segments(void **state) {
+  static const char ingest[] =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-live\","
+    "\"url\":\"https://e.test/live\",\"title\":\"Live guide\","
+    "\"body\":\"ripe banana\",\"metadata\":{\"category\":\"fruit\"},"
+    "\"vectors\":[[1,0]]}]}";
+  ytest_env_t env;
+  YAP_V2_HTTP_RUNTIME runtime;
+  YAP_V2_OPERATIONAL_STATE operational;
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_SEGMENT_DESCRIPTOR first;
+  YAP_V2_COMPACTION_RESULT compact;
+  yyjson_doc *document;
+  char manifest_path[PATH_MAX];
+  char error[256] = {0};
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_http_runtime_init(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_open(&runtime, env.tmp_root), YAP_V2_OK);
+
+  document = runtime_execute(&runtime, YAP_V2_HTTP_INGEST, ingest, 200);
+  yyjson_doc_free(document);
+  assert_runtime_search_id(&runtime, "banana", "doc-live", 2U);
+
+  assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path),
+                                   env.tmp_root, "manifest.json"), 0);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.segment_count, 2U);
+  first = manifest.segments[0];
+  manifest.segments[0] = manifest.segments[1];
+  manifest.segments[1] = first;
+  manifest.generation = 3U;
+  assert_int_equal(YAP_V2_manifest_save_atomic(manifest_path, &manifest),
+                   YAP_V2_OK);
+  YAP_V2_manifest_free(&manifest);
+  assert_int_equal(YAP_V2_http_runtime_reload(&runtime), YAP_V2_OK);
+  assert_runtime_search_id(&runtime, "apple", "doc-fruit", 3U);
+  assert_runtime_search_id(&runtime, "banana", "doc-live", 3U);
+
+  YAP_V2_compaction_result_init(&compact);
+  assert_int_equal(YAP_V2_compact(env.tmp_root, &compact, error,
+                                  sizeof(error)), YAP_V2_OK);
+  assert_int_equal(compact.generation, 4U);
+  assert_int_equal(YAP_V2_http_runtime_reload(&runtime), YAP_V2_OK);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational),
+                   YAP_V2_OK);
+  assert_int_equal(operational.generation, 4U);
+  assert_int_equal(operational.segment_count, compact.segment_ids.count);
+  assert_runtime_search_id(&runtime, "apple", "doc-fruit", 4U);
+  assert_runtime_search_id(&runtime, "banana", "doc-live", 4U);
+
+  YAP_V2_compaction_result_free(&compact);
+  YAP_V2_http_runtime_close(&runtime);
+  ytest_env_destroy(&env);
+}
+
 int main(void) {
-  const struct CMUnitTest tests[] = {cmocka_unit_test(test_real_search_and_retrieve_runtime)};
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_real_search_and_retrieve_runtime),
+    cmocka_unit_test(test_runtime_reload_reuses_reorders_and_replaces_segments)
+  };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

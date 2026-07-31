@@ -14,6 +14,105 @@
 
 #define YAP_V2_MAX_MANIFEST_BYTES (16U * 1024U * 1024U)
 
+static size_t segment_id_hash(const char *value) {
+  size_t hash = (size_t)1469598103934665603ULL;
+  const unsigned char *cursor = (const unsigned char *)value;
+  while (*cursor != '\0') {
+    hash ^= *cursor++;
+    hash *= (size_t)1099511628211ULL;
+  }
+  return hash;
+}
+
+int YAP_V2_segment_descriptor_equal(
+  const YAP_V2_SEGMENT_DESCRIPTOR *left,
+  const YAP_V2_SEGMENT_DESCRIPTOR *right) {
+  size_t i;
+  if (left == NULL || right == NULL ||
+      strcmp(left->id, right->id) != 0 ||
+      left->document_count != right->document_count ||
+      left->passage_count != right->passage_count ||
+      left->tombstone_count != right->tombstone_count ||
+      left->component_count != right->component_count)
+    return 0;
+  for (i = 0U; i < left->component_count; i++) {
+    const YAP_V2_COMPONENT_DESCRIPTOR *a = &left->components[i];
+    const YAP_V2_COMPONENT_DESCRIPTOR *b = &right->components[i];
+    if (strcmp(a->name, b->name) != 0 ||
+        a->file_type != b->file_type ||
+        a->record_count != b->record_count ||
+        a->file_bytes != b->file_bytes ||
+        memcmp(a->checksum, b->checksum, sizeof(a->checksum)) != 0)
+      return 0;
+  }
+  return 1;
+}
+
+void YAP_V2_manifest_segment_map_init(YAP_V2_MANIFEST_SEGMENT_MAP *map) {
+  if (map != NULL) memset(map, 0, sizeof(*map));
+}
+
+void YAP_V2_manifest_segment_map_free(YAP_V2_MANIFEST_SEGMENT_MAP *map) {
+  if (map == NULL) return;
+  free(map->slots);
+  memset(map, 0, sizeof(*map));
+}
+
+int YAP_V2_manifest_segment_map_build(YAP_V2_MANIFEST_SEGMENT_MAP *map,
+                                      const YAP_V2_MANIFEST *manifest) {
+  size_t capacity = 1U;
+  size_t i;
+  if (map == NULL || manifest == NULL) return YAP_V2_INVALID_ARGUMENT;
+  YAP_V2_manifest_segment_map_free(map);
+  map->manifest = manifest;
+  if (manifest->segment_count == 0U) return YAP_V2_OK;
+  if (manifest->segment_count > SIZE_MAX / 2U) return YAP_V2_OUT_OF_RANGE;
+  while (capacity < manifest->segment_count * 2U) {
+    if (capacity > SIZE_MAX / 2U) return YAP_V2_OUT_OF_RANGE;
+    capacity *= 2U;
+  }
+  map->slots = calloc(capacity, sizeof(*map->slots));
+  if (map->slots == NULL) {
+    map->manifest = NULL;
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  map->capacity = capacity;
+  for (i = 0U; i < manifest->segment_count; i++) {
+    size_t slot = segment_id_hash(manifest->segments[i].id) & (capacity - 1U);
+    while (map->slots[slot] != 0U) {
+      size_t existing = map->slots[slot] - 1U;
+      if (strcmp(manifest->segments[existing].id, manifest->segments[i].id) == 0) {
+        YAP_V2_manifest_segment_map_free(map);
+        return YAP_V2_CONFLICT;
+      }
+      slot = (slot + 1U) & (capacity - 1U);
+    }
+    map->slots[slot] = i + 1U;
+  }
+  return YAP_V2_OK;
+}
+
+int YAP_V2_manifest_segment_map_find(const YAP_V2_MANIFEST_SEGMENT_MAP *map,
+                                     const char *segment_id,
+                                     size_t *segment_index) {
+  size_t slot;
+  size_t probes;
+  if (map == NULL || segment_id == NULL || segment_index == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  if (map->manifest == NULL || map->capacity == 0U) return YAP_V2_NOT_FOUND;
+  slot = segment_id_hash(segment_id) & (map->capacity - 1U);
+  for (probes = 0U; probes < map->capacity; probes++) {
+    size_t encoded = map->slots[slot];
+    if (encoded == 0U) return YAP_V2_NOT_FOUND;
+    if (strcmp(map->manifest->segments[encoded - 1U].id, segment_id) == 0) {
+      *segment_index = encoded - 1U;
+      return YAP_V2_OK;
+    }
+    slot = (slot + 1U) & (map->capacity - 1U);
+  }
+  return YAP_V2_NOT_FOUND;
+}
+
 static int exact_keys(yyjson_val *object, const char *const *names, size_t expected) {
   yyjson_obj_iter iterator;
   yyjson_val *key;

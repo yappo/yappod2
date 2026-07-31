@@ -191,24 +191,6 @@ static const YAP_V2_COMPONENT_DESCRIPTOR *component(const YAP_V2_SEGMENT_DESCRIP
   return NULL;
 }
 
-static int same_descriptor(const YAP_V2_SEGMENT_DESCRIPTOR *left,
-                           const YAP_V2_SEGMENT_DESCRIPTOR *right) {
-  size_t i;
-  if (strcmp(left->id, right->id) != 0 ||
-      left->document_count != right->document_count ||
-      left->passage_count != right->passage_count ||
-      left->tombstone_count != right->tombstone_count ||
-      left->component_count != right->component_count) return 0;
-  for (i = 0U; i < left->component_count; i++) {
-    const YAP_V2_COMPONENT_DESCRIPTOR *a = &left->components[i];
-    const YAP_V2_COMPONENT_DESCRIPTOR *b = &right->components[i];
-    if (strcmp(a->name, b->name) != 0 || a->file_type != b->file_type ||
-        a->record_count != b->record_count || a->file_bytes != b->file_bytes ||
-        memcmp(a->checksum, b->checksum, sizeof(a->checksum)) != 0) return 0;
-  }
-  return 1;
-}
-
 static int component_path(const char *index_dir, const char *segment_id, const char *name,
                           char **path_out) {
   size_t length;
@@ -227,8 +209,10 @@ static int snapshot_load(const MANAGER_STATE *state,
                          const YAP_V2_SEARCH_SNAPSHOT *previous,
                          YAP_V2_SEARCH_SNAPSHOT **snapshot_out) {
   YAP_V2_SEARCH_SNAPSHOT *snapshot;
+  YAP_V2_MANIFEST_SEGMENT_MAP previous_segments;
   size_t i;
   int status;
+  YAP_V2_manifest_segment_map_init(&previous_segments);
   snapshot = (YAP_V2_SEARCH_SNAPSHOT *)calloc(1U, sizeof(*snapshot));
   if (snapshot == NULL) return YAP_V2_ALLOCATION_FAILED;
   if (pthread_mutex_init(&snapshot->references_lock, NULL) != 0) { free(snapshot); return YAP_V2_IO_ERROR; }
@@ -242,23 +226,31 @@ static int snapshot_load(const MANAGER_STATE *state,
                                                      sizeof(*snapshot->segments));
     if (snapshot->segments == NULL) status = YAP_V2_ALLOCATION_FAILED;
   }
+  if (status == YAP_V2_OK && previous != NULL)
+    status = YAP_V2_manifest_segment_map_build(&previous_segments,
+                                               &previous->manifest);
   for (i = 0U; status == YAP_V2_OK && i < snapshot->segment_count; i++) {
     const YAP_V2_SEGMENT_DESCRIPTOR *descriptor = &snapshot->manifest.segments[i];
     const YAP_V2_COMPONENT_DESCRIPTOR *documents = component(descriptor, YAP_V2_FILE_DOCUMENTS);
     const YAP_V2_COMPONENT_DESCRIPTOR *tombstones = component(descriptor, YAP_V2_FILE_TOMBSTONES);
     char *path = NULL;
-    size_t previous_index;
+    size_t previous_index = 0U;
     if (previous != NULL) {
-      for (previous_index = 0U; previous_index < previous->segment_count; previous_index++) {
-        if (same_descriptor(&previous->manifest.segments[previous_index], descriptor)) {
-          snapshot->segments[i] = previous->segments[previous_index];
-          pthread_mutex_lock(&snapshot->segments[i]->references_lock);
-          snapshot->segments[i]->references++;
-          pthread_mutex_unlock(&snapshot->segments[i]->references_lock);
-          break;
-        }
+      int found = YAP_V2_manifest_segment_map_find(
+        &previous_segments, descriptor->id, &previous_index);
+      if (found == YAP_V2_OK &&
+          YAP_V2_segment_descriptor_equal(
+            &previous->manifest.segments[previous_index], descriptor)) {
+        snapshot->segments[i] = previous->segments[previous_index];
+        pthread_mutex_lock(&snapshot->segments[i]->references_lock);
+        snapshot->segments[i]->references++;
+        pthread_mutex_unlock(&snapshot->segments[i]->references_lock);
+        continue;
       }
-      if (previous_index < previous->segment_count) continue;
+      if (found != YAP_V2_OK && found != YAP_V2_NOT_FOUND) {
+        status = found;
+        break;
+      }
     }
     status = YAP_V2_manifest_verify_segment_components(
       state->index_dir, snapshot->manifest.generation, descriptor);
@@ -295,6 +287,7 @@ static int snapshot_load(const MANAGER_STATE *state,
       status = YAP_V2_CONFLICT;
   }
   if (status == YAP_V2_OK) status = snapshot_build_visibility(snapshot);
+  YAP_V2_manifest_segment_map_free(&previous_segments);
   if (status != YAP_V2_OK) { snapshot_destroy(snapshot); return status; }
   *snapshot_out = snapshot;
   return YAP_V2_OK;
@@ -359,7 +352,12 @@ int YAP_V2_snapshot_manager_reload(YAP_V2_SNAPSHOT_MANAGER *manager, int *change
     pthread_mutex_unlock(&state->lock); YAP_V2_snapshot_release(candidate); return YAP_V2_CONFLICT;
   }
   if (previous != NULL && candidate->manifest.generation == previous->manifest.generation) {
-    pthread_mutex_unlock(&state->lock); YAP_V2_snapshot_release(candidate); return YAP_V2_OK;
+    status = YAP_V2_snapshot_matches_manifest(previous,
+                                              &candidate->manifest) ?
+             YAP_V2_OK : YAP_V2_CONFLICT;
+    pthread_mutex_unlock(&state->lock);
+    YAP_V2_snapshot_release(candidate);
+    return status;
   }
   state->current = candidate; *changed = 1;
   pthread_mutex_unlock(&state->lock);
@@ -383,6 +381,20 @@ uint64_t YAP_V2_snapshot_generation(const YAP_V2_SEARCH_SNAPSHOT *snapshot) {
 
 size_t YAP_V2_snapshot_segment_count(const YAP_V2_SEARCH_SNAPSHOT *snapshot) {
   return snapshot == NULL ? 0U : snapshot->segment_count;
+}
+
+int YAP_V2_snapshot_matches_manifest(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                     const YAP_V2_MANIFEST *manifest) {
+  size_t i;
+  if (snapshot == NULL || manifest == NULL ||
+      snapshot->manifest.generation != manifest->generation ||
+      snapshot->segment_count != manifest->segment_count)
+    return 0;
+  for (i = 0U; i < snapshot->segment_count; i++)
+    if (!YAP_V2_segment_descriptor_equal(&snapshot->manifest.segments[i],
+                                         &manifest->segments[i]))
+      return 0;
+  return 1;
 }
 
 const YAP_V2_SEGMENT *YAP_V2_snapshot_segment_documents(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
