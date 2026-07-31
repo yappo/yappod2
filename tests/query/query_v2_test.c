@@ -39,6 +39,7 @@ static void test_hybrid_filter_and_scope_aggregation(void **state) {
   YAP_V2_ANN_SEGMENT ann;
   YAP_V2_METADATA_INDEX metadata;
   YAP_V2_QUERY_SEGMENT runtime;
+  YAP_V2_QUERY_CORPUS_STATS corpus_stats;
   YAP_V2_QUERY_REQUEST request;
   YAP_V2_QUERY_HIT hits[2];
   size_t hit_count;
@@ -99,27 +100,39 @@ static void test_hybrid_filter_and_scope_aggregation(void **state) {
   assert_int_equal(ytest_path_join(path, sizeof(path), segment_dir, "metadata.yap2"), 0);
   assert_int_equal(YAP_V2_metadata_read(path, 1U, &config, &metadata, NULL), YAP_V2_OK);
   runtime.lexical = &lexical; runtime.vector = &ann; runtime.metadata = &metadata;
+  assert_int_equal(YAP_V2_query_corpus_stats_build(snapshot, &runtime, 1U,
+                                                   &corpus_stats), YAP_V2_OK);
+  assert_int_equal(corpus_stats.generation, YAP_V2_snapshot_generation(snapshot));
+  assert_int_equal(corpus_stats.document_count, 2U);
+  assert_int_equal(corpus_stats.passage_count, 2U);
+  assert_int_equal(corpus_stats.field_token_count[0], 4U);
+  assert_int_equal(corpus_stats.field_token_count[1], 3U);
+  assert_int_equal(corpus_stats.field_token_count[2], 4U);
   YAP_V2_query_request_init(&request); request.query = bytes("apple");
   request.query_vector = query_vector; request.query_dimensions = 2U;
   request.filter_json = bytes("{\"eq\":{\"field\":\"category\",\"value\":\"fruit\"}}");
   request.top_k = 1U; request.candidate_k = 1U;
-  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &request, hits, 2U, &hit_count),
+  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &corpus_stats, &request,
+                                        hits, 2U, &hit_count),
                    YAP_V2_OK);
   assert_int_equal(hit_count, 1U); assert_memory_equal(hits[0].id.data, "doc-fruit", 9U);
   assert_true(hits[0].lexical_score > 0.0); assert_true(hits[0].vector_score > 0.0);
   request.mode = YAP_V2_SEARCH_LEXICAL;
-  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &request, hits, 2U, &hit_count),
+  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &corpus_stats, &request,
+                                        hits, 2U, &hit_count),
                    YAP_V2_OK);
   assert_int_equal(hit_count, 1U); assert_true(hits[0].lexical_score > 0.0);
   assert_float_equal(hits[0].vector_score, 0.0, 0.0);
   request.mode = YAP_V2_SEARCH_VECTOR;
-  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &request, hits, 2U, &hit_count),
+  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &corpus_stats, &request,
+                                        hits, 2U, &hit_count),
                    YAP_V2_OK);
   assert_int_equal(hit_count, 1U); assert_true(hits[0].vector_score > 0.0);
   assert_float_equal(hits[0].lexical_score, 0.0, 0.0);
   request.mode = YAP_V2_SEARCH_HYBRID;
   request.scope = YAP_V2_SEARCH_PASSAGES;
-  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &request, hits, 2U, &hit_count),
+  assert_int_equal(YAP_V2_query_execute(snapshot, &runtime, 1U, &corpus_stats, &request,
+                                        hits, 2U, &hit_count),
                    YAP_V2_OK);
   assert_int_equal(hit_count, 1U); assert_memory_equal(hits[0].id.data, "passage-fruit", 13U);
   assert_memory_equal(hits[0].parent_document_id.data, "doc-fruit", 9U);
