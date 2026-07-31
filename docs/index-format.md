@@ -476,7 +476,7 @@ YAP2-COMPACTION<TAB>running|succeeded|failed<TAB>PID<TAB>GENERATION<TAB>UPDATED_
 
 ## 容量上限とセグメント分割
 
-各`.yap2`コンポーネントのペイロード上限は256 MiBです。これは索引全体や入力NDJSON全体の上限ではありません。セグメント分割処理は文書境界で入力を複数セグメントへ分け、`documents`、`terms`、`postings`、`positions`、`metadata`、`vectors`、`tombstones`のどれも上限を超えないよう見積もります。
+各`.yap2`コンポーネントのペイロード上限は256 MiBです。これは索引全体や入力NDJSON全体の上限ではありません。セグメント分割処理は文書境界で入力を複数セグメントへ分け、通常は各コンポーネントの最大ペイロードを128 MiBへ近づけます。最後の小さいセグメントは、結合後が192 MiB以内なら直前へまとめます。`documents`、`terms`、`postings`、`positions`、`metadata`、`vectors`、`tombstones`のどれも256 MiBを超えないよう見積もります。
 
 一つの文書と、その文書に属するすべての本文断片・語彙・メタデータ・ベクトルだけでいずれかのコンポーネント上限を超える場合は分割できず、文書ID、必要バイト数、対象コンポーネントを報告して失敗します。
 
