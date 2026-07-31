@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -110,10 +111,50 @@ static void test_block_max_wand_keeps_rare_top_hit(void **state) {
   ytest_env_destroy(&env);
 }
 
+static void test_prepared_query_reuses_normalized_unique_terms(void **state) {
+  ytest_env_t env;
+  YAP_V2_LEXICAL_SEGMENT segment;
+  YAP_V2_LEXICAL_QUERY_PLAN plan;
+  YAP_V2_LEXICAL_SEARCH_OPTIONS options;
+  YAP_V2_LEXICAL_HIT prepared[10], direct[10];
+  size_t prepared_count, direct_count, i;
+  char directory[PATH_MAX];
+
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  assert_int_equal(ytest_path_join(directory, sizeof(directory), env.tmp_root, "segment"), 0);
+  assert_int_equal(ytest_mkdir_p(directory, 0700), 0);
+  build_small(directory);
+  YAP_V2_lexical_segment_init(&segment);
+  assert_int_equal(YAP_V2_lexical_segment_open(directory, 20U, &segment), YAP_V2_OK);
+  YAP_V2_lexical_query_plan_init(&plan);
+  assert_int_equal(YAP_V2_lexical_query_plan_prepare(bytes("QUICK quick brown"), &plan),
+                   YAP_V2_OK);
+  assert_int_equal(plan.tokens.token_count, 3U);
+  assert_int_equal(plan.term_count, 2U);
+  assert_int_equal(plan.token_terms[0], plan.token_terms[1]);
+  YAP_V2_lexical_search_options_init(&options);
+  options.object_type = YAP_V2_LEXICAL_DOCUMENT;
+  options.top_k = 10U;
+  assert_int_equal(YAP_V2_lexical_search_prepared(&segment, &plan, &options, prepared,
+                                                  10U, &prepared_count), YAP_V2_OK);
+  assert_int_equal(YAP_V2_lexical_search(&segment, bytes("QUICK quick brown"), &options,
+                                         direct, 10U, &direct_count), YAP_V2_OK);
+  assert_int_equal(prepared_count, direct_count);
+  for (i = 0U; i < direct_count; i++) {
+    assert_int_equal(prepared[i].object_ordinal, direct[i].object_ordinal);
+    assert_true(fabs(prepared[i].score - direct[i].score) < 1e-12);
+  }
+  YAP_V2_lexical_query_plan_free(&plan);
+  YAP_V2_lexical_segment_close(&segment);
+  ytest_env_destroy(&env);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_bm25f_boolean_and_phrase),
     cmocka_unit_test(test_block_max_wand_keeps_rare_top_hit),
+    cmocka_unit_test(test_prepared_query_reuses_normalized_unique_terms),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }
