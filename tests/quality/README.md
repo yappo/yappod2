@@ -99,7 +99,7 @@ cmake --build build --target v2_segment_search_benchmark -j
 2026年8月1日に実施した1億語エントリーの追加測定は、
 [セグメント数に対する字句検索の測定](segment-search-scaling.md)に記録しています。
 1億語測定のCPU、内部SSD、メモリー、観測オーバーヘッドを含む詳細条件と結果は、
-[1億語エントリー・1000セグメント字句検索ベンチマーク](large-dictionary-benchmark-report-2026-08-01.md)
+[1億語エントリー・1000セグメント字句検索ベンチマーク](../../docs/large-dictionary-benchmark-report-2026-08-01.md)
 を参照してください。
 
 ## 大規模な基準試験
