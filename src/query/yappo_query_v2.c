@@ -236,7 +236,13 @@ static int lexical_accept(void *opaque, uint32_t object_type, uint64_t object_or
 static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                            const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
                            const YAP_V2_QUERY_REQUEST *request, CANDIDATE_SET *candidates) {
+  YAP_V2_LEXICAL_QUERY_PLAN plan;
   size_t s;
+  int status;
+  YAP_V2_lexical_query_plan_init(&plan);
+  status = YAP_V2_lexical_query_plan_prepare(request->query, &plan);
+  if (status != YAP_V2_OK)
+    return status;
   for (s = 0U; s < segment_count; s++) {
     const YAP_V2_SEGMENT *documents = YAP_V2_snapshot_segment_documents(snapshot, s);
     YAP_V2_LEXICAL_SEARCH_OPTIONS options;
@@ -244,21 +250,25 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     YAP_V2_FILTER filter;
     LEXICAL_ACCEPT_CONTEXT accept_context;
     size_t local_count, local_limit, i;
-    int status, filter_enabled = request->filter_json.len > 0U;
-    if (documents == NULL) return YAP_V2_INVALID_ARGUMENT;
+    int filter_enabled = request->filter_json.len > 0U;
+    if (documents == NULL) { status = YAP_V2_INVALID_ARGUMENT; break; }
     local_limit = request->scope == YAP_V2_SEARCH_DOCUMENTS ? documents->document_count :
                   documents->passage_count;
     if (local_limit > request->candidate_k) local_limit = request->candidate_k;
     if (local_limit == 0U) continue;
-    if (segments[s].lexical == NULL) return YAP_V2_INVALID_ARGUMENT;
+    if (segments[s].lexical == NULL) { status = YAP_V2_INVALID_ARGUMENT; break; }
     YAP_V2_filter_init(&filter);
     if (filter_enabled) {
-      if (segments[s].metadata == NULL) return YAP_V2_INVALID_ARGUMENT;
+      if (segments[s].metadata == NULL) {
+        YAP_V2_filter_free(&filter); status = YAP_V2_INVALID_ARGUMENT; break;
+      }
       status = YAP_V2_filter_compile(request->filter_json, segments[s].metadata, &filter);
-      if (status != YAP_V2_OK) return status;
+      if (status != YAP_V2_OK) { YAP_V2_filter_free(&filter); break; }
     }
     local = (YAP_V2_LEXICAL_HIT *)malloc(sizeof(*local) * local_limit);
-    if (local == NULL) { YAP_V2_filter_free(&filter); return YAP_V2_ALLOCATION_FAILED; }
+    if (local == NULL) {
+      YAP_V2_filter_free(&filter); status = YAP_V2_ALLOCATION_FAILED; break;
+    }
     YAP_V2_lexical_search_options_init(&options);
     options.object_type = request->scope == YAP_V2_SEARCH_DOCUMENTS ?
                           YAP_V2_LEXICAL_DOCUMENT : YAP_V2_LEXICAL_PASSAGE;
@@ -271,8 +281,8 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     accept_context.filter_enabled = filter_enabled;
     options.accept = lexical_accept;
     options.accept_context = &accept_context;
-    status = YAP_V2_lexical_search(segments[s].lexical, request->query, &options, local,
-                                   local_limit, &local_count);
+    status = YAP_V2_lexical_search_prepared(segments[s].lexical, &plan, &options,
+                                            local, local_limit, &local_count);
     for (i = 0U; status == YAP_V2_OK && i < local_count; i++) {
       CANDIDATE candidate;
       if (local[i].object_type == YAP_V2_LEXICAL_DOCUMENT) {
@@ -290,9 +300,10 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
       status = candidate_set_add(candidates, &candidate);
     }
     free(local); YAP_V2_filter_free(&filter);
-    if (status != YAP_V2_OK) return status;
+    if (status != YAP_V2_OK) break;
   }
-  return YAP_V2_OK;
+  YAP_V2_lexical_query_plan_free(&plan);
+  return status;
 }
 
 static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,

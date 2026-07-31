@@ -130,12 +130,12 @@ static void state_advance_to(TERM_STATE *state, uint64_t key, uint32_t object_ty
 }
 
 static int phrase_matches(const YAP_V2_LEXICAL_SEGMENT *segment, TERM_STATE *states,
-                          const size_t *query_state, size_t query_count, uint64_t key) {
+                          const YAP_V2_LEXICAL_QUERY_PLAN *plan, uint64_t key) {
   const YAP_V2_POSTING *first = NULL;
-  size_t first_state = query_state[0];
+  size_t first_state = plan->token_terms[0];
   size_t i;
-  for (i = 0U; i < query_count; i++) {
-    TERM_STATE *state = &states[query_state[i]];
+  for (i = 0U; i < plan->tokens.token_count; i++) {
+    TERM_STATE *state = &states[plan->token_terms[i]];
     if (state->index >= state->count || posting_key(&state->postings[state->index]) != key)
       return 0;
   }
@@ -146,8 +146,8 @@ static int phrase_matches(const YAP_V2_LEXICAL_SEGMENT *segment, TERM_STATE *sta
     int matched = 1;
     if (YAP_V2_posting_position_at(segment, states[first_state].term, first, i, &base) != YAP_V2_OK)
       return 0;
-    for (q = 1U; q < query_count && matched; q++) {
-      TERM_STATE *state = &states[query_state[q]];
+    for (q = 1U; q < plan->tokens.token_count && matched; q++) {
+      TERM_STATE *state = &states[plan->token_terms[q]];
       const YAP_V2_POSTING *posting = &state->postings[state->index];
       size_t p;
       matched = 0;
@@ -205,6 +205,75 @@ void YAP_V2_lexical_search_options_init(YAP_V2_LEXICAL_SEARCH_OPTIONS *options) 
   options->top_k = 20U;
 }
 
+void YAP_V2_lexical_query_plan_init(YAP_V2_LEXICAL_QUERY_PLAN *plan) {
+  if (plan != NULL)
+    memset(plan, 0, sizeof(*plan));
+}
+
+void YAP_V2_lexical_query_plan_free(YAP_V2_LEXICAL_QUERY_PLAN *plan) {
+  if (plan == NULL)
+    return;
+  free(plan->terms);
+  free(plan->token_terms);
+  YAP_V2_token_sequence_free(&plan->tokens);
+  memset(plan, 0, sizeof(*plan));
+}
+
+int YAP_V2_lexical_query_plan_prepare(YAP_V2_BYTES_VIEW query,
+                                      YAP_V2_LEXICAL_QUERY_PLAN *plan) {
+  size_t i;
+  int status;
+  if (plan == NULL || query.data == NULL || query.len == 0U)
+    return YAP_V2_INVALID_ARGUMENT;
+  YAP_V2_lexical_query_plan_free(plan);
+  status = YAP_V2_unicode_tokenize((const char *)query.data, query.len, &plan->tokens);
+  if (status != YAP_V2_OK) {
+    YAP_V2_lexical_query_plan_free(plan);
+    return status;
+  }
+  if (plan->tokens.token_count == 0U)
+    return YAP_V2_OK;
+  plan->terms = (YAP_V2_BYTES_VIEW *)calloc(plan->tokens.token_count,
+                                            sizeof(*plan->terms));
+  plan->token_terms = (size_t *)calloc(plan->tokens.token_count,
+                                       sizeof(*plan->token_terms));
+  if (plan->terms == NULL || plan->token_terms == NULL) {
+    YAP_V2_lexical_query_plan_free(plan);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  for (i = 0U; i < plan->tokens.token_count; i++) {
+    YAP_V2_BYTES_VIEW value;
+    size_t existing;
+    value.data = (const unsigned char *)plan->tokens.normalized_utf8 +
+                 plan->tokens.tokens[i].byte_start;
+    value.len = plan->tokens.tokens[i].byte_end - plan->tokens.tokens[i].byte_start;
+    for (existing = 0U; existing < plan->term_count; existing++)
+      if (plan->terms[existing].len == value.len &&
+          memcmp(plan->terms[existing].data, value.data, value.len) == 0)
+        break;
+    if (existing == plan->term_count)
+      plan->terms[plan->term_count++] = value;
+    plan->token_terms[i] = existing;
+  }
+  return YAP_V2_OK;
+}
+
+static int query_plan_valid(const YAP_V2_LEXICAL_QUERY_PLAN *plan) {
+  size_t i;
+  if (plan->tokens.token_count == 0U)
+    return plan->term_count == 0U;
+  if (plan->terms == NULL || plan->token_terms == NULL || plan->term_count == 0U ||
+      plan->term_count > plan->tokens.token_count)
+    return 0;
+  for (i = 0U; i < plan->term_count; i++)
+    if (plan->terms[i].data == NULL || plan->terms[i].len == 0U)
+      return 0;
+  for (i = 0U; i < plan->tokens.token_count; i++)
+    if (plan->token_terms[i] >= plan->term_count)
+      return 0;
+  return 1;
+}
+
 static void states_free(TERM_STATE *states, size_t count) {
   size_t i;
   for (i = 0U; i < count; i++)
@@ -212,17 +281,18 @@ static void states_free(TERM_STATE *states, size_t count) {
   free(states);
 }
 
-int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VIEW query,
-                          const YAP_V2_LEXICAL_SEARCH_OPTIONS *options, YAP_V2_LEXICAL_HIT *hits,
-                          size_t hit_capacity, size_t *hit_count) {
-  YAP_V2_TOKEN_SEQUENCE tokens = {0};
+int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
+                                   const YAP_V2_LEXICAL_QUERY_PLAN *plan,
+                                   const YAP_V2_LEXICAL_SEARCH_OPTIONS *options,
+                                   YAP_V2_LEXICAL_HIT *hits, size_t hit_capacity,
+                                   size_t *hit_count) {
   TERM_STATE *states = NULL;
   TERM_STATE **active = NULL;
-  size_t *query_state = NULL;
   size_t state_count = 0U, result_count = 0U, i;
   int status;
-  if (segment == NULL || options == NULL || hit_count == NULL || query.data == NULL ||
-      query.len == 0U || options->top_k == 0U || options->top_k > hit_capacity || hits == NULL ||
+  if (segment == NULL || plan == NULL || !query_plan_valid(plan) || options == NULL ||
+      hit_count == NULL ||
+      options->top_k == 0U || options->top_k > hit_capacity || hits == NULL ||
       (options->object_type != 0U && options->object_type != YAP_V2_LEXICAL_DOCUMENT &&
        options->object_type != YAP_V2_LEXICAL_PASSAGE) ||
       (options->query_operator != YAP_V2_QUERY_OR && options->query_operator != YAP_V2_QUERY_AND))
@@ -231,62 +301,48 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
     if (!isfinite(options->field_boost[i]) || options->field_boost[i] < 0.0)
       return YAP_V2_INVALID_ARGUMENT;
   *hit_count = 0U;
-  status = YAP_V2_unicode_tokenize((const char *)query.data, query.len, &tokens);
-  if (status != YAP_V2_OK || tokens.token_count == 0U)
-    return status != YAP_V2_OK ? status : YAP_V2_OK;
-  states = (TERM_STATE *)calloc(tokens.token_count, sizeof(*states));
-  active = (TERM_STATE **)calloc(tokens.token_count, sizeof(*active));
-  query_state = (size_t *)calloc(tokens.token_count, sizeof(*query_state));
-  if (states == NULL || active == NULL || query_state == NULL) {
+  if (plan->tokens.token_count == 0U)
+    return YAP_V2_OK;
+  states = (TERM_STATE *)calloc(plan->term_count, sizeof(*states));
+  active = (TERM_STATE **)calloc(plan->term_count, sizeof(*active));
+  if (states == NULL || active == NULL) {
     status = YAP_V2_ALLOCATION_FAILED;
     goto done;
   }
-  for (i = 0U; i < tokens.token_count; i++) {
-    YAP_V2_BYTES_VIEW value;
+  for (i = 0U; i < plan->term_count; i++) {
     const YAP_V2_TERM_ENTRY *term;
     size_t existing;
-    value.data = (const unsigned char *)tokens.normalized_utf8 + tokens.tokens[i].byte_start;
-    value.len = tokens.tokens[i].byte_end - tokens.tokens[i].byte_start;
-    for (existing = 0U; existing < state_count; existing++)
-      if (states[existing].term->term.len == value.len &&
-          memcmp(states[existing].term->term.data, value.data, value.len) == 0)
-        break;
-    if (existing < state_count) {
-      query_state[i] = existing;
-      continue;
-    }
-    term = YAP_V2_lexical_term_find(segment, value);
+    term = YAP_V2_lexical_term_find(segment, plan->terms[i]);
     if (term == NULL) {
       if (options->query_operator == YAP_V2_QUERY_AND || options->phrase) {
         status = YAP_V2_OK;
         goto done;
       }
-      query_state[i] = SIZE_MAX;
       continue;
     }
-    states[state_count].term = term;
-    states[state_count].count = (size_t)term->document_frequency;
-    states[state_count].postings =
-      (YAP_V2_POSTING *)calloc(states[state_count].count, sizeof(YAP_V2_POSTING));
-    if (states[state_count].postings == NULL) {
+    states[i].term = term;
+    states[i].count = (size_t)term->document_frequency;
+    states[i].postings = (YAP_V2_POSTING *)calloc(states[i].count,
+                                                  sizeof(YAP_V2_POSTING));
+    if (states[i].postings == NULL) {
       status = YAP_V2_ALLOCATION_FAILED;
       goto done;
     }
-    YAP_V2_posting_iterator_init(segment, term, &states[state_count].blocks);
-    for (existing = 0U; existing < states[state_count].count; existing++) {
-      YAP_V2_posting_iterator_next(&states[state_count].blocks,
-                                   &states[state_count].postings[existing]);
-      states[state_count].type_frequency[states[state_count].postings[existing].object_type - 1U]++;
+    YAP_V2_posting_iterator_init(segment, term, &states[i].blocks);
+    for (existing = 0U; existing < states[i].count; existing++) {
+      YAP_V2_posting_iterator_next(&states[i].blocks, &states[i].postings[existing]);
+      states[i].type_frequency[states[i].postings[existing].object_type - 1U]++;
     }
-    states[state_count].blocks.index = 0U;
-    query_state[i] = state_count++;
+    states[i].blocks.index = 0U;
+    state_count++;
   }
   if (state_count == 0U) {
     status = YAP_V2_OK;
     goto done;
   }
-  for (i = 0U; i < state_count; i++)
-    state_skip_type(&states[i], options->object_type);
+  for (i = 0U; i < plan->term_count; i++)
+    if (states[i].term != NULL)
+      state_skip_type(&states[i], options->object_type);
 
   while (1) {
     size_t active_count = 0U;
@@ -294,8 +350,8 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
     double bound = 0.0;
     double threshold = hit_threshold(hits, result_count, options->top_k);
     uint64_t pivot_key;
-    for (i = 0U; i < state_count; i++)
-      if (states[i].index < states[i].count)
+    for (i = 0U; i < plan->term_count; i++)
+      if (states[i].term != NULL && states[i].index < states[i].count)
         active[active_count++] = &states[i];
     if (active_count == 0U || ((options->query_operator == YAP_V2_QUERY_AND || options->phrase) &&
                                active_count < state_count))
@@ -332,8 +388,7 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
     }
     {
       YAP_V2_LEXICAL_HIT hit;
-      int phrase_ok = !options->phrase ||
-                      phrase_matches(segment, states, query_state, tokens.token_count, pivot_key);
+      int phrase_ok = !options->phrase || phrase_matches(segment, states, plan, pivot_key);
       memset(&hit, 0, sizeof(hit));
       hit.object_type = active[0]->postings[active[0]->index].object_type;
       hit.object_ordinal = active[0]->postings[active[0]->index].object_ordinal;
@@ -357,9 +412,21 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
   *hit_count = result_count;
   status = YAP_V2_OK;
 done:
-  free(query_state);
   free(active);
-  states_free(states, state_count);
-  YAP_V2_token_sequence_free(&tokens);
+  states_free(states, plan->term_count);
+  return status;
+}
+
+int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VIEW query,
+                          const YAP_V2_LEXICAL_SEARCH_OPTIONS *options, YAP_V2_LEXICAL_HIT *hits,
+                          size_t hit_capacity, size_t *hit_count) {
+  YAP_V2_LEXICAL_QUERY_PLAN plan;
+  int status;
+  YAP_V2_lexical_query_plan_init(&plan);
+  status = YAP_V2_lexical_query_plan_prepare(query, &plan);
+  if (status == YAP_V2_OK)
+    status = YAP_V2_lexical_search_prepared(segment, &plan, options, hits,
+                                            hit_capacity, hit_count);
+  YAP_V2_lexical_query_plan_free(&plan);
   return status;
 }
