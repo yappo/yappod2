@@ -128,7 +128,7 @@ static int apply_operations(const char *index_dir,
       operation_count > operation_limit) return YAP_V2_INVALID_ARGUMENT;
   YAP_V2_update_result_init(result);
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
-      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0 ||
+      join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0 ||
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0) {
     set_error(error, error_size, "index path is too long"); return YAP_V2_OUT_OF_RANGE;
   }

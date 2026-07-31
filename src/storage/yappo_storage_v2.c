@@ -87,13 +87,70 @@ void YAP_V2_manifest_free(YAP_V2_MANIFEST *manifest) {
     return;
   }
   free(manifest->segments);
+  free(manifest->segment_slots);
   YAP_V2_manifest_init(manifest);
+}
+
+static size_t manifest_segment_hash(const char *value) {
+  size_t hash = (size_t)1469598103934665603ULL;
+  const unsigned char *cursor = (const unsigned char *)value;
+  while (*cursor != '\0') {
+    hash ^= *cursor++;
+    hash *= (size_t)1099511628211ULL;
+  }
+  return hash;
+}
+
+static int manifest_slots_rebuild(YAP_V2_MANIFEST *manifest, size_t required_count) {
+  size_t *slots;
+  size_t capacity = 1U;
+  size_t i;
+  if (required_count > YAP_V2_MAX_SEGMENTS || required_count > SIZE_MAX / 2U)
+    return YAP_V2_OUT_OF_RANGE;
+  while (capacity < required_count * 2U) {
+    if (capacity > SIZE_MAX / 2U) return YAP_V2_OUT_OF_RANGE;
+    capacity *= 2U;
+  }
+  slots = calloc(capacity, sizeof(*slots));
+  if (slots == NULL) return YAP_V2_ALLOCATION_FAILED;
+  for (i = 0U; i < manifest->segment_count; i++) {
+    size_t slot = manifest_segment_hash(manifest->segments[i].id) & (capacity - 1U);
+    while (slots[slot] != 0U) {
+      size_t existing = slots[slot] - 1U;
+      if (strcmp(manifest->segments[existing].id, manifest->segments[i].id) == 0) {
+        free(slots);
+        return YAP_V2_DUPLICATE;
+      }
+      slot = (slot + 1U) & (capacity - 1U);
+    }
+    slots[slot] = i + 1U;
+  }
+  free(manifest->segment_slots);
+  manifest->segment_slots = slots;
+  manifest->segment_slot_capacity = capacity;
+  return YAP_V2_OK;
+}
+
+static int manifest_segment_find(const YAP_V2_MANIFEST *manifest, const char *id) {
+  size_t slot;
+  size_t probes;
+  if (manifest->segment_slots == NULL || manifest->segment_slot_capacity == 0U)
+    return 0;
+  slot = manifest_segment_hash(id) & (manifest->segment_slot_capacity - 1U);
+  for (probes = 0U; probes < manifest->segment_slot_capacity; probes++) {
+    size_t encoded = manifest->segment_slots[slot];
+    if (encoded == 0U) return 0;
+    if (strcmp(manifest->segments[encoded - 1U].id, id) == 0) return 1;
+    slot = (slot + 1U) & (manifest->segment_slot_capacity - 1U);
+  }
+  return 0;
 }
 
 int YAP_V2_manifest_add_segment(YAP_V2_MANIFEST *manifest,
                                 const YAP_V2_SEGMENT_DESCRIPTOR *segment) {
   YAP_V2_SEGMENT_DESCRIPTOR *next;
-  size_t i;
+  size_t capacity;
+  size_t slot;
   int status;
 
   if (manifest == NULL || segment == NULL) {
@@ -106,18 +163,27 @@ int YAP_V2_manifest_add_segment(YAP_V2_MANIFEST *manifest,
   if (manifest->segment_count >= YAP_V2_MAX_SEGMENTS) {
     return YAP_V2_OUT_OF_RANGE;
   }
-  for (i = 0; i < manifest->segment_count; i++) {
-    if (strcmp(manifest->segments[i].id, segment->id) == 0) {
-      return YAP_V2_DUPLICATE;
-    }
+  if (manifest->segment_slot_capacity == 0U ||
+      manifest->segment_count + 1U > manifest->segment_slot_capacity / 2U) {
+    status = manifest_slots_rebuild(manifest, manifest->segment_count + 1U);
+    if (status != YAP_V2_OK) return status;
   }
-  next = (YAP_V2_SEGMENT_DESCRIPTOR *)realloc(manifest->segments, sizeof(*manifest->segments) *
-                                                                    (manifest->segment_count + 1U));
-  if (next == NULL) {
-    return YAP_V2_ALLOCATION_FAILED;
+  if (manifest_segment_find(manifest, segment->id)) return YAP_V2_DUPLICATE;
+  if (manifest->segment_count == manifest->segment_capacity) {
+    capacity = manifest->segment_capacity == 0U ? 4U : manifest->segment_capacity * 2U;
+    if (capacity < manifest->segment_capacity || capacity > YAP_V2_MAX_SEGMENTS)
+      capacity = YAP_V2_MAX_SEGMENTS;
+    if (capacity > SIZE_MAX / sizeof(*next)) return YAP_V2_OUT_OF_RANGE;
+    next = realloc(manifest->segments, sizeof(*next) * capacity);
+    if (next == NULL) return YAP_V2_ALLOCATION_FAILED;
+    manifest->segments = next;
+    manifest->segment_capacity = capacity;
   }
-  manifest->segments = next;
   manifest->segments[manifest->segment_count] = *segment;
+  slot = manifest_segment_hash(segment->id) & (manifest->segment_slot_capacity - 1U);
+  while (manifest->segment_slots[slot] != 0U)
+    slot = (slot + 1U) & (manifest->segment_slot_capacity - 1U);
+  manifest->segment_slots[slot] = manifest->segment_count + 1U;
   manifest->segment_count++;
   return YAP_V2_OK;
 }
@@ -148,6 +214,8 @@ int YAP_V2_segment_descriptor_add_component(YAP_V2_SEGMENT_DESCRIPTOR *segment,
 }
 
 int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
+  size_t *slots = NULL;
+  size_t capacity = 1U;
   size_t i;
   size_t j;
   int fingerprint_present = 0;
@@ -168,13 +236,20 @@ int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
   }
   if (!fingerprint_present)
     return YAP_V2_INVALID_FORMAT;
+  if (manifest->segment_count > 0U) {
+    while (capacity < manifest->segment_count * 2U) capacity *= 2U;
+    slots = calloc(capacity, sizeof(*slots));
+    if (slots == NULL) return YAP_V2_ALLOCATION_FAILED;
+  }
   for (i = 0; i < manifest->segment_count; i++) {
     int status = YAP_V2_segment_id_validate(manifest->segments[i].id);
     if (status != YAP_V2_OK) {
+      free(slots);
       return status;
     }
     if (manifest->segments[i].component_count == 0U ||
         manifest->segments[i].component_count > YAP_V2_MAX_COMPONENTS) {
+      free(slots);
       return YAP_V2_INVALID_FORMAT;
     }
     for (j = 0U; j < manifest->segments[i].component_count; j++) {
@@ -182,15 +257,25 @@ int YAP_V2_manifest_validate(const YAP_V2_MANIFEST *manifest) {
       YAP_V2_COMPONENT_DESCRIPTOR component = copy.components[j];
       copy.component_count = j;
       status = YAP_V2_segment_descriptor_add_component(&copy, &component);
-      if (status != YAP_V2_OK)
+      if (status != YAP_V2_OK) {
+        free(slots);
         return status;
-    }
-    for (j = 0; j < i; j++) {
-      if (strcmp(manifest->segments[i].id, manifest->segments[j].id) == 0) {
-        return YAP_V2_DUPLICATE;
       }
     }
+    if (slots != NULL) {
+      size_t slot = manifest_segment_hash(manifest->segments[i].id) & (capacity - 1U);
+      while (slots[slot] != 0U) {
+        size_t existing = slots[slot] - 1U;
+        if (strcmp(manifest->segments[i].id, manifest->segments[existing].id) == 0) {
+          free(slots);
+          return YAP_V2_DUPLICATE;
+        }
+        slot = (slot + 1U) & (capacity - 1U);
+      }
+      slots[slot] = i + 1U;
+    }
   }
+  free(slots);
   return YAP_V2_OK;
 }
 
@@ -231,11 +316,16 @@ static uint64_t get_u64_le(const unsigned char *input) {
   return value;
 }
 
+static int file_header_type_valid(uint32_t file_type) {
+  return (file_type >= YAP_V2_FILE_TERMS && file_type <= YAP_V2_FILE_TOMBSTONES) ||
+         file_type == YAP_V2_FILE_MANIFEST;
+}
+
 int YAP_V2_file_header_encode(const YAP_V2_FILE_HEADER *header,
                               unsigned char output[YAP_V2_FILE_HEADER_BYTES]) {
   if (header == NULL || output == NULL || header->format_version != YAP_V2_FORMAT_VERSION ||
-      header->header_bytes != YAP_V2_FILE_HEADER_BYTES || header->file_type == 0U ||
-      header->file_type > YAP_V2_FILE_TOMBSTONES || header->generation == 0U) {
+      header->header_bytes != YAP_V2_FILE_HEADER_BYTES ||
+      !file_header_type_valid(header->file_type) || header->generation == 0U) {
     return YAP_V2_INVALID_FORMAT;
   }
   memset(output, 0, YAP_V2_FILE_HEADER_BYTES);
@@ -265,8 +355,8 @@ int YAP_V2_file_header_decode(const unsigned char input[YAP_V2_FILE_HEADER_BYTES
   header->payload_bytes = get_u64_le(input + 20U);
   header->payload_crc32c = get_u32_le(input + 28U);
   if (header->format_version != YAP_V2_FORMAT_VERSION ||
-      header->header_bytes != YAP_V2_FILE_HEADER_BYTES || header->file_type == 0U ||
-      header->file_type > YAP_V2_FILE_TOMBSTONES || header->generation == 0U) {
+      header->header_bytes != YAP_V2_FILE_HEADER_BYTES ||
+      !file_header_type_valid(header->file_type) || header->generation == 0U) {
     return YAP_V2_INVALID_FORMAT;
   }
   return YAP_V2_OK;

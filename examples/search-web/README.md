@@ -64,7 +64,7 @@ search-webは1つのアプリケーションTOMLをYappod2サーバー、索引�
 
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
-| `directory` | 文字列 | 既存索引、または自動作成する新しい索引のディレクトリ。TOMLからの相対パスを解決した後で4095バイト以下 | なし | 必須 | 既存索引には`config.toml`と`manifest.json`が必要です。 |
+| `directory` | 文字列 | 既存索引、または自動作成する新しい索引のディレクトリ。TOMLからの相対パスを解決した後で4095バイト以下 | なし | 必須 | 既存索引には`config.toml`と`manifest.yap2`が必要です。 |
 
 `[vector]`、`[tokenizer]`、`[chunking]`、`[metadata]`は索引構造を表します。search-webサーバーの機能を有効にするだけの設定ではありません。索引直下の`config.toml`と一致しない構成へ変える場合は、索引を別ディレクトリへ作り直します。
 
@@ -173,7 +173,7 @@ examples/search-web/scripts/start.sh \
 
 起動処理は次の順序です。
 
-1. 索引の`manifest.json`を確認し、索引がない場合だけ`[build]`から作成します。
+1. 索引の`manifest.yap2`を確認し、索引がない場合だけ`[build]`から作成します。
 2. Yappod2実行ファイル、npm依存、既存PIDを確認します。
 3. `npm run build`でclientとserverをビルドします。
 4. coreを起動し、PIDを確認します。

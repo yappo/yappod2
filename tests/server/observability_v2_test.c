@@ -30,7 +30,7 @@ static void make_empty_index(ytest_env_t *env) {
   assert_int_equal(YAP_V2_config_load(path, &config, NULL, 0U), YAP_V2_OK);
   YAP_V2_manifest_init(&manifest); manifest.generation = 7U;
   assert_int_equal(YAP_V2_config_fingerprint(&config, manifest.config_fingerprint), YAP_V2_OK);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
   YAP_V2_manifest_free(&manifest);
 }

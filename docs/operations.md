@@ -19,7 +19,7 @@
 次を確認します。
 
 - `[index].directory`が意図した索引を指していることを確認します。
-- `config.toml`、`manifest.json`、マニフェストが参照する各セグメントを実行ユーザーが読み取れることを確認します。
+- `config.toml`、`manifest.yap2`、マニフェストが参照する各セグメントを実行ユーザーが読み取れることを確認します。
 - `[daemon].run_directory`を実行ユーザーが作成、書き込みできることを確認します。
 - `front_port`と`core_port`が別のプロセスに使われていないことを確認します。
 - 外部から文書更新を許可する場合は、16〜255バイトの`write_token`を安全に配布します。アプリケーション用TOMLの読み取り権限も制限します。
@@ -72,7 +72,9 @@ curl -fsS http://127.0.0.1:18400/health/ready
 
 `/health/live`はfrontがHTTP要求を処理できることを示します。索引やcoreの状態までは確認しません。`/health/ready`はfrontからcoreへ接続でき、coreが検証済みスナップショットを保持し、ディスク上の索引を運用可能と判断した場合に200を返します。
 
-準備完了レスポンスの`generation`が`manifest.json`と一致することも確認してください。応答JSONの全フィールドは[HTTP APIの準備完了確認](yappod-front-api.md#get-healthready)で説明しています。
+準備完了レスポンスの`generation`が`yappo_makeindex verify`で表示した`manifest.yap2`の世代と
+一致することも確認してください。応答JSONの全フィールドは
+[HTTP APIの準備完了確認](yappod-front-api.md#get-healthready)で説明しています。
 
 ## 停止
 
@@ -98,7 +100,7 @@ Yappod2サーバーはログファイルを追記モードで開きます。フ�
 - `core.error`と`front.error`の該当範囲
 - アプリケーション用TOMLの秘密情報を除いた設定値
 - `/health/ready`と`/metrics`の応答
-- `manifest.json`の世代番号
+- `yappo_makeindex verify`で表示した`manifest.yap2`の世代番号
 - クライアントが受け取ったHTTP状態コードと`error.code`
 
 ## 同時処理とタイムアウト

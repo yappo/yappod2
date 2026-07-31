@@ -2129,16 +2129,15 @@ def _stream_document_shards(fifo_path: Path, shard_paths: Sequence[Path], errors
 
 
 def _verify_built_index(
+    yappo_makeindex: Path,
     index: Path,
-    target: str,
     generation: int,
-    accepted: int,
     source_config: Path,
 ) -> None:
     copied_config = index / "config.toml"
-    manifest_path = index / "manifest.json"
+    manifest_path = index / "manifest.yap2"
     if not copied_config.is_file() or not manifest_path.is_file():
-        raise LocalFilesError("built index is missing config.toml or manifest.json")
+        raise LocalFilesError("built index is missing config.toml or manifest.yap2")
     try:
         copied_data = tomllib.loads(copied_config.read_text(encoding="utf-8"))
         source_data = tomllib.loads(source_config.read_text(encoding="utf-8"))
@@ -2154,78 +2153,33 @@ def _verify_built_index(
     ) != sorted(source_metadata.get("filterable_fields", [])):
         raise LocalFilesError("built application config does not match requested index structure")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise LocalFilesError(f"cannot load built index manifest: {error}") from error
-    if not isinstance(manifest, dict) or manifest.get("generation") != generation:
-        raise LocalFilesError("built index manifest generation does not match build result")
-    segments = manifest.get("segments")
-    if not isinstance(segments, list) or not segments:
-        raise LocalFilesError("built index manifest has no segments")
-    required = {
-        "documents.yap2",
-        "terms.yap2",
-        "postings.yap2",
-        "positions.yap2",
-        "metadata.yap2",
-    }
-    if target == "hybrid":
-        required.update({"vectors.yap2", "vectors.usearch"})
-    document_total = 0
-    for descriptor in segments:
-        if not isinstance(descriptor, dict):
-            raise LocalFilesError("built index segment descriptor must be an object")
-        segment_id = descriptor.get("id")
-        documents = descriptor.get("documents")
-        components = descriptor.get("components")
-        if (
-            not isinstance(segment_id, str)
-            or not segment_id
-            or Path(segment_id).name != segment_id
-            or not isinstance(documents, int)
-            or isinstance(documents, bool)
-            or documents <= 0
-            or not isinstance(components, list)
-        ):
-            raise LocalFilesError("built index segment descriptor is invalid")
-        segment_dir = index / "segments" / segment_id
-        if not segment_dir.is_dir():
-            raise LocalFilesError(f"built index segment directory is missing: {segment_id}")
-        names = set()
-        for component in components:
-            if not isinstance(component, dict):
-                raise LocalFilesError("built index component descriptor must be an object")
-            name = component.get("name")
-            file_bytes = component.get("file_bytes")
-            checksum = component.get("sha256")
-            if (
-                not isinstance(name, str)
-                or not name
-                or Path(name).name != name
-                or name in names
-                or not isinstance(file_bytes, int)
-                or isinstance(file_bytes, bool)
-                or file_bytes <= 0
-                or not isinstance(checksum, str)
-                or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
-            ):
-                raise LocalFilesError("built index component descriptor is invalid")
-            component_path = segment_dir / name
-            try:
-                actual_bytes = component_path.stat().st_size
-            except OSError as error:
-                raise LocalFilesError(f"cannot stat built index component: {error}") from error
-            if actual_bytes != file_bytes or _file_sha256_for_manifest(component_path) != checksum:
-                raise LocalFilesError(f"built index component verification failed: {name}")
-            names.add(name)
-        if not required.issubset(names):
-            missing = ", ".join(sorted(required - names))
-            raise LocalFilesError(f"built index segment is missing components: {missing}")
-        document_total += documents
-    if document_total != accepted:
-        raise LocalFilesError(
-            f"built index contains {document_total} documents, expected {accepted}"
+        verified = subprocess.run(
+            [str(yappo_makeindex), "verify", "--config", str(source_config)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise LocalFilesError(f"cannot verify built index: {error}") from error
+    if verified.returncode != 0:
+        detail = verified.stderr.strip()
+        suffix = f": {detail[-4000:]}" if detail else ""
+        raise LocalFilesError(
+            f"yappo_makeindex verify exited with {verified.returncode}{suffix}"
+        )
+    match = re.fullmatch(
+        r"verified generation=([0-9]+) segments=([0-9]+)",
+        verified.stdout.strip(),
+    )
+    if match is None:
+        raise LocalFilesError("yappo_makeindex verify returned an invalid summary")
+    verified_generation = int(match.group(1))
+    segment_count = int(match.group(2))
+    if verified_generation != generation:
+        raise LocalFilesError("built index manifest generation does not match build result")
+    if segment_count <= 0:
+        raise LocalFilesError("built index manifest has no segments")
 
 
 def _build_source_manifest_path(settings: Settings, target: str) -> Path:
@@ -2237,7 +2191,7 @@ def _build_source_manifest_path(settings: Settings, target: str) -> Path:
 
 
 def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
-    _yappo_makeindex, application_config, index_dir = _require_build_settings(
+    yappo_makeindex, application_config, index_dir = _require_build_settings(
         settings, target, allow_existing=True
     )
     state_path = index_dir / BUILD_STATE_FILENAME
@@ -2267,7 +2221,7 @@ def _reuse_built_index(settings: Settings, target: str) -> Dict[str, Any]:
         or accepted <= 0
     ):
         raise LocalFilesError("existing index build state is invalid")
-    _verify_built_index(index_dir, target, generation, accepted, application_config)
+    _verify_built_index(yappo_makeindex, index_dir, generation, application_config)
     return {
         "schema_version": SCHEMA_VERSION,
         "stage": "build",
@@ -2392,10 +2346,9 @@ def build_index(settings: Settings, target: str) -> Dict[str, Any]:
         if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
             raise LocalFilesError("yappo_makeindex returned an invalid generation")
         _verify_built_index(
+            yappo_makeindex,
             index_dir,
-            target,
             generation,
-            accepted,
             application_config,
         )
         _write_manifest(

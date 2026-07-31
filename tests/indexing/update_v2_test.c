@@ -79,7 +79,7 @@ static void create_index(ytest_env_t *env) {
   YAP_V2_manifest_init(&manifest); manifest.generation = 1U;
   assert_int_equal(YAP_V2_config_fingerprint(&config, manifest.config_fingerprint), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &descriptor), YAP_V2_OK);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_save_atomic(path, &manifest), YAP_V2_OK);
   YAP_V2_manifest_free(&manifest);
 }
@@ -99,7 +99,7 @@ static yyjson_doc *execute(ytest_env_t *env, YAP_V2_HTTP_OPERATION operation, co
 static uint64_t manifest_generation(ytest_env_t *env, size_t *segments) {
   char path[PATH_MAX]; YAP_V2_MANIFEST manifest; uint64_t generation;
   YAP_V2_manifest_init(&manifest);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
   generation = manifest.generation; if (segments != NULL) *segments = manifest.segment_count;
   YAP_V2_manifest_free(&manifest); return generation;
@@ -296,7 +296,7 @@ static void assert_manifest_shape(ytest_env_t *env, uint64_t generation, size_t 
                                   size_t tombstone_count) {
   char path[PATH_MAX]; YAP_V2_MANIFEST manifest;
   YAP_V2_manifest_init(&manifest);
-  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.json"), 0);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env->tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
   assert_int_equal(manifest.generation, generation); assert_int_equal(manifest.segment_count, segment_count);
   if (segment_count != 0U) assert_int_equal(manifest.segments[0].tombstone_count, tombstone_count);
@@ -388,7 +388,7 @@ static void test_compaction_splits_output_and_builds_segment_local_bm25_stats(vo
   assert_int_equal(result.segment_ids.count, 2U);
   YAP_V2_manifest_init(&manifest);
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), env.tmp_root,
-                                   "manifest.json"), 0);
+                                   "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
   assert_int_equal(manifest.segment_count, 2U);
   for (i = 0U; i < manifest.segment_count; i++) {
@@ -491,7 +491,7 @@ static void test_incremental_compaction_keeps_boundary_tombstone(void **state) {
   assert_int_equal(result.generation, 10U);
   YAP_V2_manifest_init(&manifest);
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path),
-                                   env.tmp_root, "manifest.json"), 0);
+                                   env.tmp_root, "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_load(manifest_path, &manifest), YAP_V2_OK);
   assert_true(manifest.segment_count < 9U);
   assert_string_equal(manifest.segments[0].id, "seg-1");

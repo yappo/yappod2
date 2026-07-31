@@ -43,7 +43,7 @@ static void make_index(context_t *ctx) {
   assert_int_equal(YAP_V2_lexical_write(segment,1,docs,2,passages,2,lexical),YAP_V2_OK);add(&descriptor,&lexical[0]);add(&descriptor,&lexical[1]);add(&descriptor,&lexical[2]);
   embeddings.values=values;embeddings.input_count=2;embeddings.dimensions=2;assert_int_equal(ytest_path_join(path,sizeof(path),segment,"vectors.yap2"),0);assert_int_equal(YAP_V2_vectors_write(path,1,&config,passages,2,&embeddings,&vectors),YAP_V2_OK);add(&descriptor,&vectors);
   assert_int_equal(ytest_path_join(path,sizeof(path),segment,"metadata.yap2"),0);assert_int_equal(YAP_V2_metadata_write(path,1,&config,docs,2,&metadata),YAP_V2_OK);add(&descriptor,&metadata);
-  YAP_V2_manifest_init(&manifest);manifest.generation=1;assert_int_equal(YAP_V2_config_fingerprint(&config,manifest.config_fingerprint),YAP_V2_OK);assert_int_equal(YAP_V2_manifest_add_segment(&manifest,&descriptor),YAP_V2_OK);assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.json"),0);assert_int_equal(YAP_V2_manifest_save_atomic(path,&manifest),YAP_V2_OK);YAP_V2_manifest_free(&manifest);
+  YAP_V2_manifest_init(&manifest);manifest.generation=1;assert_int_equal(YAP_V2_config_fingerprint(&config,manifest.config_fingerprint),YAP_V2_OK);assert_int_equal(YAP_V2_manifest_add_segment(&manifest,&descriptor),YAP_V2_OK);assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.yap2"),0);assert_int_equal(YAP_V2_manifest_save_atomic(path,&manifest),YAP_V2_OK);YAP_V2_manifest_free(&manifest);
 }
 
 static int setup(void **state){context_t *ctx=calloc(1,sizeof(*ctx));FILE *file;const char *config=NULL;if(!ctx)return -1;ytest_daemon_stack_init(&ctx->stack);if(ytest_env_init(&ctx->env)!=0||ytest_path_join(ctx->run,sizeof(ctx->run),ctx->env.tmp_root,"run")!=0){free(ctx);return -1;}make_index(ctx);if(policy_source!=NULL){if(ytest_path_join(ctx->policy,sizeof(ctx->policy),ctx->env.tmp_root,"runtime.toml")!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}file=fopen(ctx->policy,"wb");if(file==NULL){ytest_env_destroy(&ctx->env);free(ctx);return -1;}if(fputs(policy_source,file)<0||fclose(file)!=0){ytest_env_destroy(&ctx->env);free(ctx);return -1;}config=ctx->policy;}if(ytest_daemon_stack_start_with_config(&ctx->stack,ctx->env.build_dir,ctx->env.tmp_root,ctx->run,config)!=0){ytest_daemon_stack_dump_logs(&ctx->stack,stderr);ytest_env_destroy(&ctx->env);free(ctx);return -1;}*state=ctx;return 0;}
@@ -193,7 +193,7 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
 
 static void test_liveness_survives_readiness_failure(void **state) {
   context_t *ctx=*state; char path[PATH_MAX]; char *response;
-  assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.json"),0);
+  assert_int_equal(ytest_path_join(path,sizeof(path),ctx->env.tmp_root,"manifest.yap2"),0);
   { FILE *file=fopen(path,"wb");assert_non_null(file);assert_true(fputs("{}\n",file)>=0);assert_int_equal(fclose(file),0); }
   response=get(ctx,"/health/live");assert_non_null(strstr(response,"200 OK"));free(response);
   response=get(ctx,"/health/ready");assert_non_null(strstr(response,"503 Service Unavailable"));assert_non_null(strstr(response,"\"ready\":false"));free(response);
@@ -286,7 +286,7 @@ static void test_core_automatically_compacts_small_segments(void **state) {
     free(response);
   }
   assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
-                                   "manifest.json"), 0);
+                                   "manifest.yap2"), 0);
   for (attempt = 0; attempt < 100; attempt++) {
     YAP_V2_MANIFEST manifest;
     YAP_V2_manifest_init(&manifest);

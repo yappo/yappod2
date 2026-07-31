@@ -80,7 +80,7 @@ static void test_build_and_all_search_modes(void **state) {
   char config[PATH_MAX], input[PATH_MAX], index[PATH_MAX];
   char makeindex[PATH_MAX], search[PATH_MAX], compact[PATH_MAX], update[PATH_MAX];
   char *build_argv[7], *lexical_argv[9], *vector_argv[9], *hybrid_argv[11];
-  char stored_config[PATH_MAX];
+  char stored_config[PATH_MAX], manifest_path[PATH_MAX], legacy_manifest_path[PATH_MAX];
   (void)state;
   assert_int_equal(ytest_env_init(&env), 0);
   create_inputs(&env, config, input, index);
@@ -100,6 +100,10 @@ static void test_build_and_all_search_modes(void **state) {
   assert_null(strstr(build_result.output, "segment_id"));
   ytest_cmd_result_free(&build_result);
   assert_int_equal(ytest_path_join(stored_config, sizeof(stored_config), index, "config.toml"), 0);
+  assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), index,
+                                   "manifest.yap2"), 0);
+  assert_int_equal(ytest_path_join(legacy_manifest_path, sizeof(legacy_manifest_path), index,
+                                   "manifest.json"), 0);
   {
     char *saved = NULL; size_t saved_bytes = 0U;
     assert_int_equal(ytest_read_file(stored_config, &saved, &saved_bytes), 0);
@@ -108,6 +112,12 @@ static void test_build_and_all_search_modes(void **state) {
     assert_null(strstr((char *)saved, "write_token"));
     assert_null(strstr((char *)saved, "authorization_token_env"));
     free(saved);
+    saved = NULL;
+    assert_int_equal(ytest_read_file(manifest_path, &saved, &saved_bytes), 0);
+    assert_true(saved_bytes >= 4U);
+    assert_memory_equal(saved, "YAP2", 4U);
+    free(saved);
+    assert_int_equal(access(legacy_manifest_path, F_OK), -1);
   }
 
   lexical_argv[0] = search; lexical_argv[1] = "--config"; lexical_argv[2] = config;

@@ -142,7 +142,7 @@ examples/local-files/.venv/bin/python \
   --target lexical
 ```
 
-`--target`は`lexical`、`rag`、`hybrid`です。前段階の全分割ファイルをFIFOへ順に流し、1回の`yappo_makeindex build`を実行します。巨大な連結NDJSONをディスクへ作りません。索引作成後は、索引の設定、世代、文書数、各コンポーネントの大きさとSHA-256、必要なベクトルコンポーネントを検証し、`local-files-build.json`を保存します。
+`--target`は`lexical`、`rag`、`hybrid`です。前段階の全分割ファイルをFIFOへ順に流し、1回の`yappo_makeindex build`を実行します。巨大な連結NDJSONをディスクへ作りません。索引作成後は、索引設定と作成結果を照合し、`yappo_makeindex verify`でバイナリマニフェストと各コンポーネントを検証してから、`local-files-build.json`を保存します。
 
 ## 語彙検索用の設定
 
@@ -199,7 +199,7 @@ batch_size = 16
 | `convert` | `documents-000001.ndjson`、`failures-000001.ndjson`、`manifest.json` |
 | `prepare` | `passages-000001.ndjson`、`manifest.json` |
 | 埋め込み | `documents-000001.ndjson`、`manifest.json`、処理中だけ使う作業ディレクトリ、チェックポイント、ジャーナル |
-| `build` | Yappod2の`config.toml`、`manifest.json`、`segments/`、`local-files-build.json` |
+| `build` | Yappod2の`config.toml`、`manifest.yap2`、`segments/`、`local-files-build.json` |
 
 各マニフェストの正確なフィールドと再開条件は[処理工程と再生成](docs/pipeline-and-recovery.md)で説明します。
 

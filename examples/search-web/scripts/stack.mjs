@@ -206,7 +206,7 @@ async function stop(config, quiet = false) {
 async function start(config) {
   const core = resolve(repoRoot, "build/yappod_core");
   const front = resolve(repoRoot, "build/yappod_front");
-  if (!existsSync(resolve(config.indexDirectory, "manifest.json"))) {
+  if (!existsSync(resolve(config.indexDirectory, "manifest.yap2"))) {
     if (existsSync(config.indexDirectory)) {
       throw new Error(`index path exists but is not a valid index: ${config.indexDirectory}`);
     }
@@ -319,7 +319,7 @@ function actionList(error, command, configPath) {
     actions.push(`To use the existing index, run \`${commandLine(configPath, "start")}\` instead of build.`);
     actions.push("To rebuild, set index.directory to an unused path or preserve and remove the old generated index first.");
   } else if (lower.includes("not a valid index")) {
-    actions.push(`Check that ${configPath} points index.directory to a directory containing manifest.json.`);
+    actions.push(`Check that ${configPath} points index.directory to a directory containing manifest.yap2.`);
     actions.push("Set index.directory to an unused path to build a new index; do not mix files from different builds.");
   } else if (lower.includes("yappod binaries not found") || lower.includes("cannot run")) {
     actions.push("Run `cmake --build build -j` at the repository root.");

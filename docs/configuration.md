@@ -11,7 +11,7 @@ Yappod2のサンプルでは、索引、サーバー、Web画面、埋め込み�
 - 索引形式の設定は、`[tokenizer]`、`[chunking]`、`[vector]`、`[metadata]`です。索引を作ると、適用済みの値が`<index-directory>/config.toml`へ保存されます。
 - アプリケーションの設定は、`[index]`、`[daemon]`、`[web]`、`[embedding]`、`[llm]`などです。接続先や実行時の上限を定めます。これらは索引内の`config.toml`へ保存されません。
 
-既存索引を開くときは、アプリケーション用TOMLの`[index].directory`をたどり、索引内の`config.toml`と`manifest.json`を読みます。アプリケーション用TOMLで`[vector].enabled = true`へ変更しても、既存索引にベクトル用ファイルは追加されません。
+既存索引を開くときは、アプリケーション用TOMLの`[index].directory`をたどり、索引内の`config.toml`と`manifest.yap2`を読みます。アプリケーション用TOMLで`[vector].enabled = true`へ変更しても、既存索引にベクトル用ファイルは追加されません。
 
 ## 共通規則
 
@@ -47,7 +47,7 @@ Yappod2のサンプルでは、索引、サーバー、Web画面、埋め込み�
 
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
-| `directory` | 文字列 | 空でない文字列。TOMLからの相対パスを解決した後で4095バイト以下 | なし | Yappod2コマンドとsearch-webの起動スクリプトでは必須 | 索引を作成または読み込むディレクトリです。`build`では、まだ存在しないディレクトリを指定します。検索、更新、サーバー起動では、`config.toml`と`manifest.json`を持つ作成済みの索引を指定します。 |
+| `directory` | 文字列 | 空でない文字列。TOMLからの相対パスを解決した後で4095バイト以下 | なし | Yappod2コマンドとsearch-webの起動スクリプトでは必須 | 索引を作成または読み込むディレクトリです。`build`では、まだ存在しないディレクトリを指定します。検索、更新、サーバー起動では、`config.toml`と`manifest.yap2`を持つ作成済みの索引を指定します。 |
 
 たとえば、現在`./index-lexical`を使用していて、ベクトル検索に対応した索引を`./index-vector`へ新しく作った場合は、
 アプリケーション用TOMLを`directory = "./index-vector"`へ変更してサーバーを起動し直します。
@@ -260,7 +260,7 @@ local-filesの`[input]`、`[output]`、`[prepare]`、`[extract]`、`[formatters]
 3. 本文断片順と同じ順序の`vectors`を各`upsert`へ加えたNDJSONを作ります。
 4. `[vector]`へ`model_id`、`dimensions`、`metric`を設定します。
 5. 既存索引とは異なる`[index].directory`を指定して`yappo_makeindex build`を実行します。
-6. 新しい`config.toml`でベクトル設定を、`manifest.json`で`vectors.yap2`と`vectors.usearch`を確認します。
+6. 新しい`config.toml`でベクトル設定を確認し、`yappo_makeindex verify`で`manifest.yap2`とベクトルコンポーネントを検証します。
 7. `yappo_makeindex verify`を実行します。
 8. アプリケーション用TOMLの`[index].directory`を新しい索引へ切り替えます。
 

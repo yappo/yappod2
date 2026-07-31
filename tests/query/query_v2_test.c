@@ -83,7 +83,7 @@ static void test_hybrid_filter_and_scope_aggregation(void **state) {
   assert_int_equal(YAP_V2_config_fingerprint(&config, manifest.config_fingerprint), YAP_V2_OK);
   assert_int_equal(YAP_V2_manifest_add_segment(&manifest, &descriptor), YAP_V2_OK);
   assert_int_equal(ytest_path_join(manifest_path, sizeof(manifest_path), env.tmp_root,
-                                   "manifest.json"), 0);
+                                   "manifest.yap2"), 0);
   assert_int_equal(YAP_V2_manifest_save_atomic(manifest_path, &manifest), YAP_V2_OK);
   YAP_V2_manifest_free(&manifest);
   YAP_V2_snapshot_manager_init(&manager);

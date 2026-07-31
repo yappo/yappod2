@@ -23,7 +23,7 @@
 - `search`、`yappo_makeindex`、`yappo_compact`、`yappod_core`、`yappod_front`の名前、引数、
   終了状態、標準出力、標準エラー。
 - TOML設定、canonical NDJSON、公開HTTP API、front/core内部通信、メトリクス。
-- `config.toml`、`manifest.json`、`segments/<segment-id>/`から成るv2索引形式。
+- `config.toml`、`manifest.yap2`、`segments/<segment-id>/`から成るv2索引形式。
 - インストールされる実行ファイル、設定ファイル、利用者向けの操作手順。
 
 これらの一次資料は、[コマンドリファレンス](command-reference.md)、

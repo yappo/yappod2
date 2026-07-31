@@ -954,6 +954,25 @@ class LocalFilesTest(unittest.TestCase):
         with self.assertRaisesRegex(local_files.LocalFilesError, "does not match"):
             local_files.run_all(settings, "lexical")
 
+    def test_all_rejects_corrupt_reusable_binary_index_manifest(self):
+        makeindex = MODULE_PATH.parents[2] / "build" / "yappo_makeindex"
+        if not makeindex.is_file():
+            self.skipTest("build/yappo_makeindex is required")
+        directory = self.base / "corrupt-index-reuse-pipeline"
+        directory.mkdir()
+        config = self.write_pipeline_config(
+            directory, types.SimpleNamespace(server_port=9)
+        )
+        settings = local_files.load_settings(config)
+        local_files.run_all(settings, "lexical")
+        manifest_path = directory / "index" / "manifest.yap2"
+        manifest = bytearray(manifest_path.read_bytes())
+        manifest[-1] ^= 1
+        manifest_path.write_bytes(manifest)
+
+        with self.assertRaisesRegex(local_files.LocalFilesError, "verify exited"):
+            local_files.run_all(settings, "lexical")
+
     def test_build_process_failure_does_not_publish_or_leave_staging(self):
         directory = self.base / "failed-build-pipeline"
         directory.mkdir()

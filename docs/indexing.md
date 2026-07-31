@@ -214,7 +214,9 @@ null、真偽値、数値、文字列を保存します。対象が配列なら�
   --query "確認用の語句"
 ```
 
-ベクトル対応索引では、同じ次元数の既知ベクトルで`vector`と`hybrid`も確認します。`manifest.json`のコンポーネント一覧に`vectors.yap2`と`vectors.usearch`があり、索引`config.toml`のモデル識別子、次元数、距離尺度が意図した値であることを確認してください。
+ベクトル対応索引では、同じ次元数の既知ベクトルで`vector`と`hybrid`も確認します。各セグメントの
+`vectors.yap2`と`vectors.usearch`を`yappo_makeindex verify`で検証し、索引`config.toml`の
+モデル識別子、次元数、距離尺度が意図した値であることを確認してください。
 
 ## 語彙索引をベクトル対応へ移行する
 
