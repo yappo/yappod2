@@ -65,6 +65,8 @@ flowchart LR
 - `yappod_front`は公開HTTP、認証、処理上限、運用endpointを担当します。検索、取得、登録は
   `yappod_core`へ転送します。
 - `yappod_core`は内部HTTPを検証し、索引runtimeへ検索、取得、更新を依頼します。
+  独立した保守スレッドはマニフェストdescriptorから小セグメント数を定期確認し、設定した閾値を
+  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。
 
 公開HTTPと内部HTTPの正確なmethod、path、header、状態コードは
 [frontとcoreの通信仕様](yappod-core-protocol.md)を参照してください。

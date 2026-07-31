@@ -39,11 +39,38 @@ describe("web config", () => {
         workerThreads: 16,
         ingestMaxBodyBytes: 67108864,
         ingestTimeoutMs: 60000,
+        autoCompactEnabled: true,
+        autoCompactCheckIntervalMs: 30000,
+        autoCompactSmallSegmentBytes: 67108864,
+        autoCompactMinSmallSegments: 4,
       },
     });
     const invalid = await configFile("[daemon]\nworker_threads=1025\n");
     await expect(loadWebConfig(invalid)).rejects.toThrow(
       "daemon.worker_threads must be an integer from 1 to 1024",
+    );
+  });
+
+  it("loads and validates automatic compaction settings", async () => {
+    const configured = await configFile(
+      "[daemon]\nauto_compact_enabled=false\n" +
+      "auto_compact_check_interval_ms=5000\n" +
+      "auto_compact_small_segment_bytes=1048576\n" +
+      "auto_compact_min_small_segments=3\n",
+    );
+    await expect(loadWebConfig(configured)).resolves.toMatchObject({
+      daemon: {
+        autoCompactEnabled: false,
+        autoCompactCheckIntervalMs: 5000,
+        autoCompactSmallSegmentBytes: 1048576,
+        autoCompactMinSmallSegments: 3,
+      },
+    });
+    const invalid = await configFile(
+      "[daemon]\nauto_compact_min_small_segments=1\n",
+    );
+    await expect(loadWebConfig(invalid)).rejects.toThrow(
+      "daemon.auto_compact_min_small_segments must be an integer from 2 to 8",
     );
   });
 

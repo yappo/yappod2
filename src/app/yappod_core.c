@@ -4,6 +4,7 @@
 #include "server/yappo_observability_v2.h"
 #include "config/yappo_runtime_policy_v2.h"
 #include "config/yappo_application_config.h"
+#include "indexing/yappo_compact_v2.h"
 
 #include <errno.h>
 #include <netinet/in.h>
@@ -26,6 +27,12 @@ typedef struct {
   const char *index_dir;
   YAP_V2_HTTP_RUNTIME *http_runtime;
 } worker_t;
+
+typedef struct {
+  const char *index_dir;
+  YAP_V2_HTTP_RUNTIME *http_runtime;
+  YAP_V2_COMPACTION_POLICY policy;
+} maintenance_t;
 
 static volatile sig_atomic_t shutdown_requested = 0;
 static int listen_socket = -1;
@@ -326,6 +333,45 @@ static void *run_reloader(void *opaque) {
   return NULL;
 }
 
+static void sleep_maintenance_interval(uint32_t interval_ms) {
+  uint32_t remaining = interval_ms;
+  while (!shutdown_requested && remaining > 0U) {
+    uint32_t slice = remaining > 1000U ? 1000U : remaining;
+    struct timespec interval;
+    interval.tv_sec = (time_t)(slice / 1000U);
+    interval.tv_nsec = (long)(slice % 1000U) * 1000000L;
+    while (nanosleep(&interval, &interval) != 0 && errno == EINTR &&
+           !shutdown_requested) {}
+    if (remaining >= slice) remaining -= slice;
+  }
+}
+
+static void *run_maintenance(void *opaque) {
+  maintenance_t *maintenance = opaque;
+  while (!shutdown_requested) {
+    int compacted = 0;
+    size_t small_segments = 0U;
+    char error[256] = {0};
+    YAP_V2_COMPACTION_RESULT result;
+    sleep_maintenance_interval(maintenance->policy.check_interval_ms);
+    if (shutdown_requested) break;
+    YAP_V2_compaction_result_init(&result);
+    if (YAP_V2_compact_if_needed(
+          maintenance->index_dir, &maintenance->policy, &result,
+          &compacted, &small_segments, error, sizeof(error)) == YAP_V2_OK) {
+      if (compacted)
+        (void)YAP_V2_http_runtime_reload(maintenance->http_runtime);
+    } else {
+      fprintf(stderr,
+              "Automatic compaction check or run failed for %zu small "
+              "segments: %s\n",
+              small_segments, error);
+    }
+    YAP_V2_compaction_result_free(&result);
+  }
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   const char *index_dir = NULL, *config_path = NULL;
   const char *listen_host = NULL;
@@ -335,11 +381,14 @@ int main(int argc, char **argv) {
   int have_port = 0;
   sigset_t shutdown_signals;
   YAP_V2_HTTP_RUNTIME http_runtime;
-  pthread_t *threads = NULL, reloader_thread;
+  pthread_t *threads = NULL, reloader_thread, maintenance_thread;
   worker_t *workers = NULL;
+  maintenance_t maintenance;
+  YAP_V2_COMPACTION_POLICY compaction_policy;
   size_t started = 0U, worker_threads;
-  int foreground = 0, reloader_started = 0;
+  int foreground = 0, reloader_started = 0, maintenance_started = 0;
   YAP_V2_http_runtime_init(&http_runtime);
+  YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout, argv[0]);
@@ -376,6 +425,7 @@ int main(int argc, char **argv) {
     listen_host = application.core_host;
     port = application.core_port;
     runtime_policy = application.runtime_policy;
+    compaction_policy = application.compaction_policy;
     if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
       return EXIT_FAILURE;
@@ -443,6 +493,16 @@ int main(int argc, char **argv) {
     reloader_started = 1;
   else
     request_shutdown(SIGTERM);
+  maintenance.index_dir = index_dir;
+  maintenance.http_runtime = &http_runtime;
+  maintenance.policy = compaction_policy;
+  if (!shutdown_requested && compaction_policy.enabled) {
+    if (pthread_create(&maintenance_thread, NULL, run_maintenance,
+                       &maintenance) == 0)
+      maintenance_started = 1;
+    else
+      request_shutdown(SIGTERM);
+  }
   for (started = 0U; started < worker_threads; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
@@ -450,7 +510,8 @@ int main(int argc, char **argv) {
     workers[started].http_runtime = &http_runtime;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != worker_threads || !reloader_started) {
+  if (started != worker_threads || !reloader_started ||
+      (compaction_policy.enabled && !maintenance_started)) {
     request_shutdown(SIGTERM);
   } else {
     int signal_number;
@@ -459,10 +520,13 @@ int main(int argc, char **argv) {
   }
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
   if (reloader_started) (void)pthread_join(reloader_thread, NULL);
+  if (maintenance_started) (void)pthread_join(maintenance_thread, NULL);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_runtime_limiter_close(&ingest_limiter);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
   free(threads); free(workers);
   YAP_V2_http_runtime_close(&http_runtime);
-  return started == worker_threads && reloader_started ? EXIT_SUCCESS : EXIT_FAILURE;
+  return started == worker_threads && reloader_started &&
+    (!compaction_policy.enabled || maintenance_started) ?
+    EXIT_SUCCESS : EXIT_FAILURE;
 }

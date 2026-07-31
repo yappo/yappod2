@@ -34,6 +34,9 @@ static const char valid[] =
   "front_host='127.0.0.1'\nfront_port=18400\nworker_threads=3\nmax_inflight=8\n"
   "max_inflight_bytes=8192\nrequest_timeout_ms=2500\n"
   "ingest_max_body_bytes=33554432\ningest_timeout_ms=120000\n"
+  "auto_compact_enabled=false\nauto_compact_check_interval_ms=5000\n"
+  "auto_compact_small_segment_bytes=1048576\n"
+  "auto_compact_min_small_segments=3\n"
   "[web]\nhost='127.0.0.1'\n"
   "[llm]\nauthorization_token_env='LLM_API_KEY'\n";
 
@@ -52,6 +55,10 @@ static void test_loads_shared_config_and_resolves_paths(void **state) {
   assert_int_equal(config.runtime_policy.request_timeout_ms, 2500U);
   assert_int_equal(config.runtime_policy.ingest_max_body_bytes, 33554432U);
   assert_int_equal(config.runtime_policy.ingest_timeout_ms, 120000U);
+  assert_false(config.compaction_policy.enabled);
+  assert_int_equal(config.compaction_policy.check_interval_ms, 5000U);
+  assert_int_equal(config.compaction_policy.small_segment_bytes, 1048576U);
+  assert_int_equal(config.compaction_policy.min_small_segments, 3U);
   assert_int_equal(unlink(path), 0); free(path);
 }
 
@@ -145,6 +152,41 @@ static void test_worker_threads_default_and_range(void **state) {
   unlink(path); free(path);
 }
 
+static void test_automatic_compaction_defaults_and_ranges(void **state) {
+  char source[4096];
+  char *path;
+  YAP_APPLICATION_CONFIG config;
+  (void)state;
+  YAP_application_config_init(&config);
+  assert_true(config.compaction_policy.enabled);
+  assert_int_equal(config.compaction_policy.check_interval_ms, 30000U);
+  assert_int_equal(config.compaction_policy.small_segment_bytes, 67108864U);
+  assert_int_equal(config.compaction_policy.min_small_segments, 4U);
+
+  assert_true(snprintf(source, sizeof(source), "%s", valid) > 0);
+  {
+    char *value = strstr(source, "auto_compact_min_small_segments=3");
+    assert_non_null(value);
+    value[strlen("auto_compact_min_small_segments=")] = '1';
+  }
+  path = write_config(source);
+  assert_int_equal(YAP_application_config_load(path, &config, NULL, 0U),
+                   YAP_V2_OUT_OF_RANGE);
+  unlink(path); free(path);
+
+  assert_true(snprintf(source, sizeof(source), "%s", valid) > 0);
+  {
+    char *value = strstr(source, "auto_compact_enabled=false");
+    assert_non_null(value);
+    memcpy(value, "auto_compact_enabled=3    ",
+           strlen("auto_compact_enabled=false"));
+  }
+  path = write_config(source);
+  assert_int_equal(YAP_application_config_load(path, &config, NULL, 0U),
+                   YAP_V2_INVALID_FORMAT);
+  unlink(path); free(path);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_loads_shared_config_and_resolves_paths),
@@ -152,6 +194,7 @@ int main(void) {
     cmocka_unit_test(test_daemon_fields_do_not_change_index_fingerprint),
     cmocka_unit_test(test_rejects_invalid_ranges_and_removed_schema_version),
     cmocka_unit_test(test_worker_threads_default_and_range),
+    cmocka_unit_test(test_automatic_compaction_defaults_and_ranges),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

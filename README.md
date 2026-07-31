@@ -199,11 +199,17 @@ max_inflight_bytes = 4194304
 request_timeout_ms = 5000
 ingest_max_body_bytes = 67108864
 ingest_timeout_ms = 60000
+auto_compact_enabled = true
+auto_compact_check_interval_ms = 30000
+auto_compact_small_segment_bytes = 67108864
+auto_compact_min_small_segments = 4
 ```
 
 `filterable_fields`は、入力の`metadata`にある同名フィールドを検索時の絞り込み対象へします。省略または空配列にすると、
 メタデータ自体は文書へ保存しますが、`filter`条件には使えません。`write_token`を設定しない場合、文書更新APIには認証が
 ありません。ループバックアドレス以外へfrontを公開する場合は、運用方針に合わせて認証とTLSも用意してください。
+coreは既定で小セグメントを定期確認し、64 MiB未満のセグメントが4個以上になった場合に
+範囲コンパクションを自動実行します。
 
 ### ベクトル対応索引へ変更する設定
 

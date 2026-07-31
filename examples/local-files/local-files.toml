@@ -69,6 +69,10 @@ max_inflight_bytes = 4194304
 request_timeout_ms = 5000
 ingest_max_body_bytes = 67108864
 ingest_timeout_ms = 60000
+auto_compact_enabled = true
+auto_compact_check_interval_ms = 30000
+auto_compact_small_segment_bytes = 67108864
+auto_compact_min_small_segments = 4
 # write_token = "replace-with-16-or-more-characters"
 
 [web]

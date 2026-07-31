@@ -506,6 +506,52 @@ static void test_incremental_compaction_keeps_boundary_tombstone(void **state) {
   ytest_env_destroy(&env);
 }
 
+static void test_automatic_policy_compacts_small_segments_to_healthy_shape(
+    void **state) {
+  ytest_env_t env;
+  YAP_V2_COMPACTION_POLICY policy;
+  YAP_V2_COMPACTION_RESULT result;
+  yyjson_doc *document;
+  char request[512], error[256] = {0};
+  size_t i, small_segments = 0U, segment_count;
+  int needed = 0;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  for (i = 0U; i < 3U; i++) {
+    assert_true(snprintf(request, sizeof(request),
+      "{\"operations\":[{\"operation\":\"upsert\","
+      "\"id\":\"auto-%zu\",\"body\":\"tiny\",\"vectors\":[[1,0]]}]}",
+      i) > 0);
+    document = execute(&env, YAP_V2_HTTP_INGEST, request, 200);
+    yyjson_doc_free(document);
+  }
+  YAP_V2_compaction_policy_init(&policy);
+  assert_int_equal(YAP_V2_compaction_needed(
+    env.tmp_root, &policy, &needed, &small_segments, error,
+    sizeof(error)), YAP_V2_OK);
+  assert_true(needed);
+  assert_int_equal(small_segments, 4U);
+  YAP_V2_compaction_result_init(&result);
+  assert_int_equal(YAP_V2_compact_if_needed(
+    env.tmp_root, &policy, &result, &needed, &small_segments, error,
+    sizeof(error)), YAP_V2_OK);
+  assert_true(needed);
+  YAP_V2_compaction_result_free(&result);
+  YAP_V2_compaction_result_init(&result);
+  assert_int_equal(YAP_V2_compact_if_needed(
+    env.tmp_root, &policy, &result, &needed, &small_segments, error,
+    sizeof(error)), YAP_V2_OK);
+  assert_false(needed);
+  assert_true(small_segments < 4U);
+  assert_int_equal(result.generation, 0U);
+  YAP_V2_compaction_result_free(&result);
+  (void)manifest_generation(&env, &segment_count);
+  assert_true(segment_count < 4U);
+  assert_int_equal(search_count(&env, "tiny", NULL), 3U);
+  ytest_env_destroy(&env);
+}
+
 static void run_crashing_compaction(ytest_env_t *env, const char *point) {
   pid_t child = fork(); int child_status;
   assert_true(child >= 0);
@@ -556,6 +602,8 @@ int main(void) {
     cmocka_unit_test(test_compaction_splits_output_and_builds_segment_local_bm25_stats),
     cmocka_unit_test(test_incremental_compaction_preserves_concurrent_append),
     cmocka_unit_test(test_incremental_compaction_keeps_boundary_tombstone),
+    cmocka_unit_test(
+      test_automatic_policy_compacts_small_segments_to_healthy_shape),
     cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);

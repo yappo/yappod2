@@ -502,8 +502,72 @@ void YAP_V2_compaction_result_free(YAP_V2_COMPACTION_RESULT *result) {
   memset(result, 0, sizeof(*result));
 }
 
-int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
-                   char *error, size_t error_size) {
+int YAP_V2_manifest_needs_compaction(
+    const YAP_V2_MANIFEST *manifest,
+    const YAP_V2_COMPACTION_POLICY *policy, int *needed,
+    size_t *small_segment_count) {
+  size_t i, count = 0U, longest = 0U;
+  if (manifest == NULL || policy == NULL || needed == NULL ||
+      YAP_V2_compaction_policy_validate(policy) != YAP_V2_OK)
+    return YAP_V2_INVALID_ARGUMENT;
+  for (i = 0U; i < manifest->segment_count; i++) {
+    size_t bytes = segment_storage_bytes(&manifest->segments[i]);
+    if (bytes < policy->small_segment_bytes) {
+      count++;
+      if (count > longest) longest = count;
+    } else {
+      count = 0U;
+    }
+  }
+  *needed = policy->enabled &&
+    longest >= policy->min_small_segments;
+  if (small_segment_count != NULL) *small_segment_count = longest;
+  return YAP_V2_OK;
+}
+
+int YAP_V2_compaction_needed(
+    const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+    int *needed, size_t *small_segment_count, char *error,
+    size_t error_size) {
+  YAP_V2_CONFIG config;
+  YAP_V2_MANIFEST manifest;
+  char config_path[4096], manifest_path[4096], config_error[256];
+  int status;
+  if (index_dir == NULL || policy == NULL || needed == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  *needed = 0;
+  if (small_segment_count != NULL) *small_segment_count = 0U;
+  if (join_path(config_path, sizeof(config_path), index_dir,
+                "config.toml") != 0 ||
+      join_path(manifest_path, sizeof(manifest_path), index_dir,
+                "manifest.json") != 0)
+    return YAP_V2_OUT_OF_RANGE;
+  YAP_V2_manifest_init(&manifest);
+  status = YAP_V2_config_load(config_path, &config, config_error,
+                              sizeof(config_error));
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, config_error);
+    goto done;
+  }
+  status = YAP_V2_manifest_load_for_config(manifest_path, &config,
+                                           &manifest);
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "current index manifest is invalid");
+    goto done;
+  }
+  status = YAP_V2_manifest_needs_compaction(
+    &manifest, policy, needed, small_segment_count);
+  if (status != YAP_V2_OK)
+    set_error(error, error_size, "automatic compaction policy is invalid");
+done:
+  YAP_V2_manifest_free(&manifest);
+  return status;
+}
+
+static int compact_internal(
+    const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+    YAP_V2_COMPACTION_RESULT *result, int *compacted,
+    size_t *small_segment_count, char *error, size_t error_size) {
   YAP_V2_CONFIG config;
   YAP_V2_MANIFEST manifest, current, candidate;
   COMPACTION_INPUT input;
@@ -519,6 +583,7 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   uint64_t output_generation = 0U;
   uint64_t status_generation = 0U;
   int status = YAP_V2_OK, published = 0, status_started = 0;
+  int needed = 1;
   YAP_V2_WRITER_LOCK writer_lock, compaction_lock;
   YAP_V2_manifest_init(&manifest);
   YAP_V2_manifest_init(&current);
@@ -528,7 +593,12 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
   YAP_V2_writer_lock_init(&writer_lock);
   YAP_V2_writer_lock_init(&compaction_lock);
   if (index_dir == NULL || result == NULL) return YAP_V2_INVALID_ARGUMENT;
+  if (policy != NULL &&
+      YAP_V2_compaction_policy_validate(policy) != YAP_V2_OK)
+    return YAP_V2_INVALID_ARGUMENT;
   YAP_V2_compaction_result_init(result);
+  if (compacted != NULL) *compacted = 0;
+  if (small_segment_count != NULL) *small_segment_count = 0U;
   if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
       join_path(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0 ||
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0)
@@ -538,9 +608,6 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
     set_error(error, error_size, "cannot acquire compaction lock");
     goto done;
   }
-  status_started = 1;
-  (void)YAP_V2_compaction_status_write(index_dir,
-                                        YAP_V2_COMPACTION_RUNNING, 0U);
   status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
   if (status != YAP_V2_OK) {
     set_error(error, error_size, "cannot acquire index writer lock");
@@ -553,6 +620,19 @@ int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
     set_error(error, error_size, "current index manifest is invalid");
     goto done;
   }
+  if (policy != NULL) {
+    status = YAP_V2_manifest_needs_compaction(
+      &manifest, policy, &needed, small_segment_count);
+    if (status != YAP_V2_OK) {
+      set_error(error, error_size, "automatic compaction policy is invalid");
+      goto done;
+    }
+    if (!needed) goto done;
+  }
+  if (compacted != NULL) *compacted = 1;
+  status_started = 1;
+  (void)YAP_V2_compaction_status_write(index_dir,
+                                        YAP_V2_COMPACTION_RUNNING, 0U);
   status_generation = manifest.generation;
   status = YAP_V2_compact_gc(index_dir, &manifest, &removed_before);
   if (status != YAP_V2_OK) {
@@ -712,6 +792,22 @@ done:
   YAP_V2_manifest_free(&manifest);
   YAP_V2_writer_lock_release(&compaction_lock);
   return status;
+}
+
+int YAP_V2_compact_if_needed(
+    const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+    YAP_V2_COMPACTION_RESULT *result, int *compacted,
+    size_t *small_segment_count, char *error, size_t error_size) {
+  if (policy == NULL || compacted == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  return compact_internal(index_dir, policy, result, compacted,
+                          small_segment_count, error, error_size);
+}
+
+int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
+                   char *error, size_t error_size) {
+  return compact_internal(index_dir, NULL, result, NULL, NULL,
+                          error, error_size);
 }
 
 int YAP_V2_compact_main(int argc, char **argv) {

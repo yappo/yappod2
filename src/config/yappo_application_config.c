@@ -93,6 +93,20 @@ static int read_uint32(toml_table_t *table, const char *key, uint32_t *output,
   return YAP_V2_OK;
 }
 
+static int read_boolean(toml_table_t *table, const char *key, int *output,
+                        int required, char *error, size_t error_size) {
+  toml_datum_t value = toml_bool_in(table, key);
+  if (!value.ok) {
+    if (required || toml_key_exists(table, key)) {
+      set_error(error, error_size, "%s must be a boolean", key);
+      return YAP_V2_INVALID_FORMAT;
+    }
+    return YAP_V2_OK;
+  }
+  *output = value.u.b ? 1 : 0;
+  return YAP_V2_OK;
+}
+
 static int normalize_path(const char *base, const char *value, char *output,
                           size_t capacity, char *error, size_t error_size) {
   char joined[YAP_APPLICATION_PATH_BYTES * 2U];
@@ -182,6 +196,7 @@ void YAP_application_config_init(YAP_APPLICATION_CONFIG *config) {
   (void)strcpy(config->front_host, "127.0.0.1");
   config->front_port = 18400U;
   YAP_V2_runtime_policy_init(&config->runtime_policy);
+  YAP_V2_compaction_policy_init(&config->compaction_policy);
 }
 
 int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config,
@@ -193,7 +208,9 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   static const char *const metadata_keys[] = {"filterable_fields", NULL};
   static const char *const daemon_keys[] = {"run_directory", "core_host", "core_port",
     "front_host", "front_port", "worker_threads", "max_inflight", "max_inflight_bytes",
-    "request_timeout_ms", "ingest_max_body_bytes", "ingest_timeout_ms", "write_token", NULL};
+    "request_timeout_ms", "ingest_max_body_bytes", "ingest_timeout_ms", "write_token",
+    "auto_compact_enabled", "auto_compact_check_interval_ms",
+    "auto_compact_small_segment_bytes", "auto_compact_min_small_segments", NULL};
   FILE *file;
   toml_table_t *root = NULL, *index, *tokenizer, *chunking, *vector, *metadata, *daemon;
   toml_datum_t enabled, metric, token;
@@ -322,6 +339,35 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
                        YAP_V2_MAX_INGEST_TIMEOUT_MS, 0, error, error_size);
   if (status != YAP_V2_OK) goto done;
   config->runtime_policy.ingest_timeout_ms = value;
+  status = read_boolean(daemon, "auto_compact_enabled",
+                        &config->compaction_policy.enabled, 0,
+                        error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  value = config->compaction_policy.check_interval_ms;
+  status = read_uint32(
+    daemon, "auto_compact_check_interval_ms", &value,
+    YAP_V2_MIN_AUTO_COMPACT_CHECK_INTERVAL_MS,
+    YAP_V2_MAX_AUTO_COMPACT_CHECK_INTERVAL_MS, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->compaction_policy.check_interval_ms = value;
+  value = (uint32_t)config->compaction_policy.small_segment_bytes;
+  status = read_uint32(
+    daemon, "auto_compact_small_segment_bytes", &value, 1U,
+    YAP_V2_MAX_AUTO_COMPACT_SMALL_SEGMENT_BYTES, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->compaction_policy.small_segment_bytes = value;
+  value = (uint32_t)config->compaction_policy.min_small_segments;
+  status = read_uint32(
+    daemon, "auto_compact_min_small_segments", &value,
+    YAP_V2_MIN_AUTO_COMPACT_SMALL_SEGMENTS,
+    YAP_V2_MAX_AUTO_COMPACT_SMALL_SEGMENTS, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->compaction_policy.min_small_segments = value;
+  status = YAP_V2_compaction_policy_validate(&config->compaction_policy);
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "automatic compaction policy is invalid");
+    goto done;
+  }
   token = toml_string_in(daemon, "write_token");
   if (!token.ok && toml_key_exists(daemon, "write_token")) { set_error(error, error_size, "daemon.write_token must be a string"); status = YAP_V2_INVALID_FORMAT; goto done; }
   if (token.ok) {
