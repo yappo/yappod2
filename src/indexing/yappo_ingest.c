@@ -132,17 +132,15 @@ static int assign_string(yyjson_val *object, const char *key, int required, size
   return *output == NULL ? YAP_V2_ALLOCATION_FAILED : YAP_V2_OK;
 }
 
-int YAP_V2_ingest_parse_ndjson(const char *line, size_t length, YAP_V2_INGEST_OPERATION *operation,
-                               char *error, size_t error_size) {
+int YAP_V2_ingest_parse_json_value(yyjson_val *root,
+                                   YAP_V2_INGEST_OPERATION *operation,
+                                   char *error, size_t error_size) {
   static const char *const keys[]={"operation","id","url","title","body","metadata","updated_at_unix_ms","vectors",NULL};
-  yyjson_read_err read_error; yyjson_doc *document; yyjson_val *root,*kind,*metadata,*updated,*vectors;
+  yyjson_val *kind,*metadata,*updated,*vectors;
   int status;
-  if(line==NULL||operation==NULL)return YAP_V2_INVALID_ARGUMENT;
+  if(root==NULL||operation==NULL)return YAP_V2_INVALID_ARGUMENT;
   if(error!=NULL&&error_size>0U)error[0]='\0';
   memset(operation,0,sizeof(*operation));
-  document=yyjson_read_opts((char *)line,length,YYJSON_READ_NOFLAG,NULL,&read_error);
-  if(document==NULL){error_set(error,error_size,"invalid JSON");return YAP_V2_INVALID_FORMAT;}
-  root=yyjson_doc_get_root(document);
   if(!yyjson_is_obj(root)||!only_keys(root,keys)||!json_keys_unique(root)){error_set(error,error_size,"record is not an object, has duplicate keys, or contains an unknown key");status=YAP_V2_INVALID_FORMAT;goto done;}
   kind=yyjson_obj_get(root,"operation");
   if(!yyjson_is_str(kind)){error_set(error,error_size,"operation must be a string");status=YAP_V2_INVALID_FORMAT;goto done;}
@@ -189,8 +187,25 @@ invalid:
   if(status==YAP_V2_OK)status=YAP_V2_INVALID_FORMAT;
   if(error==NULL||error_size==0U||error[0]=='\0')error_set(error,error_size,"record violates the canonical ingest schema");
 done:
-  yyjson_doc_free(document);
   if(status!=YAP_V2_OK)YAP_V2_ingest_operation_free(operation);
+  return status;
+}
+
+int YAP_V2_ingest_parse_ndjson(const char *line, size_t length,
+                               YAP_V2_INGEST_OPERATION *operation,
+                               char *error, size_t error_size) {
+  yyjson_read_err read_error;
+  yyjson_doc *document;
+  int status;
+  if (line == NULL || operation == NULL) return YAP_V2_INVALID_ARGUMENT;
+  document = yyjson_read_opts((char *)line, length, YYJSON_READ_NOFLAG, NULL, &read_error);
+  if (document == NULL) {
+    error_set(error, error_size, "invalid JSON");
+    return YAP_V2_INVALID_FORMAT;
+  }
+  status = YAP_V2_ingest_parse_json_value(yyjson_doc_get_root(document), operation,
+                                          error, error_size);
+  yyjson_doc_free(document);
   return status;
 }
 

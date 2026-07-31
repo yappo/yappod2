@@ -110,13 +110,17 @@ coreとfrontは、`[daemon].worker_threads`で指定した数のワーカース�
 | キー | 制限する対象 |
 |---|---|
 | `worker_threads` | coreとfrontがそれぞれ作成するワーカースレッド数です。 |
-| `max_inflight` | 同時に受理する検索、取得、更新の件数です。 |
-| `max_inflight_bytes` | 受理中のリクエスト本文の合計バイト数です。 |
-| `request_timeout_ms` | frontのクライアントソケット、frontのlibcurlによるcoreへの接続と要求全体、coreが受理したソケットの読み書き期限です。 |
+| `max_inflight` | 同時に受理する検索、取得、本文断片準備の件数です。 |
+| `max_inflight_bytes` | 処理中の検索、取得、本文断片準備の本文合計バイト数です。 |
+| `request_timeout_ms` | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
+| `ingest_max_body_bytes` | 文書更新1件の本文上限です。デフォルト64 MiB、最大256 MiBです。 |
+| `ingest_timeout_ms` | 文書更新に適用するソケットと内部HTTPの期限です。デフォルト60000ミリ秒です。 |
 
-実際に同時処理できる要求数は、ワーカースレッド数と`max_inflight`の小さい方を超えません。
+実際に同時処理できる通常要求数は、ワーカースレッド数と`max_inflight`の小さい方を超えません。
 `max_inflight`または`max_inflight_bytes`を超えた処理は`503 overloaded`になります。
-要求本文1件の絶対上限は公開API、内部HTTPともに1 MiBです。
+文書更新は通常要求と別の1件分の処理枠を使うため、更新待ちが検索用の処理枠を占有しません。
+同時に2件目の更新が到着した場合は`503 overloaded`です。要求本文1件の上限は、検索、取得、
+本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
 coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
 
 タイムアウト値を増やす前に、coreへの接続、索引の大きさ、同時実行数、クライアント切断、ディスクI/Oを確認します。search-webの`yappod_timeout_ms`、起動待ちの`startup_timeout_ms`、LLMや埋め込みのタイムアウトは別の待ち時間です。

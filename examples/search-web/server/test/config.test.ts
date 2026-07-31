@@ -35,7 +35,11 @@ describe("web config", () => {
   it("defaults and validates the daemon worker count", async () => {
     const defaults = await configFile("[daemon]\n");
     await expect(loadWebConfig(defaults)).resolves.toMatchObject({
-      daemon: { workerThreads: 16 },
+      daemon: {
+        workerThreads: 16,
+        ingestMaxBodyBytes: 67108864,
+        ingestTimeoutMs: 60000,
+      },
     });
     const invalid = await configFile("[daemon]\nworker_threads=1025\n");
     await expect(loadWebConfig(invalid)).rejects.toThrow(

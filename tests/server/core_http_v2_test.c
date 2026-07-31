@@ -79,24 +79,37 @@ static void test_stream_read_and_body_limit(void **state) {
     "POST /v2/documents:batch HTTP/1.1\r\n"
     "Host: localhost\r\nContent-Type: application/json\r\n"
     "Content-Length: 2\r\n\r\n{}";
+  static const char query_text[] =
+    "QUERY /v2/search HTTP/1.1\r\n"
+    "Host: localhost\r\nContent-Type: application/json\r\n"
+    "Content-Length: 2\r\n\r\n{}";
   FILE *stream = tmpfile();
+  FILE *query_stream = tmpfile();
   YAP_V2_CORE_HTTP_REQUEST request;
   (void)state;
   assert_non_null(stream);
+  assert_non_null(query_stream);
   assert_int_equal(fwrite(request_text, 1U, sizeof(request_text) - 1U, stream),
                    sizeof(request_text) - 1U);
   rewind(stream);
   YAP_V2_core_http_request_init(&request);
-  assert_int_equal(YAP_V2_core_http_read_request(stream, 2U, &request),
+  assert_int_equal(YAP_V2_core_http_read_request(stream, 1U, 2U, &request),
                    YAP_V2_CORE_HTTP_OK);
   assert_int_equal(request.body_bytes, 2U);
   assert_memory_equal(request.body, "{}", 2U);
   YAP_V2_core_http_request_free(&request);
   rewind(stream);
-  assert_int_equal(YAP_V2_core_http_read_request(stream, 1U, &request),
+  assert_int_equal(YAP_V2_core_http_read_request(stream, 1U, 1U, &request),
+                   YAP_V2_CORE_HTTP_TOO_LARGE);
+  YAP_V2_core_http_request_free(&request);
+  assert_int_equal(fwrite(query_text, 1U, sizeof(query_text) - 1U, query_stream),
+                   sizeof(query_text) - 1U);
+  rewind(query_stream);
+  assert_int_equal(YAP_V2_core_http_read_request(query_stream, 1U, 2U, &request),
                    YAP_V2_CORE_HTTP_TOO_LARGE);
   YAP_V2_core_http_request_free(&request);
   fclose(stream);
+  fclose(query_stream);
 }
 
 static void test_stream_rejects_truncated_body(void **state) {
@@ -112,7 +125,7 @@ static void test_stream_rejects_truncated_body(void **state) {
                    sizeof(request_text) - 1U);
   rewind(stream);
   YAP_V2_core_http_request_init(&request);
-  assert_int_equal(YAP_V2_core_http_read_request(stream, 3U, &request),
+  assert_int_equal(YAP_V2_core_http_read_request(stream, 3U, 3U, &request),
                    YAP_V2_CORE_HTTP_IO_ERROR);
   assert_null(request.body);
   YAP_V2_core_http_request_free(&request);

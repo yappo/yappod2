@@ -48,7 +48,8 @@ Connection: close
 ```
 
 `Host`もHTTP/1.1の必須ヘッダーとして検証します。`Content-Type`がない場合またはJSON以外の場合は415、
-`Content-Length`がない場合、0の場合、不正な場合は400です。要求本文の上限は1 MiBです。上限超過は413となります。
+`Content-Length`がない場合、0の場合、不正な場合は400です。検索と取得の要求本文上限は1 MiBです。
+文書更新は`ingest_max_body_bytes`を使い、デフォルト64 MiB、最大256 MiBです。上限超過は413となります。
 
 要求行1行の上限は8192バイト、要求ヘッダー全体の上限は65536バイトです。重複した`Host`、`Content-Type`、
 `Content-Length`、`Authorization`、`Transfer-Encoding`、HTTP/1.1以外の要求は受理しません。
@@ -130,11 +131,14 @@ coreは保持中のスナップショットとディスク上の運用状態を�
 
 ## 処理上限と期限
 
-frontとcoreは、それぞれ`max_inflight`と`max_inflight_bytes`の処理枠を持ちます。core側は受理したJSON本文の長さを
-数えます。上限を超えると`503 overloaded`です。
+frontとcoreは、検索、取得、本文断片準備について、それぞれ`max_inflight`と
+`max_inflight_bytes`の処理枠を持ちます。文書更新はこの枠を消費せず、frontとcoreでそれぞれ
+専用の1件分の処理枠を使います。いずれかの処理枠を超えると`503 overloaded`です。
 
-`request_timeout_ms`は1〜60000ミリ秒で、デフォルトは5000ミリ秒です。frontのlibcurlクライアントは接続と要求全体の
-期限にこの値を使います。coreも受理したソケットの送受信期限に同じ値を使います。自動再試行は行いません。
+通常のJSON本文上限は1 MiBです。`POST /v2/documents:batch`だけは
+`ingest_max_body_bytes`を使い、デフォルト64 MiB、設定可能な最大値256 MiBです。
+通常要求には`request_timeout_ms`、文書更新には`ingest_timeout_ms`を適用します。
+デフォルトはそれぞれ5000ミリ秒と60000ミリ秒です。自動再試行は行いません。
 
 ## 移行と互換性
 

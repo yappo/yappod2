@@ -23,6 +23,8 @@ export interface DaemonConfig {
   maxInflight: number;
   maxInflightBytes: number;
   requestTimeoutMs: number;
+  ingestMaxBodyBytes: number;
+  ingestTimeoutMs: number;
   writeToken?: string;
 }
 
@@ -186,7 +188,8 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
   const daemon = optionalTable(value, "daemon");
   onlyKeys(daemon, [
     "run_directory", "core_host", "core_port", "front_host", "front_port", "max_inflight",
-    "worker_threads", "max_inflight_bytes", "request_timeout_ms", "write_token",
+    "worker_threads", "max_inflight_bytes", "request_timeout_ms", "ingest_max_body_bytes",
+    "ingest_timeout_ms", "write_token",
   ], "daemon");
   const writeToken = optionalString(daemon.write_token, "daemon.write_token");
   if (writeToken && (writeToken.length < 16 || writeToken.length > 255 || /[\u0000-\u0020\u007f]/.test(writeToken))) {
@@ -202,6 +205,10 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
     maxInflight: integer(daemon.max_inflight, 4, 1, 1024, "daemon.max_inflight"),
     maxInflightBytes: integer(daemon.max_inflight_bytes, 4194304, 1, 1073741824, "daemon.max_inflight_bytes"),
     requestTimeoutMs: integer(daemon.request_timeout_ms, 5000, 1, 60000, "daemon.request_timeout_ms"),
+    ingestMaxBodyBytes: integer(daemon.ingest_max_body_bytes, 67108864, 1, 268435456,
+                                "daemon.ingest_max_body_bytes"),
+    ingestTimeoutMs: integer(daemon.ingest_timeout_ms, 60000, 1, 600000,
+                             "daemon.ingest_timeout_ms"),
     writeToken,
   };
 }

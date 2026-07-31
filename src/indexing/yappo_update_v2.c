@@ -316,18 +316,15 @@ static void free_operations(YAP_V2_INGEST_OPERATION *operations, size_t count) {
 static int parse_lines(const unsigned char *input, size_t input_bytes,
                        YAP_V2_INGEST_OPERATION **operations_out, size_t *count_out,
                        char *error, size_t error_size) {
-  YAP_V2_INGEST_OPERATION *operations = NULL; size_t count = 0U, offset = 0U;
+  YAP_V2_INGEST_OPERATION *operations; size_t count = 0U, offset = 0U;
+  operations = calloc(YAP_V2_UPDATE_MAX_OPERATIONS, sizeof(*operations));
+  if (operations == NULL) return YAP_V2_ALLOCATION_FAILED;
   while (offset < input_bytes) {
     size_t end = offset; int status;
     while (end < input_bytes && input[end] != '\n') end++;
     if (end > offset && input[end - 1U] == '\r') end--;
     if (end == offset) { set_error(error, error_size, "empty NDJSON records are not allowed"); free_operations(operations, count); return YAP_V2_INVALID_FORMAT; }
-    if (count == YAP_V2_UPDATE_MAX_OPERATIONS) { set_error(error, error_size, "batch exceeds 100 operations"); free_operations(operations, count); return YAP_V2_OUT_OF_RANGE; }
-    {
-      YAP_V2_INGEST_OPERATION *next = realloc(operations, (count + 1U) * sizeof(*operations));
-      if (next == NULL) { free_operations(operations, count); return YAP_V2_ALLOCATION_FAILED; }
-      operations = next;
-    }
+    if (count == YAP_V2_UPDATE_MAX_OPERATIONS) { set_error(error, error_size, "batch exceeds 10000 operations"); free_operations(operations, count); return YAP_V2_OUT_OF_RANGE; }
     status = YAP_V2_ingest_parse_ndjson((const char *)input + offset, end - offset, &operations[count], error, error_size);
     if (status != YAP_V2_OK) { free_operations(operations, count); return status; }
     count++; offset = end;
@@ -358,17 +355,14 @@ int YAP_V2_update_json_batch(const char *index_dir, const unsigned char *input,
   root = yyjson_doc_get_root(document); array = yyjson_is_obj(root) ? yyjson_obj_get(root, "operations") : NULL;
   if (!yyjson_is_obj(root) || yyjson_obj_size(root) != 1U || !yyjson_is_arr(array) ||
       (count = yyjson_arr_size(array)) == 0U || count > YAP_V2_UPDATE_MAX_OPERATIONS) {
-    set_error(error, error_size, "request must contain 1 to 100 operations"); goto done;
+    set_error(error, error_size, "request must contain 1 to 10000 operations"); goto done;
   }
   operations = calloc(count, sizeof(*operations));
   if (operations == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
   yyjson_arr_iter_init(array, &iterator); count = 0U;
   while ((item = yyjson_arr_iter_next(&iterator)) != NULL) {
-    char *json; size_t bytes;
     if (!yyjson_is_obj(item)) { set_error(error, error_size, "each operation must be an object"); goto done; }
-    json = yyjson_val_write(item, YYJSON_WRITE_NOFLAG, &bytes);
-    if (json == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
-    status = YAP_V2_ingest_parse_ndjson(json, bytes, &operations[count], error, error_size); free(json);
+    status = YAP_V2_ingest_parse_json_value(item, &operations[count], error, error_size);
     if (status != YAP_V2_OK) goto done;
     count++;
   }
@@ -377,17 +371,57 @@ done:
   free_operations(operations, count); yyjson_doc_free(document); return status;
 }
 
-static int read_file(const char *path, unsigned char **data_out, size_t *bytes_out) {
-  FILE *file; long length; unsigned char *data;
-  file = fopen(path, "rb"); if (file == NULL) return -1;
-  if (fseek(file, 0L, SEEK_END) != 0 || (length = ftell(file)) < 0L || fseek(file, 0L, SEEK_SET) != 0) { fclose(file); return -1; }
-  data = length == 0L ? malloc(1U) : malloc((size_t)length);
-  if (data == NULL || (length > 0L && fread(data, 1U, (size_t)length, file) != (size_t)length) || fclose(file) != 0) { free(data); return -1; }
-  *data_out = data; *bytes_out = (size_t)length; return 0;
+static int read_operations(const char *path, YAP_V2_INGEST_OPERATION **operations_out,
+                           size_t *count_out, char *error, size_t error_size) {
+  FILE *file = fopen(path, "r");
+  YAP_V2_INGEST_OPERATION *operations;
+  char *line = NULL;
+  size_t line_capacity = 0U, count = 0U;
+  ssize_t line_bytes;
+  int status = YAP_V2_OK;
+  if (file == NULL) return YAP_V2_IO_ERROR;
+  operations = calloc(YAP_V2_UPDATE_MAX_OPERATIONS, sizeof(*operations));
+  if (operations == NULL) { fclose(file); return YAP_V2_ALLOCATION_FAILED; }
+  while ((line_bytes = getline(&line, &line_capacity, file)) >= 0) {
+    size_t record_bytes = (size_t)line_bytes;
+    while (record_bytes > 0U &&
+           (line[record_bytes - 1U] == '\n' || line[record_bytes - 1U] == '\r'))
+      record_bytes--;
+    if (record_bytes == 0U) {
+      set_error(error, error_size, "empty NDJSON records are not allowed");
+      status = YAP_V2_INVALID_FORMAT;
+      break;
+    }
+    if (count == YAP_V2_UPDATE_MAX_OPERATIONS) {
+      set_error(error, error_size, "batch exceeds 10000 operations");
+      status = YAP_V2_OUT_OF_RANGE;
+      break;
+    }
+    status = YAP_V2_ingest_parse_ndjson(line, record_bytes, &operations[count],
+                                        error, error_size);
+    if (status != YAP_V2_OK) break;
+    count++;
+  }
+  if (status == YAP_V2_OK && ferror(file)) status = YAP_V2_IO_ERROR;
+  if (status == YAP_V2_OK && count == 0U) {
+    set_error(error, error_size, "batch must contain at least one operation");
+    status = YAP_V2_INVALID_FORMAT;
+  }
+  free(line);
+  if (fclose(file) != 0 && status == YAP_V2_OK) status = YAP_V2_IO_ERROR;
+  if (status != YAP_V2_OK) {
+    free_operations(operations, count);
+    return status;
+  }
+  *operations_out = operations;
+  *count_out = count;
+  return YAP_V2_OK;
 }
 
 int YAP_V2_update_main(int argc, char **argv) {
-  const char *input_path = NULL, *config_path = NULL, *index_option = NULL; unsigned char *data = NULL; size_t bytes = 0U;
+  const char *input_path = NULL, *config_path = NULL, *index_option = NULL;
+  YAP_V2_INGEST_OPERATION *operations = NULL;
+  size_t operation_count = 0U;
   YAP_APPLICATION_CONFIG application;
   YAP_V2_UPDATE_RESULT result; char error[256] = {0}; int i, status;
   for (i = 1; i < argc; i++) {
@@ -406,9 +440,15 @@ int YAP_V2_update_main(int argc, char **argv) {
   if (YAP_application_config_load(config_path, &application, error, sizeof(error)) != YAP_V2_OK) {
     fprintf(stderr, "Config error: %s\n", error); return EXIT_FAILURE;
   }
-  if (read_file(input_path, &data, &bytes) != 0) { perror("update input"); return EXIT_FAILURE; }
+  status = read_operations(input_path, &operations, &operation_count, error, sizeof(error));
+  if (status != YAP_V2_OK) {
+    fprintf(stderr, "Update input failed: %s (%s)\n", error, YAP_V2_status_string(status));
+    return EXIT_FAILURE;
+  }
   YAP_V2_update_result_init(&result);
-  status = YAP_V2_update_ndjson(application.index_directory, data, bytes, &result, error, sizeof(error)); free(data);
+  status = YAP_V2_update_apply(application.index_directory, operations, operation_count,
+                               &result, error, sizeof(error));
+  free_operations(operations, operation_count);
   if (status != YAP_V2_OK) { fprintf(stderr, "Update failed: %s (%s)\n", error, YAP_V2_status_string(status)); return EXIT_FAILURE; }
   printf("{\"generation\":%llu,\"accepted\":%zu,\"upserts\":%zu,\"deletes\":%zu,\"segment_ids\":[",
          (unsigned long long)result.generation, result.accepted, result.upserts, result.deletes);

@@ -197,6 +197,8 @@ worker_threads = 16
 max_inflight = 4
 max_inflight_bytes = 4194304
 request_timeout_ms = 5000
+ingest_max_body_bytes = 67108864
+ingest_timeout_ms = 60000
 ```
 
 `filterable_fields`は、入力の`metadata`にある同名フィールドを検索時の絞り込み対象へします。省略または空配列にすると、
@@ -276,10 +278,10 @@ authorization_token_env = "EMBEDDING_API_KEY"
   --input operations.ndjson
 ```
 
-NDJSONの1行を1件の更新操作として扱い、`update`は1回の実行で1〜100件を受け付けます。たとえば、文書を
+NDJSONの1行を1件の更新操作として扱い、`update`は1回の実行で1〜10000件を受け付けます。たとえば、文書を
 3件登録して2件削除する入力は5件です。入力全体を検証してから1つの世代として公開するため、途中の
 行までだけが検索可能になることはありません。同じ文書IDを更新すると新しいセグメントが優先され、削除操作は
-古い文書を検索結果から隠します。大量の初期データには、この上限がない`build`を使用してください。
+古い文書を検索結果から隠します。大量の初期データには、入力を継続して読み込む`build`を使用してください。
 
 不要になった古いレコードをまとめる場合はコンパクションを実行します。
 

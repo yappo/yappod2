@@ -261,6 +261,37 @@ static void test_build_batch_uses_the_same_split_planner(void **state) {
   ytest_env_destroy(&env);
 }
 
+static void test_update_accepts_more_than_legacy_limit_and_rejects_over_max(void **state) {
+  ytest_env_t env;
+  YAP_V2_INGEST_OPERATION operations[101];
+  YAP_V2_UPDATE_RESULT result;
+  char ids[101][32], error[256] = {0};
+  size_t i, segments;
+  (void)state;
+  assert_int_equal(YAP_V2_UPDATE_MAX_OPERATIONS, YAP_V2_BUILD_BATCH_OPERATIONS);
+  assert_int_equal(YAP_V2_UPDATE_MAX_OPERATIONS, 10000U);
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  memset(operations, 0, sizeof(operations));
+  for (i = 0U; i < 101U; i++) {
+    assert_true(snprintf(ids[i], sizeof(ids[i]), "delete-%zu", i) > 0);
+    operations[i].kind = YAP_V2_INGEST_DELETE;
+    operations[i].id = ids[i];
+  }
+  YAP_V2_update_result_init(&result);
+  assert_int_equal(YAP_V2_update_apply(env.tmp_root, operations, 101U, &result,
+                                      error, sizeof(error)), YAP_V2_OK);
+  assert_int_equal(result.accepted, 101U);
+  assert_int_equal(result.deletes, 101U);
+  assert_int_equal(manifest_generation(&env, &segments), 2U);
+  YAP_V2_update_result_free(&result);
+  assert_int_equal(YAP_V2_update_apply(env.tmp_root, operations,
+                                      YAP_V2_UPDATE_MAX_OPERATIONS + 1U, &result,
+                                      error, sizeof(error)), YAP_V2_INVALID_ARGUMENT);
+  assert_int_equal(manifest_generation(&env, &segments), 2U);
+  ytest_env_destroy(&env);
+}
+
 static void assert_manifest_shape(ytest_env_t *env, uint64_t generation, size_t segment_count,
                                   size_t tombstone_count) {
   char path[PATH_MAX]; YAP_V2_MANIFEST manifest;
@@ -425,6 +456,7 @@ int main(void) {
     cmocka_unit_test(test_update_split_is_atomic_and_cleans_failed_segments),
     cmocka_unit_test(test_single_document_capacity_error_is_detailed),
     cmocka_unit_test(test_build_batch_uses_the_same_split_planner),
+    cmocka_unit_test(test_update_accepts_more_than_legacy_limit_and_rejects_over_max),
     cmocka_unit_test(test_compaction_live_only_preserves_all_search_modes),
     cmocka_unit_test(test_compaction_splits_output_and_builds_segment_local_bm25_stats),
     cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)

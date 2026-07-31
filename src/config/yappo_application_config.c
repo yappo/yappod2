@@ -193,7 +193,7 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   static const char *const metadata_keys[] = {"filterable_fields", NULL};
   static const char *const daemon_keys[] = {"run_directory", "core_host", "core_port",
     "front_host", "front_port", "worker_threads", "max_inflight", "max_inflight_bytes",
-    "request_timeout_ms", "write_token", NULL};
+    "request_timeout_ms", "ingest_max_body_bytes", "ingest_timeout_ms", "write_token", NULL};
   FILE *file;
   toml_table_t *root = NULL, *index, *tokenizer, *chunking, *vector, *metadata, *daemon;
   toml_datum_t enabled, metric, token;
@@ -312,6 +312,16 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   status = read_uint32(daemon, "request_timeout_ms", &value, 1U, 60000U, 0, error, error_size);
   if (status != YAP_V2_OK) goto done;
   config->runtime_policy.request_timeout_ms = value;
+  value = (uint32_t)config->runtime_policy.ingest_max_body_bytes;
+  status = read_uint32(daemon, "ingest_max_body_bytes", &value, 1U,
+                       YAP_V2_MAX_INGEST_BODY_BYTES, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.ingest_max_body_bytes = value;
+  value = config->runtime_policy.ingest_timeout_ms;
+  status = read_uint32(daemon, "ingest_timeout_ms", &value, 1U,
+                       YAP_V2_MAX_INGEST_TIMEOUT_MS, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->runtime_policy.ingest_timeout_ms = value;
   token = toml_string_in(daemon, "write_token");
   if (!token.ok && toml_key_exists(daemon, "write_token")) { set_error(error, error_size, "daemon.write_token must be a string"); status = YAP_V2_INVALID_FORMAT; goto done; }
   if (token.ok) {

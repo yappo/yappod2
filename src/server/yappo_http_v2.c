@@ -713,11 +713,14 @@ static int http_execute_loaded(HTTP_RUNTIME *runtime, const char *index_dir,
   yyjson_doc *document = NULL; yyjson_val *root;
   YAP_V2_QUERY_REQUEST request; YAP_V2_RETRIEVE_OPTIONS retrieve;
   YAP_V2_QUERY_HIT *hits = NULL; float *vector = NULL; size_t hit_count = 0U, offset = 0U;
-  size_t page_limit, execution_limit, page_count; unsigned char query_digest[32]; int status, parsed;
+  size_t page_limit, execution_limit, page_count, body_limit;
+  unsigned char query_digest[32]; int status, parsed;
   if (http_status == NULL || response == NULL || response_bytes == NULL) return -1;
   memset(&request, 0, sizeof(request));
   *http_status = 500; *response = NULL; *response_bytes = 0U;
-  if (index_dir == NULL || body == NULL || body_bytes == 0U || body_bytes > YAP_V2_HTTP_MAX_BODY_BYTES ||
+  body_limit = operation == YAP_V2_HTTP_INGEST ?
+               YAP_V2_HTTP_MAX_INGEST_BODY_BYTES : YAP_V2_HTTP_MAX_BODY_BYTES;
+  if (index_dir == NULL || body == NULL || body_bytes == 0U || body_bytes > body_limit ||
       (operation != YAP_V2_HTTP_SEARCH && operation != YAP_V2_HTTP_RETRIEVE &&
        operation != YAP_V2_HTTP_INGEST && operation != YAP_V2_HTTP_PREPARE)) return -1;
   if (operation == YAP_V2_HTTP_INGEST) {

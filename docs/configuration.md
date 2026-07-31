@@ -121,10 +121,16 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2コマンドではなし | Yappod2サーバーでは必須 | frontの待ち受け先であり、search-webサーバーの接続先です。アプリケーションTOMLを使わず`--index`だけでfrontを起動した場合は待ち受けホストを指定できません。 |
 | `front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2コマンドではなし | Yappod2サーバーでは必須 | frontのHTTPポートです。 |
 | `worker_threads` | 整数 | 1〜1024 | `16` | 任意 | coreとfrontが、それぞれ接続の受け付けと処理に使用するワーカースレッド数です。両プロセスへ同じ値を適用します。 |
-| `max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreが、それぞれ同時に処理中として保持するリクエストの件数上限です。どちらかで上限に達すると`503 overloaded`になります。ヘルスチェックとメトリクスはこの制限の対象外です。 |
-| `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontは処理中のHTTP本文、coreは処理中の検索・更新データについて、それぞれの合計バイト数を制限します。1件の大きさが残量を超える場合も`503 overloaded`になります。 |
-| `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | frontが受理したクライアントソケット、frontのlibcurlによるcoreへの接続と要求全体、coreが受理したソケットの送受信期限です。LLMを待つ時間ではありません。 |
+| `max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreが、それぞれ同時に処理中として保持する検索、取得、本文断片準備の件数上限です。どちらかで上限に達すると`503 overloaded`になります。ヘルスチェック、メトリクス、文書更新はこの処理枠の対象外です。 |
+| `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreが処理中として保持する検索、取得、本文断片準備の本文合計バイト数です。1件の大きさが残量を超える場合も`503 overloaded`になります。 |
+| `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備について、frontが受理したクライアントソケット、frontからcoreへの内部HTTP要求、coreが受理したソケットへ適用する期限です。 |
+| `ingest_max_body_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | `POST /v2/documents:batch`の本文上限です。frontとcoreの両方で適用します。検索、取得、本文断片準備の本文上限は1 MiBのままです。 |
+| `ingest_timeout_ms` | 整数 | 1〜600000 | `60000` | 任意 | 文書更新について、frontが受理したクライアントソケット、frontからcoreへの内部HTTP要求、coreが応答を返すまでに適用する期限です。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | `POST /v2/documents:batch`をBearer認証します。省略時は更新APIを認証なしで受け付けます。外部API用の`authorization_token_env`とは別の機能です。 |
+
+文書更新はfrontとcoreでそれぞれ専用の1件分の処理枠を使います。更新が進行中でも、検索用の
+`max_inflight`と`max_inflight_bytes`は消費しません。別の更新が同時に到着した場合は
+`503 overloaded`を返します。
 
 ## `[build]`
 
@@ -226,7 +232,8 @@ local-filesの`[input]`、`[output]`、`[prepare]`、`[extract]`、`[formatters]
 
 | キー | データ型 | 入力可能値 | デフォルト値 | 必須 | 説明 |
 |---|---|---|---|---|---|
-| `daemon.request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | frontのlibcurlによるcoreへの接続と内部HTTP要求全体、およびcoreが受理したソケットの送受信期限です。core停止、内部処理の遅延、ネットワーク障害で期限を超える可能性があります。 |
+| `daemon.request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備に適用するfront/core間の内部HTTPとソケットの期限です。 |
+| `daemon.ingest_timeout_ms` | 整数 | 1〜600000 | `60000` | 任意 | 文書更新に適用するfront/core間の内部HTTPとソケットの期限です。 |
 | `web.yappod_timeout_ms` | 整数 | 1〜600000 | `5000` | 任意 | search-webサーバーがfrontの検索・取得・登録のHTTP応答を待つ時間です。 |
 | `web.startup_timeout_ms` | 整数 | 100〜600000 | `8000` | 任意 | search-webの起動スクリプトがsearch-webサーバーと任意の模擬サービスを確認する時間です。 |
 | `embedding.timeout_ms` | 整数 | search-webとWikipediaでは1000〜600000。local-filesでは1以上 | `60000` | 任意 | 埋め込みAPIの1リクエストを待つ時間です。接続先停止、大きいバッチ、モデルの読み込み待ちで期限を超える可能性があります。 |

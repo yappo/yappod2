@@ -32,14 +32,25 @@ static void test_policy_defaults_and_strict_config(void **state) {
   assert_int_equal(YAP_V2_runtime_policy_load_config(&policy, NULL, error, sizeof(error)), YAP_V2_OK);
   assert_int_equal(policy.worker_threads, YAP_V2_DEFAULT_WORKER_THREADS);
   assert_int_equal(policy.max_inflight, 4U); assert_int_equal(policy.max_inflight_bytes, 4U * 1024U * 1024U);
-  assert_int_equal(policy.request_timeout_ms, 5000U); assert_int_equal(policy.write_token_bytes, 0U);
-  valid = write_config("[daemon]\nworker_threads=3\nmax_inflight=8\nmax_inflight_bytes=8192\nrequest_timeout_ms=2500\n");
+  assert_int_equal(policy.request_timeout_ms, 5000U);
+  assert_int_equal(policy.ingest_max_body_bytes, 64U * 1024U * 1024U);
+  assert_int_equal(policy.ingest_timeout_ms, 60000U);
+  assert_int_equal(policy.write_token_bytes, 0U);
+  valid = write_config("[daemon]\nworker_threads=3\nmax_inflight=8\nmax_inflight_bytes=8192\n"
+                       "request_timeout_ms=2500\ningest_max_body_bytes=33554432\n"
+                       "ingest_timeout_ms=120000\n");
   assert_int_equal(YAP_V2_runtime_policy_load_config(&policy, valid, error, sizeof(error)), YAP_V2_OK);
   assert_int_equal(policy.worker_threads, 3U);
   assert_int_equal(policy.max_inflight, 8U); assert_int_equal(policy.max_inflight_bytes, 8192U);
-  assert_int_equal(policy.request_timeout_ms, 2500U); unlink(valid); free(valid);
+  assert_int_equal(policy.request_timeout_ms, 2500U);
+  assert_int_equal(policy.ingest_max_body_bytes, 33554432U);
+  assert_int_equal(policy.ingest_timeout_ms, 120000U); unlink(valid); free(valid);
   invalid_limit = write_config("[daemon]\nmax_inflight=0\n");
   assert_int_equal(YAP_V2_runtime_policy_load_config(&policy, invalid_limit, error, sizeof(error)), YAP_V2_INVALID_FORMAT);
+  unlink(invalid_limit); free(invalid_limit);
+  invalid_limit = write_config("[daemon]\ningest_max_body_bytes=268435457\n");
+  assert_int_equal(YAP_V2_runtime_policy_load_config(&policy, invalid_limit, error, sizeof(error)),
+                   YAP_V2_INVALID_FORMAT);
   unlink(invalid_limit); free(invalid_limit);
   invalid_limit = write_config("[daemon]\nworker_threads=1025\n");
   assert_int_equal(YAP_V2_runtime_policy_load_config(&policy, invalid_limit, error, sizeof(error)),
