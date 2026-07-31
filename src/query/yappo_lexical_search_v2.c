@@ -12,7 +12,7 @@ typedef struct {
   YAP_V2_POSTING *postings;
   size_t count;
   size_t index;
-  size_t type_frequency[2];
+  uint64_t type_frequency[2];
   YAP_V2_POSTING_ITERATOR blocks;
 } TERM_STATE;
 
@@ -40,37 +40,37 @@ static int state_pointer_compare(const void *left, const void *right) {
   return a_key < b_key ? -1 : a_key > b_key ? 1 : 0;
 }
 
-static double average_length(const YAP_V2_LEXICAL_SEGMENT *segment, uint32_t object_type,
-                             size_t field) {
-  uint64_t count = field == 2U ? segment->passage_count : segment->document_count;
+static double average_length(const YAP_V2_LEXICAL_CORPUS_STATS *stats,
+                             uint32_t object_type, size_t field) {
+  uint64_t count = field == 2U ? stats->passage_count : stats->document_count;
   if ((field == 2U && object_type != YAP_V2_LEXICAL_PASSAGE) ||
       (field != 2U && object_type != YAP_V2_LEXICAL_DOCUMENT) || count == 0U)
     return 1.0;
-  return segment->field_token_count[field] == 0U
+  return stats->field_token_count[field] == 0U
            ? 1.0
-           : (double)segment->field_token_count[field] / (double)count;
+           : (double)stats->field_token_count[field] / (double)count;
 }
 
-static double idf_value(size_t frequency, size_t count) {
+static double idf_value(uint64_t frequency, uint64_t count) {
   if (frequency == 0U || count == 0U || frequency > count)
     return 0.0;
   return log1p(((double)count - (double)frequency + 0.5) / ((double)frequency + 0.5));
 }
 
-static double posting_score(const YAP_V2_LEXICAL_SEGMENT *segment, const TERM_STATE *state,
+static double posting_score(const YAP_V2_LEXICAL_CORPUS_STATS *stats, const TERM_STATE *state,
                             const YAP_V2_POSTING *posting,
                             const YAP_V2_LEXICAL_SEARCH_OPTIONS *options) {
   double weighted_tf = 0.0;
-  size_t object_count = posting->object_type == YAP_V2_LEXICAL_DOCUMENT
-                          ? (size_t)segment->document_count
-                          : (size_t)segment->passage_count;
+  uint64_t object_count = posting->object_type == YAP_V2_LEXICAL_DOCUMENT
+                            ? stats->document_count
+                            : stats->passage_count;
   size_t field;
   for (field = 0U; field < 3U; field++) {
     double average;
     double norm;
     if (posting->term_frequency[field] == 0U)
       continue;
-    average = average_length(segment, posting->object_type, field);
+    average = average_length(stats, posting->object_type, field);
     norm = (1.0 - YAP_BM25_DEFAULT_B) +
            YAP_BM25_DEFAULT_B * ((double)posting->field_length[field] / average);
     weighted_tf += options->field_boost[field] * (double)posting->term_frequency[field] / norm;
@@ -81,7 +81,8 @@ static double posting_score(const YAP_V2_LEXICAL_SEGMENT *segment, const TERM_ST
          (weighted_tf * (YAP_BM25_DEFAULT_K1 + 1.0)) / (YAP_BM25_DEFAULT_K1 + weighted_tf);
 }
 
-static double block_upper_bound(const YAP_V2_LEXICAL_SEGMENT *segment, const TERM_STATE *state,
+static double block_upper_bound(const YAP_V2_LEXICAL_CORPUS_STATS *stats,
+                                const TERM_STATE *state,
                                 const YAP_V2_LEXICAL_SEARCH_OPTIONS *options) {
   YAP_V2_POSTINGS_BLOCK block;
   size_t block_index = state->index / YAP_V2_POSTINGS_BLOCK_SIZE;
@@ -91,8 +92,8 @@ static double block_upper_bound(const YAP_V2_LEXICAL_SEGMENT *segment, const TER
     return 0.0;
   for (object_type = YAP_V2_LEXICAL_DOCUMENT; object_type <= YAP_V2_LEXICAL_PASSAGE;
        object_type++) {
-    size_t object_count = object_type == YAP_V2_LEXICAL_DOCUMENT ? (size_t)segment->document_count
-                                                                 : (size_t)segment->passage_count;
+    uint64_t object_count = object_type == YAP_V2_LEXICAL_DOCUMENT ? stats->document_count
+                                                                   : stats->passage_count;
     double best_weight = 0.0;
     double weighted_tf;
     double score;
@@ -100,7 +101,7 @@ static double block_upper_bound(const YAP_V2_LEXICAL_SEGMENT *segment, const TER
     if (options->object_type != 0U && options->object_type != object_type)
       continue;
     for (field = 0U; field < 3U; field++) {
-      double average = average_length(segment, object_type, field);
+      double average = average_length(stats, object_type, field);
       double norm = (1.0 - YAP_BM25_DEFAULT_B) +
                     YAP_BM25_DEFAULT_B * ((double)block.min_field_length / average);
       double weight = options->field_boost[field] / norm;
@@ -215,6 +216,10 @@ void YAP_V2_lexical_query_plan_free(YAP_V2_LEXICAL_QUERY_PLAN *plan) {
     return;
   free(plan->terms);
   free(plan->token_terms);
+  free(plan->segments);
+  free(plan->segment_terms);
+  free(plan->type_frequency[0]);
+  free(plan->type_frequency[1]);
   YAP_V2_token_sequence_free(&plan->tokens);
   memset(plan, 0, sizeof(*plan));
 }
@@ -274,6 +279,86 @@ static int query_plan_valid(const YAP_V2_LEXICAL_QUERY_PLAN *plan) {
   return 1;
 }
 
+static void query_plan_bindings_free(YAP_V2_LEXICAL_QUERY_PLAN *plan) {
+  free(plan->segments);
+  free(plan->segment_terms);
+  free(plan->type_frequency[0]);
+  free(plan->type_frequency[1]);
+  plan->segments = NULL;
+  plan->segment_terms = NULL;
+  plan->type_frequency[0] = NULL;
+  plan->type_frequency[1] = NULL;
+  plan->segment_count = 0U;
+}
+
+int YAP_V2_lexical_query_plan_bind(YAP_V2_LEXICAL_QUERY_PLAN *plan,
+                                   const YAP_V2_LEXICAL_SEGMENT *const *segments,
+                                   size_t segment_count) {
+  size_t s, term_index, slots;
+  int status = YAP_V2_OK;
+  if (plan == NULL || !query_plan_valid(plan) || segments == NULL || segment_count == 0U)
+    return YAP_V2_INVALID_ARGUMENT;
+  query_plan_bindings_free(plan);
+  if (plan->term_count == 0U) {
+    plan->segments = (const YAP_V2_LEXICAL_SEGMENT **)calloc(segment_count,
+                                                             sizeof(*plan->segments));
+    if (plan->segments == NULL)
+      return YAP_V2_ALLOCATION_FAILED;
+    for (s = 0U; s < segment_count; s++)
+      plan->segments[s] = segments[s];
+    plan->segment_count = segment_count;
+    return YAP_V2_OK;
+  }
+  if (segment_count > SIZE_MAX / plan->term_count)
+    return YAP_V2_OUT_OF_RANGE;
+  slots = segment_count * plan->term_count;
+  plan->segments = (const YAP_V2_LEXICAL_SEGMENT **)calloc(segment_count,
+                                                           sizeof(*plan->segments));
+  plan->segment_terms = (const YAP_V2_TERM_ENTRY **)calloc(slots,
+                                                           sizeof(*plan->segment_terms));
+  plan->type_frequency[0] = (uint64_t *)calloc(plan->term_count,
+                                               sizeof(*plan->type_frequency[0]));
+  plan->type_frequency[1] = (uint64_t *)calloc(plan->term_count,
+                                               sizeof(*plan->type_frequency[1]));
+  if (plan->segments == NULL || plan->segment_terms == NULL ||
+      plan->type_frequency[0] == NULL || plan->type_frequency[1] == NULL) {
+    query_plan_bindings_free(plan);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  plan->segment_count = segment_count;
+  for (s = 0U; status == YAP_V2_OK && s < segment_count; s++) {
+    plan->segments[s] = segments[s];
+    if (segments[s] == NULL)
+      continue;
+    for (term_index = 0U; status == YAP_V2_OK && term_index < plan->term_count;
+         term_index++) {
+      const YAP_V2_TERM_ENTRY *term = YAP_V2_lexical_term_find(segments[s],
+                                                               plan->terms[term_index]);
+      uint32_t object_type;
+      plan->segment_terms[s * plan->term_count + term_index] = term;
+      if (term == NULL)
+        continue;
+      for (object_type = YAP_V2_LEXICAL_DOCUMENT;
+           status == YAP_V2_OK && object_type <= YAP_V2_LEXICAL_PASSAGE;
+           object_type++) {
+        uint64_t frequency;
+        uint64_t *total = &plan->type_frequency[object_type - 1U][term_index];
+        status = YAP_V2_lexical_term_type_frequency(segments[s], term, object_type,
+                                                    &frequency);
+        if (status == YAP_V2_OK) {
+          if (*total > UINT64_MAX - frequency)
+            status = YAP_V2_OUT_OF_RANGE;
+          else
+            *total += frequency;
+        }
+      }
+    }
+  }
+  if (status != YAP_V2_OK)
+    query_plan_bindings_free(plan);
+  return status;
+}
+
 static void states_free(TERM_STATE *states, size_t count) {
   size_t i;
   for (i = 0U; i < count; i++)
@@ -281,16 +366,18 @@ static void states_free(TERM_STATE *states, size_t count) {
   free(states);
 }
 
-int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
-                                   const YAP_V2_LEXICAL_QUERY_PLAN *plan,
+int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_QUERY_PLAN *plan,
+                                   size_t segment_index,
+                                   const YAP_V2_LEXICAL_CORPUS_STATS *stats,
                                    const YAP_V2_LEXICAL_SEARCH_OPTIONS *options,
                                    YAP_V2_LEXICAL_HIT *hits, size_t hit_capacity,
                                    size_t *hit_count) {
   TERM_STATE *states = NULL;
   TERM_STATE **active = NULL;
+  const YAP_V2_LEXICAL_SEGMENT *segment;
   size_t state_count = 0U, result_count = 0U, i;
   int status;
-  if (segment == NULL || plan == NULL || !query_plan_valid(plan) || options == NULL ||
+  if (plan == NULL || !query_plan_valid(plan) || stats == NULL || options == NULL ||
       hit_count == NULL ||
       options->top_k == 0U || options->top_k > hit_capacity || hits == NULL ||
       (options->object_type != 0U && options->object_type != YAP_V2_LEXICAL_DOCUMENT &&
@@ -303,6 +390,15 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
   *hit_count = 0U;
   if (plan->tokens.token_count == 0U)
     return YAP_V2_OK;
+  if (plan->segments == NULL || plan->segment_terms == NULL ||
+      plan->type_frequency[0] == NULL || plan->type_frequency[1] == NULL ||
+      segment_index >= plan->segment_count || plan->segments[segment_index] == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  segment = plan->segments[segment_index];
+  for (i = 0U; i < plan->term_count; i++)
+    if (plan->type_frequency[0][i] > stats->document_count ||
+        plan->type_frequency[1][i] > stats->passage_count)
+      return YAP_V2_CONFLICT;
   states = (TERM_STATE *)calloc(plan->term_count, sizeof(*states));
   active = (TERM_STATE **)calloc(plan->term_count, sizeof(*active));
   if (states == NULL || active == NULL) {
@@ -312,7 +408,7 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
   for (i = 0U; i < plan->term_count; i++) {
     const YAP_V2_TERM_ENTRY *term;
     size_t existing;
-    term = YAP_V2_lexical_term_find(segment, plan->terms[i]);
+    term = plan->segment_terms[segment_index * plan->term_count + i];
     if (term == NULL) {
       if (options->query_operator == YAP_V2_QUERY_AND || options->phrase) {
         status = YAP_V2_OK;
@@ -322,6 +418,8 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
     }
     states[i].term = term;
     states[i].count = (size_t)term->document_frequency;
+    states[i].type_frequency[0] = plan->type_frequency[0][i];
+    states[i].type_frequency[1] = plan->type_frequency[1][i];
     states[i].postings = (YAP_V2_POSTING *)calloc(states[i].count,
                                                   sizeof(YAP_V2_POSTING));
     if (states[i].postings == NULL) {
@@ -329,10 +427,8 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
       goto done;
     }
     YAP_V2_posting_iterator_init(segment, term, &states[i].blocks);
-    for (existing = 0U; existing < states[i].count; existing++) {
+    for (existing = 0U; existing < states[i].count; existing++)
       YAP_V2_posting_iterator_next(&states[i].blocks, &states[i].postings[existing]);
-      states[i].type_frequency[states[i].postings[existing].object_type - 1U]++;
-    }
     states[i].blocks.index = 0U;
     state_count++;
   }
@@ -369,7 +465,7 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
       pivot = active_count - 1U;
     } else {
       for (pivot = 0U; pivot < active_count; pivot++) {
-        bound += block_upper_bound(segment, active[pivot], options);
+        bound += block_upper_bound(stats, active[pivot], options);
         if (bound >= threshold && bound > 0.0)
           break;
       }
@@ -395,7 +491,7 @@ int YAP_V2_lexical_search_prepared(const YAP_V2_LEXICAL_SEGMENT *segment,
       for (i = 0U; i < active_count; i++) {
         if (posting_key(&active[i]->postings[active[i]->index]) == pivot_key) {
           hit.score +=
-            posting_score(segment, active[i], &active[i]->postings[active[i]->index], options);
+            posting_score(stats, active[i], &active[i]->postings[active[i]->index], options);
           hit.matched_terms++;
           state_advance_to(active[i], pivot_key + 1U, options->object_type);
         }
@@ -421,12 +517,24 @@ int YAP_V2_lexical_search(const YAP_V2_LEXICAL_SEGMENT *segment, YAP_V2_BYTES_VI
                           const YAP_V2_LEXICAL_SEARCH_OPTIONS *options, YAP_V2_LEXICAL_HIT *hits,
                           size_t hit_capacity, size_t *hit_count) {
   YAP_V2_LEXICAL_QUERY_PLAN plan;
+  YAP_V2_LEXICAL_CORPUS_STATS stats;
+  const YAP_V2_LEXICAL_SEGMENT *segments[1];
   int status;
+  memset(&stats, 0, sizeof(stats));
+  if (segment != NULL) {
+    stats.document_count = segment->document_count;
+    stats.passage_count = segment->passage_count;
+    memcpy(stats.field_token_count, segment->field_token_count,
+           sizeof(stats.field_token_count));
+  }
+  segments[0] = segment;
   YAP_V2_lexical_query_plan_init(&plan);
   status = YAP_V2_lexical_query_plan_prepare(query, &plan);
   if (status == YAP_V2_OK)
-    status = YAP_V2_lexical_search_prepared(segment, &plan, options, hits,
-                                            hit_capacity, hit_count);
+    status = YAP_V2_lexical_query_plan_bind(&plan, segments, 1U);
+  if (status == YAP_V2_OK)
+    status = YAP_V2_lexical_search_prepared(&plan, 0U, &stats, options,
+                                            hits, hit_capacity, hit_count);
   YAP_V2_lexical_query_plan_free(&plan);
   return status;
 }

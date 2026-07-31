@@ -50,6 +50,7 @@ static void test_reader_lookup_and_iterators(void **state) {
   YAP_V2_POSTING posting;
   YAP_V2_POSITION position;
   YAP_V2_POSTINGS_BLOCK block;
+  uint64_t document_frequency, passage_frequency;
   char directory[PATH_MAX];
   size_t posting_count = 0U, position_count = 0U;
 
@@ -66,6 +67,12 @@ static void test_reader_lookup_and_iterators(void **state) {
   term = YAP_V2_lexical_term_find(&segment, bytes("search"));
   assert_non_null(term);
   assert_int_equal(term->document_frequency, 3U);
+  assert_int_equal(YAP_V2_lexical_term_type_frequency(
+                     &segment, term, YAP_V2_LEXICAL_DOCUMENT, &document_frequency), YAP_V2_OK);
+  assert_int_equal(YAP_V2_lexical_term_type_frequency(
+                     &segment, term, YAP_V2_LEXICAL_PASSAGE, &passage_frequency), YAP_V2_OK);
+  assert_int_equal(document_frequency, 2U);
+  assert_int_equal(passage_frequency, 1U);
   assert_non_null(YAP_V2_lexical_term_find(&segment, bytes("searching")));
   assert_null(YAP_V2_lexical_term_find(&segment, bytes("missing")));
   assert_int_equal(YAP_V2_posting_iterator_init(&segment, term, &postings), YAP_V2_OK);

@@ -26,9 +26,7 @@ typedef struct {
 
 typedef struct {
   uint64_t generation;
-  uint64_t document_count;
-  uint64_t passage_count;
-  uint64_t field_token_count[3];
+  YAP_V2_LEXICAL_CORPUS_STATS lexical;
 } YAP_V2_QUERY_CORPUS_STATS;
 
 typedef struct {
