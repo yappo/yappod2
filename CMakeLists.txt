@@ -587,7 +587,7 @@ if(YAPPOD_TESTS_NODAEMON)
   )
   target_include_directories(v2_search_quality_test PRIVATE ${QUALITY_TEST_DIR})
   target_link_libraries(v2_search_quality_test PRIVATE
-    yappod_server yappod_components yappod::yyjson)
+    yappod_server yappod_indexing yappod_components yappod::yyjson)
 endif()
 
 if(YAPPOD_BUILD_FUZZERS)
