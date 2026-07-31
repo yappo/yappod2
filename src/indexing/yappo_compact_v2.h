@@ -11,9 +11,14 @@ typedef struct {
   YAP_V2_SEGMENT_ID_LIST segment_ids;
 } YAP_V2_COMPACTION_RESULT;
 
+typedef void (*YAP_V2_COMPACTION_TEST_HOOK)(const char *point,
+                                            void *context);
+
 void YAP_V2_compaction_result_init(YAP_V2_COMPACTION_RESULT *result);
 void YAP_V2_compaction_result_free(YAP_V2_COMPACTION_RESULT *result);
 void YAP_V2_compaction_set_failpoint_for_testing(const char *name);
+void YAP_V2_compaction_set_hook_for_testing(
+  YAP_V2_COMPACTION_TEST_HOOK hook, void *context);
 
 int YAP_V2_compact_gc(const char *index_dir, const YAP_V2_MANIFEST *manifest,
                       size_t *removed_segments);

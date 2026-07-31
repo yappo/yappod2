@@ -60,8 +60,8 @@ flowchart LR
 - `search`はネットワークデーモンを起動せず、`server`のHTTP実行層をプロセス内で呼びます。
 - `yappo_makeindex`は`prepare`、`build`、`update`、`verify`を振り分けます。`verify`は索引の
   runtimeを開いてsnapshotの状態を確認します。
-- `yappo_compact`は既存snapshotから可視文書と本文断片を集め、新しいsegment群とmanifestを
-  公開します。
+- `yappo_compact`はmanifest上の隣接範囲から最終文書と削除標識を集め、その範囲だけを
+  新しいsegment群へ置き換えます。
 - `yappod_front`は公開HTTP、認証、処理上限、運用endpointを担当します。検索、取得、登録は
   `yappod_core`へ転送します。
 - `yappod_core`は内部HTTPを検証し、索引runtimeへ検索、取得、更新を依頼します。
@@ -163,9 +163,11 @@ component検証後にmanifestを公開します。失敗時に途中の候補を
 
 ### compact
 
-`indexing`はwriter lockを取得し、現在のsnapshotから可視文書とpassageだけを集めます。新しい
-segment群を作成して候補manifestを検証し、generationを照合して公開した後、参照されない旧segment
-を回収します。進行状態は`storage`へ保存され、`server`の運用endpointとメトリクスが読み出します。
+`indexing`はcompaction lockでcompact同士を直列化し、writer lock内でmanifest上の隣接範囲を
+選びます。writer lockを解放して範囲内の最終文書または削除標識から新しいsegment群を作成し、
+再取得したwriter lock内で選択descriptorの一致を確認して、その範囲だけを置換します。構築中に
+末尾へ追加された更新segmentは候補manifestへ残します。進行状態は`storage`へ保存され、
+`server`の運用endpointとメトリクスが読み出します。
 
 ### front/core通信
 
