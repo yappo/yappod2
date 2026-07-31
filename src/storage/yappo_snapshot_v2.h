@@ -25,6 +25,8 @@ YAP_V2_SEARCH_SNAPSHOT *YAP_V2_snapshot_acquire(YAP_V2_SNAPSHOT_MANAGER *manager
 void YAP_V2_snapshot_release(YAP_V2_SEARCH_SNAPSHOT *snapshot);
 uint64_t YAP_V2_snapshot_generation(const YAP_V2_SEARCH_SNAPSHOT *snapshot);
 size_t YAP_V2_snapshot_segment_count(const YAP_V2_SEARCH_SNAPSHOT *snapshot);
+int YAP_V2_snapshot_matches_manifest(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                     const YAP_V2_MANIFEST *manifest);
 const YAP_V2_SEGMENT *YAP_V2_snapshot_segment_documents(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                                                         size_t segment_ordinal);
 int YAP_V2_snapshot_document_visible(const YAP_V2_SEARCH_SNAPSHOT *snapshot,

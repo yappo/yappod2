@@ -98,33 +98,73 @@ static const YAP_V2_COMPONENT_DESCRIPTOR *component(const YAP_V2_SEGMENT_DESCRIP
   return NULL;
 }
 
-static int same_segment_descriptor(const YAP_V2_SEGMENT_DESCRIPTOR *left,
-                                   const YAP_V2_SEGMENT_DESCRIPTOR *right) {
-  size_t i;
-  if (strcmp(left->id, right->id) != 0 ||
-      left->document_count != right->document_count ||
-      left->passage_count != right->passage_count ||
-      left->tombstone_count != right->tombstone_count ||
-      left->component_count != right->component_count) return 0;
-  for (i = 0U; i < left->component_count; i++) {
-    const YAP_V2_COMPONENT_DESCRIPTOR *a = &left->components[i];
-    const YAP_V2_COMPONENT_DESCRIPTOR *b = &right->components[i];
-    if (strcmp(a->name, b->name) != 0 || a->file_type != b->file_type ||
-        a->record_count != b->record_count || a->file_bytes != b->file_bytes ||
-        memcmp(a->checksum, b->checksum, sizeof(a->checksum)) != 0) return 0;
+static void runtime_segment_close(YAP_V2_LEXICAL_SEGMENT *lexical,
+                                  YAP_V2_VECTOR_SEGMENT *vectors,
+                                  YAP_V2_ANN_SEGMENT *ann,
+                                  YAP_V2_METADATA_INDEX *metadata) {
+  YAP_V2_ann_segment_close(ann);
+  YAP_V2_vector_segment_close(vectors);
+  YAP_V2_lexical_segment_close(lexical);
+  YAP_V2_metadata_index_free(metadata);
+}
+
+static int runtime_segment_open(
+  const char *index_dir, const YAP_V2_CONFIG *config,
+  const YAP_V2_SEGMENT_DESCRIPTOR *descriptor,
+  YAP_V2_QUERY_SEGMENT *query, YAP_V2_LEXICAL_SEGMENT *lexical,
+  YAP_V2_VECTOR_SEGMENT *vectors, YAP_V2_ANN_SEGMENT *ann,
+  YAP_V2_METADATA_INDEX *metadata) {
+  const YAP_V2_COMPONENT_DESCRIPTOR *ann_file;
+  char segment_dir[4096], file_path[4096];
+  int written;
+  int status = YAP_V2_OK;
+  memset(query, 0, sizeof(*query));
+  YAP_V2_lexical_segment_init(lexical);
+  YAP_V2_vector_segment_init(vectors);
+  YAP_V2_ann_segment_init(ann);
+  YAP_V2_metadata_index_init(metadata);
+  written = snprintf(segment_dir, sizeof(segment_dir), "%s/segments/%s",
+                     index_dir, descriptor->id);
+  if (written < 0 || (size_t)written >= sizeof(segment_dir))
+    return YAP_V2_INVALID_ARGUMENT;
+  if (component(descriptor, YAP_V2_FILE_TERMS) != NULL) {
+    status = YAP_V2_lexical_segment_open(segment_dir, 0U, lexical);
+    if (status != YAP_V2_OK) return status;
+    query->lexical = lexical;
   }
-  return 1;
+  if (component(descriptor, YAP_V2_FILE_VECTORS) != NULL) {
+    if (path_join(file_path, sizeof(file_path), segment_dir, "vectors.yap2") != 0)
+      return YAP_V2_INVALID_ARGUMENT;
+    status = YAP_V2_vector_segment_open(file_path, 0U, config, vectors, NULL);
+    if (status != YAP_V2_OK) return status;
+    ann->vectors = vectors;
+    ann_file = component(descriptor, YAP_V2_FILE_ANN);
+    if (ann_file != NULL) {
+      if (path_join(file_path, sizeof(file_path), segment_dir, ann_file->name) != 0)
+        return YAP_V2_INVALID_ARGUMENT;
+      status = YAP_V2_ann_view(file_path, vectors, 64U, ann, NULL);
+      if (status != YAP_ANN_OK) return YAP_V2_CONFLICT;
+    }
+    query->vector = ann;
+  }
+  if (component(descriptor, YAP_V2_FILE_METADATA) != NULL) {
+    if (path_join(file_path, sizeof(file_path), segment_dir, "metadata.yap2") != 0)
+      return YAP_V2_INVALID_ARGUMENT;
+    status = YAP_V2_metadata_read(file_path, 0U, config, metadata, NULL);
+    if (status != YAP_V2_OK) return status;
+    query->metadata = metadata;
+  }
+  return YAP_V2_OK;
 }
 
 static void runtime_close(HTTP_RUNTIME *runtime) {
   size_t i;
   if (runtime == NULL) return;
-  for (i = 0U; i < runtime->count; i++) {
-    if (runtime->ann != NULL) YAP_V2_ann_segment_close(&runtime->ann[i]);
-    if (runtime->vectors != NULL) YAP_V2_vector_segment_close(&runtime->vectors[i]);
-    if (runtime->lexical != NULL) YAP_V2_lexical_segment_close(&runtime->lexical[i]);
-    if (runtime->metadata != NULL) YAP_V2_metadata_index_free(&runtime->metadata[i]);
-  }
+  if (runtime->ann != NULL && runtime->vectors != NULL &&
+      runtime->lexical != NULL && runtime->metadata != NULL)
+    for (i = 0U; i < runtime->count; i++)
+      runtime_segment_close(&runtime->lexical[i], &runtime->vectors[i],
+                            &runtime->ann[i], &runtime->metadata[i]);
   free(runtime->query); free(runtime->lexical); free(runtime->vectors);
   free(runtime->ann); free(runtime->metadata);
   if (runtime->snapshot != NULL) YAP_V2_snapshot_release(runtime->snapshot);
@@ -134,7 +174,7 @@ static void runtime_close(HTTP_RUNTIME *runtime) {
 }
 
 static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
-  char config_path[4096], manifest_path[4096], segment_dir[4096], file_path[4096];
+  char config_path[4096], manifest_path[4096];
   char error[256]; size_t i; int status;
   memset(runtime, 0, sizeof(*runtime));
   YAP_V2_manifest_init(&runtime->manifest); YAP_V2_snapshot_manager_init(&runtime->manager);
@@ -158,44 +198,11 @@ static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   if (runtime->query == NULL || runtime->lexical == NULL || runtime->vectors == NULL ||
       runtime->ann == NULL || runtime->metadata == NULL) return YAP_V2_ALLOCATION_FAILED;
   for (i = 0U; i < runtime->count; i++) {
-    const YAP_V2_SEGMENT_DESCRIPTOR *descriptor = &runtime->manifest.segments[i];
-    const YAP_V2_COMPONENT_DESCRIPTOR *ann_file;
-    int written = snprintf(segment_dir, sizeof(segment_dir), "%s/segments/%s", index_dir, descriptor->id);
-    if (written < 0 || (size_t)written >= sizeof(segment_dir)) return YAP_V2_INVALID_ARGUMENT;
-    YAP_V2_lexical_segment_init(&runtime->lexical[i]);
-    YAP_V2_vector_segment_init(&runtime->vectors[i]);
-    YAP_V2_ann_segment_init(&runtime->ann[i]);
-    YAP_V2_metadata_index_init(&runtime->metadata[i]);
-    if (component(descriptor, YAP_V2_FILE_TERMS) != NULL) {
-      status = YAP_V2_lexical_segment_open(segment_dir, 0U,
-                                           &runtime->lexical[i]);
-      if (status != YAP_V2_OK) return status;
-      runtime->query[i].lexical = &runtime->lexical[i];
-    }
-    if (component(descriptor, YAP_V2_FILE_VECTORS) != NULL) {
-      if (path_join(file_path, sizeof(file_path), segment_dir, "vectors.yap2") != 0)
-        return YAP_V2_INVALID_ARGUMENT;
-      status = YAP_V2_vector_segment_open(file_path, 0U, &runtime->config,
-                                          &runtime->vectors[i], NULL);
-      if (status != YAP_V2_OK) return status;
-      runtime->ann[i].vectors = &runtime->vectors[i];
-      ann_file = component(descriptor, YAP_V2_FILE_ANN);
-      if (ann_file != NULL) {
-        if (path_join(file_path, sizeof(file_path), segment_dir, ann_file->name) != 0)
-          return YAP_V2_INVALID_ARGUMENT;
-        status = YAP_V2_ann_view(file_path, &runtime->vectors[i], 64U, &runtime->ann[i], NULL);
-        if (status != YAP_ANN_OK) return YAP_V2_CONFLICT;
-      }
-      runtime->query[i].vector = &runtime->ann[i];
-    }
-    if (component(descriptor, YAP_V2_FILE_METADATA) != NULL) {
-      if (path_join(file_path, sizeof(file_path), segment_dir, "metadata.yap2") != 0)
-        return YAP_V2_INVALID_ARGUMENT;
-      status = YAP_V2_metadata_read(file_path, 0U, &runtime->config,
-                                    &runtime->metadata[i], NULL);
-      if (status != YAP_V2_OK) return status;
-      runtime->query[i].metadata = &runtime->metadata[i];
-    }
+    status = runtime_segment_open(
+      index_dir, &runtime->config, &runtime->manifest.segments[i],
+      &runtime->query[i], &runtime->lexical[i], &runtime->vectors[i],
+      &runtime->ann[i], &runtime->metadata[i]);
+    if (status != YAP_V2_OK) return status;
   }
   return YAP_V2_OK;
 }
@@ -216,102 +223,101 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
   return YAP_V2_CONFLICT;
 }
 
-static int runtime_reload_append(HTTP_RUNTIME *runtime, const char *index_dir) {
+static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
+                                   const char *index_dir) {
   YAP_V2_MANIFEST manifest;
+  YAP_V2_MANIFEST_SEGMENT_MAP previous_segments;
   YAP_V2_QUERY_SEGMENT *query = NULL;
   YAP_V2_LEXICAL_SEGMENT *lexical = NULL;
   YAP_V2_VECTOR_SEGMENT *vectors = NULL;
   YAP_V2_ANN_SEGMENT *ann = NULL;
   YAP_V2_METADATA_INDEX *metadata = NULL;
   YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL;
-  char manifest_path[4096], segment_dir[4096], file_path[4096];
-  size_t old_count, i;
+  unsigned char *reused = NULL;
+  unsigned char *opened = NULL;
+  char manifest_path[4096];
+  size_t i;
   int status, changed = 0;
   YAP_V2_manifest_init(&manifest);
+  YAP_V2_manifest_segment_map_init(&previous_segments);
   if (path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.json") != 0)
     return YAP_V2_INVALID_ARGUMENT;
   status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &manifest);
   if (status != YAP_V2_OK) goto done;
-  old_count = runtime->count;
-  if (manifest.segment_count < old_count) { status = YAP_V2_CONFLICT; goto done; }
-  for (i = 0U; i < old_count; i++)
-    if (!same_segment_descriptor(&manifest.segments[i], &runtime->manifest.segments[i])) {
-      status = YAP_V2_CONFLICT; goto done;
-    }
-  if (manifest.generation == runtime->manifest.generation) { status = YAP_V2_OK; goto done; }
+  if (manifest.generation < runtime->manifest.generation) {
+    status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  if (manifest.generation == runtime->manifest.generation) {
+    status = manifest.segment_count == runtime->manifest.segment_count ?
+             YAP_V2_OK : YAP_V2_CONFLICT;
+    for (i = 0U; status == YAP_V2_OK && i < manifest.segment_count; i++)
+      if (!YAP_V2_segment_descriptor_equal(
+            &manifest.segments[i], &runtime->manifest.segments[i]))
+        status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  if (manifest.segment_count == 0U) {
+    status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  status = YAP_V2_manifest_segment_map_build(&previous_segments,
+                                             &runtime->manifest);
+  if (status != YAP_V2_OK) goto done;
   query = calloc(manifest.segment_count, sizeof(*query));
   lexical = calloc(manifest.segment_count, sizeof(*lexical));
   vectors = calloc(manifest.segment_count, sizeof(*vectors));
   ann = calloc(manifest.segment_count, sizeof(*ann));
   metadata = calloc(manifest.segment_count, sizeof(*metadata));
-  if (query == NULL || lexical == NULL || vectors == NULL || ann == NULL || metadata == NULL) {
-    status = YAP_V2_ALLOCATION_FAILED; goto done;
+  opened = calloc(manifest.segment_count, sizeof(*opened));
+  reused = calloc(runtime->count, sizeof(*reused));
+  if (query == NULL || lexical == NULL || vectors == NULL || ann == NULL ||
+      metadata == NULL || opened == NULL ||
+      (runtime->count > 0U && reused == NULL)) {
+    status = YAP_V2_ALLOCATION_FAILED;
+    goto done;
   }
-  memcpy(query, runtime->query, old_count * sizeof(*query));
-  memcpy(lexical, runtime->lexical, old_count * sizeof(*lexical));
-  memcpy(vectors, runtime->vectors, old_count * sizeof(*vectors));
-  memcpy(ann, runtime->ann, old_count * sizeof(*ann));
-  memcpy(metadata, runtime->metadata, old_count * sizeof(*metadata));
-  for (i = 0U; i < old_count; i++) {
-    if (runtime->query[i].lexical != NULL) query[i].lexical = &lexical[i];
-    if (runtime->query[i].vector != NULL) {
-      ann[i].vectors = &vectors[i]; query[i].vector = &ann[i];
-    }
-    if (runtime->query[i].metadata != NULL) query[i].metadata = &metadata[i];
-  }
-  for (i = old_count; status == YAP_V2_OK && i < manifest.segment_count; i++) {
-    const YAP_V2_SEGMENT_DESCRIPTOR *descriptor = &manifest.segments[i];
-    const YAP_V2_COMPONENT_DESCRIPTOR *ann_file;
-    int written = snprintf(segment_dir, sizeof(segment_dir), "%s/segments/%s",
-                           index_dir, descriptor->id);
-    if (written < 0 || (size_t)written >= sizeof(segment_dir)) {
-      status = YAP_V2_INVALID_ARGUMENT; break;
-    }
-    YAP_V2_lexical_segment_init(&lexical[i]);
-    YAP_V2_vector_segment_init(&vectors[i]);
-    YAP_V2_ann_segment_init(&ann[i]);
-    YAP_V2_metadata_index_init(&metadata[i]);
-    if (component(descriptor, YAP_V2_FILE_TERMS) != NULL) {
-      status = YAP_V2_lexical_segment_open(segment_dir, 0U, &lexical[i]);
-      if (status != YAP_V2_OK) break;
-      query[i].lexical = &lexical[i];
-    }
-    if (component(descriptor, YAP_V2_FILE_VECTORS) != NULL) {
-      if (path_join(file_path, sizeof(file_path), segment_dir, "vectors.yap2") != 0) {
-        status = YAP_V2_INVALID_ARGUMENT; break;
+  for (i = 0U; status == YAP_V2_OK && i < manifest.segment_count; i++) {
+    size_t old_index = 0U;
+    int found = YAP_V2_manifest_segment_map_find(
+      &previous_segments, manifest.segments[i].id, &old_index);
+    if (found == YAP_V2_OK &&
+        YAP_V2_segment_descriptor_equal(
+          &runtime->manifest.segments[old_index], &manifest.segments[i])) {
+      query[i] = runtime->query[old_index];
+      lexical[i] = runtime->lexical[old_index];
+      vectors[i] = runtime->vectors[old_index];
+      ann[i] = runtime->ann[old_index];
+      metadata[i] = runtime->metadata[old_index];
+      if (runtime->query[old_index].lexical != NULL)
+        query[i].lexical = &lexical[i];
+      if (runtime->query[old_index].vector != NULL) {
+        ann[i].vectors = &vectors[i];
+        query[i].vector = &ann[i];
       }
-      status = YAP_V2_vector_segment_open(file_path, 0U, &runtime->config,
-                                          &vectors[i], NULL);
-      if (status != YAP_V2_OK) break;
-      ann[i].vectors = &vectors[i];
-      ann_file = component(descriptor, YAP_V2_FILE_ANN);
-      if (ann_file != NULL) {
-        if (path_join(file_path, sizeof(file_path), segment_dir, ann_file->name) != 0) {
-          status = YAP_V2_INVALID_ARGUMENT; break;
-        }
-        status = YAP_V2_ann_view(file_path, &vectors[i], 64U, &ann[i], NULL);
-        if (status != YAP_ANN_OK) { status = YAP_V2_CONFLICT; break; }
-      }
-      query[i].vector = &ann[i];
-    }
-    if (component(descriptor, YAP_V2_FILE_METADATA) != NULL) {
-      if (path_join(file_path, sizeof(file_path), segment_dir, "metadata.yap2") != 0) {
-        status = YAP_V2_INVALID_ARGUMENT; break;
-      }
-      status = YAP_V2_metadata_read(file_path, 0U, &runtime->config,
-                                    &metadata[i], NULL);
-      if (status != YAP_V2_OK) break;
-      query[i].metadata = &metadata[i];
+      if (runtime->query[old_index].metadata != NULL)
+        query[i].metadata = &metadata[i];
+      reused[old_index] = 1U;
+    } else if (found == YAP_V2_OK || found == YAP_V2_NOT_FOUND) {
+      opened[i] = 1U;
+      status = runtime_segment_open(
+        index_dir, &runtime->config, &manifest.segments[i], &query[i],
+        &lexical[i], &vectors[i], &ann[i], &metadata[i]);
+    } else {
+      status = found;
     }
   }
   if (status == YAP_V2_OK) status = YAP_V2_snapshot_manager_reload(&runtime->manager, &changed);
-  if (status == YAP_V2_OK && !changed) status = YAP_V2_CONFLICT;
   if (status == YAP_V2_OK) {
     snapshot = YAP_V2_snapshot_acquire(&runtime->manager);
-    if (snapshot == NULL || YAP_V2_snapshot_generation(snapshot) != manifest.generation)
+    if (!YAP_V2_snapshot_matches_manifest(snapshot, &manifest))
       status = YAP_V2_CONFLICT;
   }
   if (status == YAP_V2_OK) {
+    for (i = 0U; i < runtime->count; i++)
+      if (!reused[i])
+        runtime_segment_close(&runtime->lexical[i], &runtime->vectors[i],
+                              &runtime->ann[i], &runtime->metadata[i]);
     free(runtime->query); free(runtime->lexical); free(runtime->vectors);
     free(runtime->ann); free(runtime->metadata);
     YAP_V2_snapshot_release(runtime->snapshot);
@@ -326,16 +332,15 @@ static int runtime_reload_append(HTTP_RUNTIME *runtime, const char *index_dir) {
     runtime->count = runtime->manifest.segment_count;
   }
 done:
-  if (status != YAP_V2_OK && lexical != NULL) {
-    for (i = runtime->count; i < manifest.segment_count; i++) {
-      YAP_V2_ann_segment_close(&ann[i]);
-      YAP_V2_vector_segment_close(&vectors[i]);
-      YAP_V2_lexical_segment_close(&lexical[i]);
-      YAP_V2_metadata_index_free(&metadata[i]);
-    }
-  }
+  if (status != YAP_V2_OK && opened != NULL)
+    for (i = 0U; i < manifest.segment_count; i++)
+      if (opened[i])
+        runtime_segment_close(&lexical[i], &vectors[i], &ann[i],
+                              &metadata[i]);
   free(query); free(lexical); free(vectors); free(ann); free(metadata);
+  free(opened); free(reused);
   YAP_V2_snapshot_release(snapshot); YAP_V2_manifest_free(&manifest);
+  YAP_V2_manifest_segment_map_free(&previous_segments);
   return status;
 }
 
@@ -853,7 +858,7 @@ int YAP_V2_http_runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
                                  http_status, response, response_bytes);
     if (result == 0 && *http_status == 200) {
       pthread_rwlock_wrlock(&state->lock);
-      if (runtime_reload_append(state->current, state->index_dir) != YAP_V2_OK) {
+      if (runtime_reload_manifest(state->current, state->index_dir) != YAP_V2_OK) {
         free(*response); *response = error_json("reload_failed",
           "index was updated but the new snapshot could not be loaded", response_bytes);
         *http_status = 503; result = *response == NULL ? -1 : 0;
@@ -895,29 +900,13 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
 
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime) {
   HTTP_RUNTIME_STATE *state;
-  HTTP_RUNTIME *candidate = NULL, *previous;
   int status;
   if (runtime == NULL || runtime->state == NULL) return YAP_V2_INVALID_ARGUMENT;
   state = runtime->state;
   pthread_mutex_lock(&state->update_lock);
   pthread_rwlock_wrlock(&state->lock);
-  status = runtime_reload_append(state->current, state->index_dir);
+  status = runtime_reload_manifest(state->current, state->index_dir);
   pthread_rwlock_unlock(&state->lock);
-  if (status == YAP_V2_CONFLICT) {
-    candidate = calloc(1U, sizeof(*candidate));
-    if (candidate == NULL) {
-      status = YAP_V2_ALLOCATION_FAILED;
-    } else {
-      status = runtime_open(candidate, state->index_dir);
-      if (status == YAP_V2_OK) {
-        pthread_rwlock_wrlock(&state->lock);
-        previous = state->current; state->current = candidate; candidate = NULL;
-        pthread_rwlock_unlock(&state->lock);
-        runtime_close(previous); free(previous);
-      }
-    }
-  }
-  if (candidate != NULL) { runtime_close(candidate); free(candidate); }
   pthread_mutex_unlock(&state->update_lock);
   return status;
 }
