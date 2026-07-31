@@ -27,6 +27,7 @@ typedef struct {
   size_t terms_per_segment;
   size_t terms_per_document;
   size_t iterations;
+  const char *retain_index;
 } BENCHMARK_OPTIONS;
 
 static double elapsed_ms(struct timespec start, struct timespec end);
@@ -49,6 +50,7 @@ static int parse_size(const char *value, size_t minimum, size_t maximum, size_t 
 
 static int parse_options(int argc, char **argv, BENCHMARK_OPTIONS *options) {
   int i;
+  memset(options, 0, sizeof(*options));
   options->segments = 100U;
   options->documents_per_segment = 8U;
   options->terms_per_segment = 0U;
@@ -72,6 +74,10 @@ static int parse_options(int argc, char **argv, BENCHMARK_OPTIONS *options) {
     } else if (strcmp(argv[i], "--iterations") == 0) {
       if (parse_size(argv[i + 1], 3U, 10000U, &options->iterations) != 0)
         return -1;
+    } else if (strcmp(argv[i], "--retain-index") == 0) {
+      if (argv[i + 1][0] == '\0' || strlen(argv[i + 1]) >= PATH_MAX)
+        return -1;
+      options->retain_index = argv[i + 1];
     } else {
       return -1;
     }
@@ -360,29 +366,43 @@ int main(int argc, char **argv) {
   uint64_t index_bytes = 0U;
   size_t document_count;
   char single_term[16];
+  const char *index_dir;
+  int temporary_index = 0;
   int status = 1;
   if (parse_options(argc, argv, &options) != 0) {
     fprintf(stderr, "usage: %s [--segments N] [--documents-per-segment N] "
                     "[--terms-per-segment N] [--terms-per-document N] "
-                    "[--iterations N]\n", argv[0]);
+                    "[--iterations N] [--retain-index PATH]\n", argv[0]);
     return 2;
   }
   document_count = benchmark_document_count(&options);
   if (document_count == 0U || options.segments > SIZE_MAX / document_count ||
       (options.terms_per_segment > 0U &&
-       options.segments > SIZE_MAX / options.terms_per_segment) ||
-      ytest_env_init(&env) != 0)
+       options.segments > SIZE_MAX / options.terms_per_segment))
     return 1;
-  fprintf(stderr, "index_dir=%s\n", env.tmp_root);
+  if (options.retain_index != NULL) {
+    if (mkdir(options.retain_index, 0700) != 0) {
+      fprintf(stderr, "cannot create retained index directory: %s\n", strerror(errno));
+      return 1;
+    }
+    index_dir = options.retain_index;
+  } else {
+    if (ytest_env_init(&env) != 0)
+      return 1;
+    temporary_index = 1;
+    index_dir = env.tmp_root;
+  }
+  fprintf(stderr, "index_dir=%s retained=%s\n", index_dir,
+          options.retain_index == NULL ? "false" : "true");
   fflush(stderr);
   (void)clock_gettime(CLOCK_MONOTONIC, &build_start);
-  if (create_index(env.tmp_root, &options) != 0)
+  if (create_index(index_dir, &options) != 0)
     goto done;
   (void)clock_gettime(CLOCK_MONOTONIC, &build_end);
-  if (directory_bytes(env.tmp_root, &index_bytes) != 0)
+  if (directory_bytes(index_dir, &index_bytes) != 0)
     goto done;
   YAP_V2_http_runtime_init(&runtime);
-  if (YAP_V2_http_runtime_open(&runtime, env.tmp_root) != YAP_V2_OK)
+  if (YAP_V2_http_runtime_open(&runtime, index_dir) != YAP_V2_OK)
     goto done;
   (void)clock_gettime(CLOCK_MONOTONIC, &open_end);
   fprintf(stderr,
@@ -405,6 +425,7 @@ int main(int argc, char **argv) {
     status = benchmark_scenario(&runtime, &options, "all_segments", "common");
   YAP_V2_http_runtime_close(&runtime);
 done:
-  ytest_env_destroy(&env);
+  if (temporary_index)
+    ytest_env_destroy(&env);
   return status;
 }
