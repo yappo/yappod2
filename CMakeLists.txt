@@ -83,6 +83,7 @@ set(YAPPOD_COMMON_SOURCES
 set(YAPPOD_CONFIG_SOURCES
   ${SRC_DIR}/config/yappo_config_v2.c
   ${SRC_DIR}/config/yappo_application_config.c
+  ${SRC_DIR}/config/yappo_compaction_policy_v2.c
   ${SRC_DIR}/config/yappo_runtime_policy_v2.c
 )
 
@@ -531,6 +532,12 @@ if(YAPPOD_TESTS_NODAEMON)
   add_yappod_cmocka_test(
     segment_planner_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/indexing/segment_planner_v2_test.c
+    LABEL standalone
+    LIBRARIES yappod_indexing
+  )
+  add_yappod_cmocka_test(
+    compaction_policy_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/indexing/compaction_policy_v2_test.c
     LABEL standalone
     LIBRARIES yappod_indexing
   )

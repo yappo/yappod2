@@ -83,6 +83,10 @@ search-webは1つのアプリケーションTOMLをYappod2サーバー、索引�
 | `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
 | `ingest_max_body_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | 文書更新の本文上限です。 |
 | `ingest_timeout_ms` | 整数 | 1〜600000 | `60000` | 任意 | 文書更新に適用するソケットと内部HTTPの期限です。 |
+| `auto_compact_enabled` | 真偽値 | `true`、`false` | `true` | 任意 | coreによる小セグメントの自動コンパクションを有効にします。 |
+| `auto_compact_check_interval_ms` | 整数 | 1000〜3600000 | `30000` | 任意 | coreが自動コンパクションの要否を確認する間隔です。 |
+| `auto_compact_small_segment_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | 小セグメントとみなす全コンポーネントファイル合計の境界です。 |
+| `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 自動コンパクションを開始する隣接小セグメント数です。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | 文書登録APIをBearer認証します。 |
 
 ### `[web]`

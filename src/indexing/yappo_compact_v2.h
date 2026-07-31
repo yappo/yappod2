@@ -1,6 +1,7 @@
 #ifndef YAPPO_COMPACT_V2_H
 #define YAPPO_COMPACT_V2_H
 
+#include "config/yappo_compaction_policy_v2.h"
 #include "storage/yappo_storage_v2.h"
 
 typedef struct {
@@ -22,6 +23,18 @@ void YAP_V2_compaction_set_hook_for_testing(
 
 int YAP_V2_compact_gc(const char *index_dir, const YAP_V2_MANIFEST *manifest,
                       size_t *removed_segments);
+int YAP_V2_manifest_needs_compaction(
+  const YAP_V2_MANIFEST *manifest,
+  const YAP_V2_COMPACTION_POLICY *policy, int *needed,
+  size_t *small_segment_count);
+int YAP_V2_compaction_needed(
+  const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+  int *needed, size_t *small_segment_count, char *error,
+  size_t error_size);
+int YAP_V2_compact_if_needed(
+  const char *index_dir, const YAP_V2_COMPACTION_POLICY *policy,
+  YAP_V2_COMPACTION_RESULT *result, int *compacted,
+  size_t *small_segment_count, char *error, size_t error_size);
 int YAP_V2_compact(const char *index_dir, YAP_V2_COMPACTION_RESULT *result,
                    char *error, size_t error_size);
 int YAP_V2_compact_main(int argc, char **argv);

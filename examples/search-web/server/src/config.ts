@@ -25,6 +25,10 @@ export interface DaemonConfig {
   requestTimeoutMs: number;
   ingestMaxBodyBytes: number;
   ingestTimeoutMs: number;
+  autoCompactEnabled: boolean;
+  autoCompactCheckIntervalMs: number;
+  autoCompactSmallSegmentBytes: number;
+  autoCompactMinSmallSegments: number;
   writeToken?: string;
 }
 
@@ -189,7 +193,9 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
   onlyKeys(daemon, [
     "run_directory", "core_host", "core_port", "front_host", "front_port", "max_inflight",
     "worker_threads", "max_inflight_bytes", "request_timeout_ms", "ingest_max_body_bytes",
-    "ingest_timeout_ms", "write_token",
+    "ingest_timeout_ms", "write_token", "auto_compact_enabled",
+    "auto_compact_check_interval_ms", "auto_compact_small_segment_bytes",
+    "auto_compact_min_small_segments",
   ], "daemon");
   const writeToken = optionalString(daemon.write_token, "daemon.write_token");
   if (writeToken && (writeToken.length < 16 || writeToken.length > 255 || /[\u0000-\u0020\u007f]/.test(writeToken))) {
@@ -209,6 +215,17 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
                                 "daemon.ingest_max_body_bytes"),
     ingestTimeoutMs: integer(daemon.ingest_timeout_ms, 60000, 1, 600000,
                              "daemon.ingest_timeout_ms"),
+    autoCompactEnabled: boolean(
+      daemon.auto_compact_enabled, true, "daemon.auto_compact_enabled"),
+    autoCompactCheckIntervalMs: integer(
+      daemon.auto_compact_check_interval_ms, 30000, 1000, 3600000,
+      "daemon.auto_compact_check_interval_ms"),
+    autoCompactSmallSegmentBytes: integer(
+      daemon.auto_compact_small_segment_bytes, 67108864, 1, 268435456,
+      "daemon.auto_compact_small_segment_bytes"),
+    autoCompactMinSmallSegments: integer(
+      daemon.auto_compact_min_small_segments, 4, 2, 8,
+      "daemon.auto_compact_min_small_segments"),
     writeToken,
   };
 }

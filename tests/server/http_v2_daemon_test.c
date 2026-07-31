@@ -102,6 +102,18 @@ static int teardown_single_worker(void **state) {
   return teardown(state);
 }
 
+static int setup_automatic_compaction(void **state) {
+  policy_source =
+    "[daemon]\n"
+    "auto_compact_check_interval_ms=1000\n"
+    "auto_compact_min_small_segments=4\n";
+  return setup(state);
+}
+
+static int teardown_automatic_compaction(void **state) {
+  return teardown(state);
+}
+
 static char *post(context_t *ctx, const char *endpoint, const char *body) {
   char request[4096]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",endpoint,strlen(body),body)>0);
@@ -250,6 +262,53 @@ static void test_configured_single_worker_serves_requests(void **state) {
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
+static void test_core_automatically_compacts_small_segments(void **state) {
+  context_t *ctx = *state;
+  char *response = NULL;
+  char path[PATH_MAX], body[512];
+  int attempt;
+  size_t i;
+  uint64_t generation = 0U;
+  size_t segments = 0U;
+  for (i = 0U; i < 3U; i++) {
+    assert_true(snprintf(
+      body, sizeof(body),
+      "{\"operations\":[{\"operation\":\"upsert\","
+      "\"id\":\"auto-%zu\",\"body\":\"automaticword\","
+      "\"vectors\":[[1,0]]}]}", i) > 0);
+    response = post(ctx, "/v2/documents:batch", body);
+    assert_non_null(strstr(response, "200 OK"));
+    free(response);
+  }
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
+                                   "manifest.json"), 0);
+  for (attempt = 0; attempt < 100; attempt++) {
+    YAP_V2_MANIFEST manifest;
+    YAP_V2_manifest_init(&manifest);
+    if (YAP_V2_manifest_load(path, &manifest) == YAP_V2_OK) {
+      generation = manifest.generation;
+      segments = manifest.segment_count;
+    }
+    YAP_V2_manifest_free(&manifest);
+    if (generation >= 5U && segments < 4U) break;
+    usleep(100000);
+  }
+  assert_true(generation >= 5U);
+  assert_true(segments < 4U);
+  response = post(
+    ctx, "/v2/search",
+    "{\"query\":\"automaticword\",\"mode\":\"lexical\","
+    "\"scope\":\"documents\",\"limit\":10}");
+  assert_non_null(strstr(response, "200 OK"));
+  for (i = 0U; i < 3U; i++) {
+    char id[32];
+    assert_true(snprintf(id, sizeof(id), "\"id\":\"auto-%zu\"", i) > 0);
+    assert_non_null(strstr(response, id));
+  }
+  free(response);
+  assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
 static pid_t launch_foreground(char *const argv[], const char *cwd) {
   pid_t pid = fork();
   assert_true(pid >= 0);
@@ -333,5 +392,6 @@ int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
   cmocka_unit_test_setup_teardown(test_configured_single_worker_serves_requests,setup_single_worker,teardown_single_worker),
+  cmocka_unit_test_setup_teardown(test_core_automatically_compacts_small_segments,setup_automatic_compaction,teardown_automatic_compaction),
   cmocka_unit_test_setup_teardown(test_foreground_process_lifecycle,setup_index_only,teardown_index_only)
 };return cmocka_run_group_tests(tests,NULL,NULL);}
