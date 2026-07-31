@@ -19,7 +19,7 @@
 | Yappod2サーバーを起動・監視します | [運用](operations.md) |
 | Prometheusで監視します | [監視とメトリクス](observability.md) |
 | ビルド、テスト、品質確認を行います | [開発](development.md) |
-| 大規模な字句検索の性能測定結果を確認します | [1億語エントリー・1000セグメント字句検索ベンチマーク](large-dictionary-benchmark-report-2026-08-01.md) |
+| 大規模な字句検索の性能測定結果を確認します | [10万・100万文書、1億語エントリー、1000セグメント字句検索ベンチマーク](large-dictionary-benchmark-report-2026-08-01.md) |
 | 内部構造と変更箇所を把握します | [アーキテクチャ](architecture.md) |
 | 会話、Issue、PRでタスクを運用します | [タスク票と開発作業の運用](task-workflow.md) |
 

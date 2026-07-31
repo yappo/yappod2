@@ -50,11 +50,28 @@ descriptor記録数です。CI実行環境の速度差で判定を変えず、�
 
 ## `v2_load_probe`
 
-`v2_load_probe`は通常のCTestへ登録されない手動計測用実行ファイルです。すでに起動しているHTTPエンドポイントへ要求を送り、負荷時の結果を観測するために使います。正確な引数は実行ファイルの`--help`で確認してください。
+`v2_load_probe`は通常のCTestへ登録されない手動計測用実行ファイルです。すでに起動しているHTTPエンドポイントへ要求を送り、負荷時の成功件数、過負荷拒否件数、P50、P95、P99、スループット、daemon RSSを観測します。語彙検索だけを測る場合は`--lexical-request`だけを指定できます。`--require-all-success`を指定すると、`503 overloaded`が1件でもあれば失敗します。正確な引数は実行ファイルの`--help`で確認してください。
 
 ```sh
 ./build/v2_load_probe --help
 ```
+
+語彙検索だけを測る例です。要求ファイルには`POST /v2/search`と同じJSON本文を1個保存します。
+
+```sh
+./build/v2_load_probe \
+  --port FRONT_PORT \
+  --lexical-request lexical-request.json \
+  --requests 100000 \
+  --concurrency 16 \
+  --core-pid CORE_PID \
+  --front-pid FRONT_PID \
+  --require-all-success
+```
+
+各ワーカースレッドは要求ごとに新しいHTTP接続を作ります。スループットは成功、`503 overloaded`、
+その他の失敗を含む要求総数を全体実時間で割った値です。P50、P95、P99は成功した要求だけから
+計算します。接続再利用を行うクライアントの性能とは分けて解釈してください。
 
 実行前に、対象が負荷試験を許可された環境であることを確認してください。開発者の既存デーモンや本番環境へ無断で実行してはいけません。
 
@@ -85,6 +102,10 @@ cmake --build build --target v2_segment_search_benchmark -j
   --terms-per-document 1000 \
   --iterations 101
 ```
+
+同じ索引を後続のHTTP負荷試験で再利用する場合は、まだ存在しない測定専用ディレクトリを
+`--retain-index PATH`へ指定します。このオプションを指定した場合は成功時も失敗時も自動削除しません。
+既存ディレクトリへの上書きは拒否します。
 
 大語彙測定では、各セグメントへ固有語を生成するほか、1セグメントだけ、100番目ごとの
 セグメント、全セグメントに存在する語も検索します。索引容量、生成時間、runtime起動時間は
