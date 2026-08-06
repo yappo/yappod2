@@ -10,6 +10,7 @@
 |---|---|
 | `v2_search_quality` | 語彙、ベクトル、複合検索の固定検索文に対してnDCG@10とRecall@10を計算します。同じ9文書を1・2・4セグメントへ分割した場合と、古い版を含まないコンパクション前後で、語彙の順位とスコアが一致することも確認します。 |
 | `ann_v2` | 全ベクトルを比較した上位結果を正解集合とし、USearchによる近似検索のRecall@10、保存と再読み込み、入力検証を確認します。 |
+| `ann_corpus_v2` | 1000セグメントのANN呼び出しを基底1回へ集約し、結果一致、基底キャッシュの再読込と破損検出を確認します。 |
 | `v2_daemon_reliability` | core/frontを使った検索と更新の並行実行、世代の可視性、P95、RSSを確認します。`YAPPOD_TESTS_DAEMON=ON`のときだけ構築します。 |
 | `segment_health_regression` | 固定索引へ40世代の更新と自動保守判定を順番に適用し、セグメント数が3以下、小セグメントの連続数が閾値未満に保たれ、全記録と検索結果が残ることを確認します。経過時間には依存しません。 |
 | `search_quality_metrics` | DCG、nDCG、Recall、MRR、処理時間の分位計算そのものを確認します。 |
@@ -19,7 +20,7 @@
 ```sh
 cmake --build build -j
 ctest --test-dir build \
-  -R '^(v2_search_quality|ann_v2|v2_daemon_reliability|segment_health_regression|search_quality_metrics)$' \
+  -R '^(v2_search_quality|ann_v2|ann_corpus_v2|v2_daemon_reliability|segment_health_regression|search_quality_metrics)$' \
   --output-on-failure
 ```
 
@@ -122,6 +123,27 @@ cmake --build build --target v2_segment_search_benchmark -j
 1億語測定のCPU、内部SSD、メモリー、観測オーバーヘッドを含む詳細条件と結果は、
 [1億語エントリー・1000セグメント字句検索ベンチマーク](../../docs/large-dictionary-benchmark-report-2026-08-01.md)
 を参照してください。
+
+## `v2_ann_segment_benchmark`
+
+`v2_ann_segment_benchmark`は通常のCTestへ登録されない、ANN呼び出し回数のセグメント数依存を
+比較する実行ファイルです。指定した総ベクトル数を各セグメントへ均等分割し、全セグメントのANNを
+個別検索する方式と、全体の基底ANNを1回検索する方式を同じ検索ベクトルで測ります。
+
+```sh
+cmake --build build --target v2_ann_segment_benchmark -j
+./build/v2_ann_segment_benchmark \
+  --segments 1000 \
+  --vectors 100000 \
+  --dimensions 32 \
+  --iterations 101 \
+  --top-k 10
+```
+
+5回事前実行した後、中央値、p95、中央値から換算したQPS、総当たり上位結果に対するRecallを
+タブ区切りで出力します。索引構築と総当たり正解計算は検索時間へ含めません。このQPSはHTTP、
+レスポンス生成、同時実行を含まないANN候補取得部分の値です。測定条件と2026年8月7日の結果は
+[ANN検索の基底スナップショットと更新差分](../../docs/ann-search.md)を参照してください。
 
 ## 大規模な基準試験
 

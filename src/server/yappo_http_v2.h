@@ -31,6 +31,7 @@ int YAP_V2_http_runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
 int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
                               YAP_V2_OPERATIONAL_STATE *state);
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime);
+int YAP_V2_http_runtime_maintain_ann(YAP_V2_HTTP_RUNTIME *runtime);
 
 /* Executes a request against one validated v2 snapshot. The returned UTF-8 JSON
  * buffer is owned by the caller and must be freed. */

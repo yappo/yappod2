@@ -192,6 +192,13 @@ static void test_file_header_is_fixed_little_endian(void **state) {
   assert_int_equal(YAP_V2_file_header_decode(encoded, &output), YAP_V2_INVALID_FORMAT);
   input.generation = 0U;
   assert_int_equal(YAP_V2_file_header_encode(&input, encoded), YAP_V2_INVALID_FORMAT);
+  input.generation = 1U;
+  input.file_type = YAP_V2_FILE_ANN_BASE;
+  assert_int_equal(YAP_V2_file_header_encode(&input, encoded), YAP_V2_OK);
+  assert_int_equal(YAP_V2_file_header_decode(encoded, &output), YAP_V2_OK);
+  assert_int_equal(output.file_type, YAP_V2_FILE_ANN_BASE);
+  input.file_type = YAP_V2_FILE_ANN_BASE + 1U;
+  assert_int_equal(YAP_V2_file_header_encode(&input, encoded), YAP_V2_INVALID_FORMAT);
 }
 
 int main(void) {

@@ -416,7 +416,7 @@ static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
   return 0;
 }
 
-static int core_ready(const worker_t *worker) {
+static int core_ready(const worker_t *worker, YAP_V2_OPERATIONAL_STATE *state) {
   int ready = 0;
   YAP_V2_CORE_HTTP_RESPONSE response;
   YAP_V2_core_http_response_init(&response);
@@ -424,8 +424,11 @@ static int core_ready(const worker_t *worker) {
                                       runtime_policy.request_timeout_ms,
                                       "GET", "/health/ready", NULL, NULL, 0U,
                                       &response) == YAP_V2_CORE_HTTP_OK &&
-      response.status == 200)
-    ready = 1;
+      response.status == 200) {
+    ready = state == NULL ||
+            YAP_V2_operational_state_merge_ann_json(state, response.body,
+                                                     response.body_bytes) == YAP_V2_OK;
+  }
   YAP_V2_core_http_response_free(&response);
   return ready;
 }
@@ -441,7 +444,7 @@ static int handle_operational(FILE *stream, const worker_t *worker, endpoint_t e
                          sizeof(live) - 1U);
   status = YAP_V2_operational_probe_index_with_policy(
     worker->index_dir, &compaction_policy, &state, error, sizeof(error));
-  if (status != YAP_V2_OK || !core_ready(worker)) state.ready = 0;
+  if (status != YAP_V2_OK || !core_ready(worker, &state)) state.ready = 0;
   if (endpoint == ENDPOINT_READY) {
     if (YAP_V2_operational_state_json(&state, "yappod_front", &body, &body_bytes) != YAP_V2_OK)
       return send_json_error(stream, 500, "internal_error", "Internal Server Error");

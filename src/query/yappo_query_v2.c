@@ -322,9 +322,128 @@ static int collect_lexical(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
   return status;
 }
 
-static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
-                          const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
-                          const YAP_V2_QUERY_REQUEST *request, CANDIDATE_SET *candidates) {
+static int collect_vector_base(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                               const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
+                               const YAP_V2_ANN_CORPUS *corpus,
+                               const YAP_V2_ANN_QUERY_PLAN *plan,
+                               const YAP_V2_QUERY_REQUEST *request,
+                               CANDIDATE_SET *candidates, YAP_V2_QUERY_STATS *stats) {
+  CANDIDATE_SET base_candidates;
+  YAP_V2_FILTER *filters = NULL;
+  unsigned char *filter_states = NULL;
+  uint64_t *keys = NULL;
+  size_t request_count, key_count = 0U, i;
+  int status = YAP_V2_OK;
+  int filter_enabled = request->filter_json.len > 0U;
+  memset(&base_candidates, 0, sizeof(base_candidates));
+  if (corpus == NULL || plan == NULL || corpus->vector_count == 0U) return YAP_V2_OK;
+  if (plan->base_segment_count != corpus->segment_count ||
+      plan->current_segment_count != segment_count) return YAP_V2_INVALID_ARGUMENT;
+  request_count = request->candidate_k > SIZE_MAX / 4U ?
+                  corpus->vector_count : request->candidate_k * 4U;
+  if (request_count > corpus->vector_count) request_count = corpus->vector_count;
+  filters = calloc(segment_count, sizeof(*filters));
+  filter_states = calloc(segment_count, sizeof(*filter_states));
+  if (filters == NULL || filter_states == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
+  for (i = 0U; i < segment_count; i++) YAP_V2_filter_init(&filters[i]);
+  status = candidate_set_init(&base_candidates, request->candidate_k);
+  if (status != YAP_V2_OK) goto done;
+  for (;;) {
+    uint64_t *resized = realloc(keys, sizeof(*keys) * request_count);
+    if (resized == NULL) { status = YAP_V2_ALLOCATION_FAILED; break; }
+    keys = resized;
+    memset(base_candidates.hash, 0,
+           sizeof(*base_candidates.hash) * base_candidates.hash_capacity);
+    base_candidates.count = 0U;
+    status = YAP_V2_ann_corpus_search(corpus, request->query_vector,
+                                      request->query_dimensions, request_count,
+                                      keys, request_count, &key_count);
+    if (stats != NULL) stats->base_search_calls++;
+    if (status != YAP_VECTOR_OK && status != YAP_V2_OK) break;
+    for (i = 0U; status == YAP_V2_OK && i < key_count; i++) {
+      size_t base_segment = (size_t)(keys[i] >> 32U);
+      size_t passage_ordinal = (size_t)(keys[i] & UINT64_C(0xffffffff));
+      size_t current_segment;
+      const YAP_V2_SEGMENT *documents;
+      const YAP_V2_VECTOR_SEGMENT *vectors;
+      const YAP_V2_PASSAGE_VIEW *passage;
+      YAP_V2_DOCUMENT_HIT document_hit;
+      CANDIDATE candidate;
+      double score;
+      if (stats != NULL) stats->candidates_examined++;
+      if (base_segment >= plan->base_segment_count ||
+          plan->base_to_current[base_segment] == SIZE_MAX) {
+        if (stats != NULL) stats->candidates_rejected++;
+        continue;
+      }
+      current_segment = plan->base_to_current[base_segment];
+      documents = YAP_V2_snapshot_segment_documents(snapshot, current_segment);
+      vectors = segments[current_segment].vector == NULL ? NULL :
+                segments[current_segment].vector->vectors;
+      if (documents == NULL || vectors == NULL || passage_ordinal >= documents->passage_count ||
+          passage_ordinal >= vectors->entry_count ||
+          !bytes_equal(documents->passages[passage_ordinal].id,
+                       vectors->entries[passage_ordinal].id)) {
+        status = YAP_V2_CONFLICT;
+        break;
+      }
+      passage = &documents->passages[passage_ordinal];
+      if (YAP_V2_snapshot_lookup_document(snapshot, passage->parent_document_id,
+                                          &document_hit) != YAP_V2_OK ||
+          document_hit.segment_ordinal != current_segment) {
+        if (stats != NULL) stats->candidates_rejected++;
+        continue;
+      }
+      if (filter_enabled && filter_states[current_segment] == 0U) {
+        if (segments[current_segment].metadata == NULL) { status = YAP_V2_INVALID_ARGUMENT; break; }
+        status = YAP_V2_filter_compile(request->filter_json,
+                                       segments[current_segment].metadata,
+                                       &filters[current_segment]);
+        if (status != YAP_V2_OK) break;
+        filter_states[current_segment] = 1U;
+      }
+      if (!filter_matches(&filters[current_segment], filter_enabled,
+                          document_hit.document_ordinal)) {
+        if (stats != NULL) stats->candidates_rejected++;
+        continue;
+      }
+      status = YAP_Vector_score(vectors->metric, request->query_vector,
+                                vectors->entries[passage_ordinal].values,
+                                request->query_dimensions, &score);
+      if (status != YAP_VECTOR_OK) break;
+      candidate.id = request->scope == YAP_V2_SEARCH_DOCUMENTS ?
+                     passage->parent_document_id : passage->id;
+      candidate.parent = passage->parent_document_id;
+      candidate.segment = current_segment;
+      candidate.ordinal = request->scope == YAP_V2_SEARCH_DOCUMENTS ?
+                          document_hit.document_ordinal : passage_ordinal;
+      candidate.score = score;
+      status = candidate_set_add(&base_candidates, &candidate);
+    }
+    if (status != YAP_V2_OK) break;
+    if (base_candidates.count >= request->candidate_k || request_count == corpus->vector_count)
+      break;
+    request_count = request_count > corpus->vector_count / 2U ?
+                    corpus->vector_count : request_count * 2U;
+    if (stats != NULL) stats->retry_search_calls++;
+  }
+  for (i = 0U; status == YAP_V2_OK && i < base_candidates.count; i++)
+    status = candidate_set_add(candidates, &base_candidates.items[i]);
+done:
+  if (filters != NULL)
+    for (i = 0U; i < segment_count; i++) YAP_V2_filter_free(&filters[i]);
+  free(filters); free(filter_states); free(keys);
+  candidate_set_free(&base_candidates);
+  return status;
+}
+
+static int collect_vector_segments(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                   const YAP_V2_QUERY_SEGMENT *segments,
+                                   size_t segment_count,
+                                   const YAP_V2_ANN_QUERY_PLAN *plan,
+                                   const YAP_V2_QUERY_REQUEST *request,
+                                   CANDIDATE_SET *candidates,
+                                   YAP_V2_QUERY_STATS *stats) {
   size_t s;
   for (s = 0U; s < segment_count; s++) {
     const YAP_V2_SEGMENT *documents = YAP_V2_snapshot_segment_documents(snapshot, s);
@@ -333,6 +452,7 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     CANDIDATE_SET segment_candidates;
     size_t local_count, i, request_count, entry_count;
     int status, filter_enabled = request->filter_json.len > 0U;
+    if (plan != NULL && !plan->current_is_delta[s]) continue;
     if (documents == NULL)
       return YAP_V2_INVALID_ARGUMENT;
     if (documents->passage_count == 0U) continue;
@@ -367,11 +487,13 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
       status = YAP_V2_ann_search(segments[s].vector, request->query_vector,
                                  request->query_dimensions, request_count, local, request_count,
                                  &local_count);
+      if (stats != NULL) stats->delta_search_calls++;
       for (i = 0U; status == YAP_VECTOR_OK && i < local_count; i++) {
         const YAP_V2_PASSAGE_VIEW *passage;
         YAP_V2_DOCUMENT_HIT document_hit;
         CANDIDATE candidate;
         size_t passage_ordinal;
+        if (stats != NULL) stats->candidates_examined++;
         passage_ordinal = local[i].ordinal;
         if (passage_ordinal >= documents->passage_count ||
             !bytes_equal(documents->passages[passage_ordinal].id, local[i].id)) {
@@ -383,7 +505,7 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                                             &document_hit) != YAP_V2_OK ||
             document_hit.segment_ordinal != s ||
             !filter_matches(&filter, filter_enabled, document_hit.document_ordinal))
-          continue;
+          { if (stats != NULL) stats->candidates_rejected++; continue; }
         candidate.id = request->scope == YAP_V2_SEARCH_DOCUMENTS ?
                        passage->parent_document_id : passage->id;
         candidate.parent = passage->parent_document_id;
@@ -396,6 +518,7 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
       if (status != YAP_VECTOR_OK && status != YAP_V2_OK) break;
       if (segment_candidates.count >= request->candidate_k || request_count == entry_count) break;
       request_count = request_count > entry_count / 2U ? entry_count : request_count * 2U;
+      if (stats != NULL) stats->retry_search_calls++;
     }
     for (i = 0U; status == YAP_V2_OK && i < segment_candidates.count; i++)
       status = candidate_set_add(candidates, &segment_candidates.items[i]);
@@ -405,6 +528,23 @@ static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     if (status != YAP_VECTOR_OK && status != YAP_V2_OK) return status;
   }
   return YAP_V2_OK;
+}
+
+static int collect_vector(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                          const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
+                          const YAP_V2_ANN_CORPUS *corpus,
+                          const YAP_V2_ANN_QUERY_PLAN *plan,
+                          const YAP_V2_QUERY_REQUEST *request, CANDIDATE_SET *candidates,
+                          YAP_V2_QUERY_STATS *stats) {
+  int status = YAP_V2_OK;
+  if (corpus != NULL && plan != NULL)
+    status = collect_vector_base(snapshot, segments, segment_count, corpus, plan,
+                                 request, candidates, stats);
+  if (status == YAP_V2_OK)
+    status = collect_vector_segments(snapshot, segments, segment_count,
+                                     corpus == NULL ? NULL : plan,
+                                     request, candidates, stats);
+  return status;
 }
 
 static int add_u64(uint64_t *total, uint64_t value) {
@@ -445,11 +585,15 @@ int YAP_V2_query_corpus_stats_build(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
   return status;
 }
 
-int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
-                         const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
-                         const YAP_V2_QUERY_CORPUS_STATS *stats,
-                         const YAP_V2_QUERY_REQUEST *request, YAP_V2_QUERY_HIT *hits,
-                         size_t hit_capacity, size_t *hit_count) {
+int YAP_V2_query_execute_with_ann(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                  const YAP_V2_QUERY_SEGMENT *segments,
+                                  size_t segment_count,
+                                  const YAP_V2_QUERY_CORPUS_STATS *stats,
+                                  const YAP_V2_ANN_CORPUS *ann_corpus,
+                                  const YAP_V2_ANN_QUERY_PLAN *ann_plan,
+                                  const YAP_V2_QUERY_REQUEST *request,
+                                  YAP_V2_QUERY_HIT *hits, size_t hit_capacity,
+                                  size_t *hit_count, YAP_V2_QUERY_STATS *query_stats) {
   CANDIDATE_SET lexical, vector;
   YAP_HYBRID_CANDIDATE *lexical_rrf = NULL, *vector_rrf = NULL;
   YAP_HYBRID_HIT *fused = NULL;
@@ -457,6 +601,7 @@ int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
   int status = YAP_V2_OK;
   memset(&lexical, 0, sizeof(lexical));
   memset(&vector, 0, sizeof(vector));
+  if (query_stats != NULL) memset(query_stats, 0, sizeof(*query_stats));
   if (snapshot == NULL || segments == NULL || stats == NULL || request == NULL || hits == NULL ||
       hit_count == NULL || stats->generation != YAP_V2_snapshot_generation(snapshot) ||
       segment_count == 0U || segment_count != YAP_V2_snapshot_segment_count(snapshot) ||
@@ -480,7 +625,8 @@ int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
     status = collect_lexical(snapshot, segments, segment_count, &stats->lexical,
                              request, &lexical);
   if (status == YAP_V2_OK && request->mode != YAP_V2_SEARCH_LEXICAL)
-    status = collect_vector(snapshot, segments, segment_count, request, &vector);
+    status = collect_vector(snapshot, segments, segment_count, ann_corpus, ann_plan,
+                            request, &vector, query_stats);
   if (status != YAP_V2_OK) goto done;
   qsort(lexical.items, lexical.count, sizeof(*lexical.items), candidate_compare);
   qsort(vector.items, vector.count, sizeof(*vector.items), candidate_compare);
@@ -525,4 +671,14 @@ done:
   free(vector_rrf);
   free(fused);
   return status;
+}
+
+int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                         const YAP_V2_QUERY_SEGMENT *segments, size_t segment_count,
+                         const YAP_V2_QUERY_CORPUS_STATS *stats,
+                         const YAP_V2_QUERY_REQUEST *request, YAP_V2_QUERY_HIT *hits,
+                         size_t hit_capacity, size_t *hit_count) {
+  return YAP_V2_query_execute_with_ann(snapshot, segments, segment_count, stats,
+                                       NULL, NULL, request, hits, hit_capacity,
+                                       hit_count, NULL);
 }

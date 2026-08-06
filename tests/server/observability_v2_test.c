@@ -54,6 +54,8 @@ static void test_probe_json_and_compaction_status(void **state) {
   assert_non_null(strstr(json, "\"generation\":7")); assert_non_null(strstr(json, "\"precomputed_ready\""));
   assert_non_null(strstr(json, "\"succeeded\""));
   assert_non_null(strstr(json, "\"segment_health\""));
+  assert_non_null(strstr(json, "\"ann\""));
+  assert_non_null(strstr(json, "\"base_search_calls\":0"));
   assert_non_null(strstr(json, "\"small_segment_threshold_bytes\":67108864"));
   assert_int_equal(strlen(json), json_bytes); free(json);
   assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root, "compaction.state"), 0);
@@ -94,6 +96,17 @@ static void test_metrics_are_thread_safe_and_bounded(void **state) {
   operational.auto_compaction_enabled = 1;
   operational.auto_compaction_needed = 0;
   operational.embedding_configured = 1; operational.compaction_state = YAP_V2_COMPACTION_RUNNING;
+  operational.ann_base_generation = 8U;
+  operational.ann_base_vectors = 75U;
+  operational.ann_delta_segments = 2U;
+  operational.ann_missing_base_segments = 1U;
+  operational.ann_base_search_calls = 100U;
+  operational.ann_delta_search_calls = 20U;
+  operational.ann_retry_search_calls = 3U;
+  operational.ann_candidates_examined = 400U;
+  operational.ann_candidates_rejected = 25U;
+  operational.ann_rebuilds = 4U;
+  operational.ann_rebuild_failures = 1U;
   assert_int_equal(YAP_V2_metrics_render(&metrics, &operational, 2U, 100U, 4U, 4096U,
                                          &output, &output_bytes), YAP_V2_OK);
   assert_non_null(strstr(output, "yappod_v2_requests_total{operation=\"search\",status_class=\"2xx\"} 1000"));
@@ -112,6 +125,16 @@ static void test_metrics_are_thread_safe_and_bounded(void **state) {
   assert_non_null(strstr(output, "yappod_v2_small_segment_run 2"));
   assert_non_null(strstr(output, "yappod_v2_auto_compaction_enabled 1"));
   assert_non_null(strstr(output, "yappod_v2_auto_compaction_needed 0"));
+  assert_non_null(strstr(output, "yappod_v2_ann_base_generation 8"));
+  assert_non_null(strstr(output, "yappod_v2_ann_base_vectors 75"));
+  assert_non_null(strstr(output, "yappod_v2_ann_delta_segments 2"));
+  assert_non_null(strstr(output, "yappod_v2_ann_missing_base_segments 1"));
+  assert_non_null(strstr(output, "yappod_v2_ann_search_calls_total{kind=\"base\"} 100"));
+  assert_non_null(strstr(output, "yappod_v2_ann_search_calls_total{kind=\"delta\"} 20"));
+  assert_non_null(strstr(output, "yappod_v2_ann_retry_search_calls_total 3"));
+  assert_non_null(strstr(output, "yappod_v2_ann_candidates_total{result=\"rejected\"} 25"));
+  assert_non_null(strstr(output, "yappod_v2_ann_rebuilds_total{result=\"success\"} 4"));
+  assert_non_null(strstr(output, "yappod_v2_ann_rebuilds_total{result=\"failure\"} 1"));
   assert_non_null(strstr(output, "yappod_v2_compaction_state{state=\"running\"} 1"));
   assert_int_equal(strlen(output), output_bytes); free(output); YAP_V2_metrics_close(&metrics);
 }

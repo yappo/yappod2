@@ -108,6 +108,7 @@ set(YAPPOD_COMPONENTS_SOURCES
 
 set(YAPPOD_QUERY_SOURCES
   ${SRC_DIR}/query/yappo_bm25.c
+  ${SRC_DIR}/query/yappo_ann_corpus_v2.c
   ${SRC_DIR}/query/yappo_filter_v2.c
   ${SRC_DIR}/query/yappo_snippet_v2.c
   ${SRC_DIR}/query/yappo_lexical_search_v2.c
@@ -504,6 +505,12 @@ if(YAPPOD_TESTS_NODAEMON)
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
+    ann_corpus_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/ann_corpus_v2_test.c
+    LABEL standalone
+    LIBRARIES yappod_query
+  )
+  add_yappod_cmocka_test(
     retrieve_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/retrieve_v2_test.c
     LABEL standalone
@@ -587,6 +594,13 @@ if(YAPPOD_TESTS_NODAEMON)
     ${TEST_COMMON_DIR} ${QUALITY_TEST_DIR})
   target_link_libraries(v2_segment_search_benchmark PRIVATE
     yappod_server yappod_components yappod_test_support)
+
+  add_executable(v2_ann_segment_benchmark
+    ${QUALITY_TEST_DIR}/v2_ann_segment_benchmark.c
+  )
+  yappod_enable_warnings(v2_ann_segment_benchmark)
+  target_link_libraries(v2_ann_segment_benchmark PRIVATE
+    yappod_components m)
 
   add_yappod_cmocka_test(
     v2_search_quality

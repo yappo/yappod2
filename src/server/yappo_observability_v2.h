@@ -34,6 +34,17 @@ typedef struct {
   int embedding_configured;
   char embedding_model_id[YAP_V2_MAX_MODEL_ID_BYTES + 1U];
   uint32_t embedding_dimensions;
+  uint64_t ann_base_generation;
+  uint64_t ann_base_vectors;
+  size_t ann_delta_segments;
+  size_t ann_missing_base_segments;
+  uint64_t ann_base_search_calls;
+  uint64_t ann_delta_search_calls;
+  uint64_t ann_retry_search_calls;
+  uint64_t ann_candidates_examined;
+  uint64_t ann_candidates_rejected;
+  uint64_t ann_rebuilds;
+  uint64_t ann_rebuild_failures;
   YAP_V2_COMPACTION_STATE compaction_state;
   uint64_t compaction_generation;
   int64_t compaction_updated_at_unix;
@@ -56,6 +67,9 @@ int YAP_V2_operational_probe_index_with_policy(
   YAP_V2_OPERATIONAL_STATE *state, char *error, size_t error_size);
 int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const char *service,
                                   char **json, size_t *json_bytes);
+int YAP_V2_operational_state_merge_ann_json(YAP_V2_OPERATIONAL_STATE *state,
+                                            const unsigned char *json,
+                                            size_t json_bytes);
 int YAP_V2_metrics_init(YAP_V2_METRICS *metrics);
 void YAP_V2_metrics_close(YAP_V2_METRICS *metrics);
 void YAP_V2_metrics_record(YAP_V2_METRICS *metrics, YAP_V2_OBSERVE_OPERATION operation,

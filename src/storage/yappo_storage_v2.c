@@ -318,7 +318,7 @@ static uint64_t get_u64_le(const unsigned char *input) {
 
 static int file_header_type_valid(uint32_t file_type) {
   return (file_type >= YAP_V2_FILE_TERMS && file_type <= YAP_V2_FILE_TOMBSTONES) ||
-         file_type == YAP_V2_FILE_MANIFEST;
+         file_type == YAP_V2_FILE_MANIFEST || file_type == YAP_V2_FILE_ANN_BASE;
 }
 
 int YAP_V2_file_header_encode(const YAP_V2_FILE_HEADER *header,
