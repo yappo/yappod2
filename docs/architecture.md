@@ -136,9 +136,11 @@ flowchart LR
 ```
 
 `server`は要求を内部の検索条件へ変換し、現在のsnapshotと各segmentのcomponentを`query`へ
-渡します。`query`は検索方式ごとの候補を作り、可視性、filter、score、hybrid統合を適用します。
+渡します。ベクトル検索では、runtimeが所有する基底ANNを1回検索し、基底作成後の更新差分だけを
+segment単位で追加検索します。`query`は検索方式ごとの候補を作り、可視性、filter、score、hybrid統合を適用します。
 `server`が文書情報、snippet、cursorを応答JSONへ整形します。検索意味論は
-[検索](search.md)を参照してください。
+[検索](search.md)、基底ANNの所有と再構築は
+[ANN検索の基底スナップショットと更新差分](ann-search.md)を参照してください。
 
 ### retrieve
 

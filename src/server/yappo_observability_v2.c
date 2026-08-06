@@ -157,15 +157,16 @@ int YAP_V2_operational_probe_index(
 int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const char *service,
                                   char **json, size_t *json_bytes) {
   yyjson_mut_doc *document;
-  yyjson_mut_val *root, *embedding, *compaction, *segment_health;
+  yyjson_mut_val *root, *embedding, *ann, *compaction, *segment_health;
   char *rendered;
   if (state == NULL || service == NULL || json == NULL || json_bytes == NULL) return YAP_V2_INVALID_ARGUMENT;
   *json = NULL; *json_bytes = 0U; document = yyjson_mut_doc_new(NULL);
   if (document == NULL) return YAP_V2_ALLOCATION_FAILED;
   root = yyjson_mut_obj(document); embedding = yyjson_mut_obj(document);
+  ann = yyjson_mut_obj(document);
   compaction = yyjson_mut_obj(document);
   segment_health = yyjson_mut_obj(document);
-  if (root == NULL || embedding == NULL || compaction == NULL ||
+  if (root == NULL || embedding == NULL || ann == NULL || compaction == NULL ||
       segment_health == NULL ||
       !yyjson_mut_obj_add_str(document, root, "status", state->ready ? "ready" : "not_ready") ||
       !yyjson_mut_obj_add_str(document, root, "service", service) ||
@@ -209,6 +210,25 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
       !yyjson_mut_obj_add_str(document, embedding, "model_id", state->embedding_model_id) ||
       !yyjson_mut_obj_add_uint(document, embedding, "dimensions", state->embedding_dimensions) ||
       !yyjson_mut_obj_add_val(document, root, "embedding", embedding) ||
+      !yyjson_mut_obj_add_uint(document, ann, "base_generation", state->ann_base_generation) ||
+      !yyjson_mut_obj_add_uint(document, ann, "base_vectors", state->ann_base_vectors) ||
+      !yyjson_mut_obj_add_uint(document, ann, "delta_segments", state->ann_delta_segments) ||
+      !yyjson_mut_obj_add_uint(document, ann, "missing_base_segments",
+                              state->ann_missing_base_segments) ||
+      !yyjson_mut_obj_add_uint(document, ann, "base_search_calls",
+                              state->ann_base_search_calls) ||
+      !yyjson_mut_obj_add_uint(document, ann, "delta_search_calls",
+                              state->ann_delta_search_calls) ||
+      !yyjson_mut_obj_add_uint(document, ann, "retry_search_calls",
+                              state->ann_retry_search_calls) ||
+      !yyjson_mut_obj_add_uint(document, ann, "candidates_examined",
+                              state->ann_candidates_examined) ||
+      !yyjson_mut_obj_add_uint(document, ann, "candidates_rejected",
+                              state->ann_candidates_rejected) ||
+      !yyjson_mut_obj_add_uint(document, ann, "rebuilds", state->ann_rebuilds) ||
+      !yyjson_mut_obj_add_uint(document, ann, "rebuild_failures",
+                              state->ann_rebuild_failures) ||
+      !yyjson_mut_obj_add_val(document, root, "ann", ann) ||
       !yyjson_mut_obj_add_str(document, compaction, "state",
         YAP_V2_compaction_state_name(state->compaction_state)) ||
       !yyjson_mut_obj_add_uint(document, compaction, "generation", state->compaction_generation) ||
@@ -221,6 +241,39 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
   yyjson_mut_doc_free(document);
   if (rendered == NULL) return YAP_V2_ALLOCATION_FAILED;
   *json = rendered; return YAP_V2_OK;
+}
+
+int YAP_V2_operational_state_merge_ann_json(YAP_V2_OPERATIONAL_STATE *state,
+                                            const unsigned char *json,
+                                            size_t json_bytes) {
+  yyjson_doc *document;
+  yyjson_val *root, *ann, *value;
+  if (state == NULL || json == NULL || json_bytes == 0U) return YAP_V2_INVALID_ARGUMENT;
+  document = yyjson_read((const char *)json, json_bytes, YYJSON_READ_NOFLAG);
+  root = document == NULL ? NULL : yyjson_doc_get_root(document);
+  ann = yyjson_is_obj(root) ? yyjson_obj_get(root, "ann") : NULL;
+  if (!yyjson_is_obj(ann)) {
+    if (document != NULL) yyjson_doc_free(document);
+    return YAP_V2_INVALID_FORMAT;
+  }
+#define COPY_ANN_UINT(json_key, field) \
+  value = yyjson_obj_get(ann, json_key); \
+  if (!yyjson_is_uint(value)) { yyjson_doc_free(document); return YAP_V2_INVALID_FORMAT; } \
+  state->field = yyjson_get_uint(value)
+  COPY_ANN_UINT("base_generation", ann_base_generation);
+  COPY_ANN_UINT("base_vectors", ann_base_vectors);
+  COPY_ANN_UINT("delta_segments", ann_delta_segments);
+  COPY_ANN_UINT("missing_base_segments", ann_missing_base_segments);
+  COPY_ANN_UINT("base_search_calls", ann_base_search_calls);
+  COPY_ANN_UINT("delta_search_calls", ann_delta_search_calls);
+  COPY_ANN_UINT("retry_search_calls", ann_retry_search_calls);
+  COPY_ANN_UINT("candidates_examined", ann_candidates_examined);
+  COPY_ANN_UINT("candidates_rejected", ann_candidates_rejected);
+  COPY_ANN_UINT("rebuilds", ann_rebuilds);
+  COPY_ANN_UINT("rebuild_failures", ann_rebuild_failures);
+#undef COPY_ANN_UINT
+  yyjson_doc_free(document);
+  return YAP_V2_OK;
 }
 
 int YAP_V2_metrics_init(YAP_V2_METRICS *metrics) {
@@ -317,6 +370,17 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
       "# TYPE yappod_v2_inflight_request_limit gauge\nyappod_v2_inflight_request_limit %zu\n"
       "# TYPE yappod_v2_inflight_byte_limit gauge\nyappod_v2_inflight_byte_limit %zu\n"
       "# TYPE yappod_v2_embedding_configured gauge\nyappod_v2_embedding_configured %d\n"
+      "# TYPE yappod_v2_ann_base_generation gauge\nyappod_v2_ann_base_generation %llu\n"
+      "# TYPE yappod_v2_ann_base_vectors gauge\nyappod_v2_ann_base_vectors %llu\n"
+      "# TYPE yappod_v2_ann_delta_segments gauge\nyappod_v2_ann_delta_segments %zu\n"
+      "# TYPE yappod_v2_ann_missing_base_segments gauge\nyappod_v2_ann_missing_base_segments %zu\n"
+      "# TYPE yappod_v2_ann_search_calls_total counter\nyappod_v2_ann_search_calls_total{kind=\"base\"} %llu\n"
+      "yappod_v2_ann_search_calls_total{kind=\"delta\"} %llu\n"
+      "# TYPE yappod_v2_ann_retry_search_calls_total counter\nyappod_v2_ann_retry_search_calls_total %llu\n"
+      "# TYPE yappod_v2_ann_candidates_total counter\nyappod_v2_ann_candidates_total{result=\"examined\"} %llu\n"
+      "yappod_v2_ann_candidates_total{result=\"rejected\"} %llu\n"
+      "# TYPE yappod_v2_ann_rebuilds_total counter\nyappod_v2_ann_rebuilds_total{result=\"success\"} %llu\n"
+      "yappod_v2_ann_rebuilds_total{result=\"failure\"} %llu\n"
       "# TYPE yappod_v2_compaction_state gauge\nyappod_v2_compaction_state{state=\"%s\"} 1\n"
       "# TYPE yappod_v2_compaction_generation gauge\nyappod_v2_compaction_generation %llu\n",
       state->ready != 0, (unsigned long long)state->generation,
@@ -333,6 +397,16 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
       state->auto_compaction_needed != 0,
       inflight, inflight_bytes,
       max_inflight, max_inflight_bytes, state->embedding_configured != 0,
+      (unsigned long long)state->ann_base_generation,
+      (unsigned long long)state->ann_base_vectors,
+      state->ann_delta_segments, state->ann_missing_base_segments,
+      (unsigned long long)state->ann_base_search_calls,
+      (unsigned long long)state->ann_delta_search_calls,
+      (unsigned long long)state->ann_retry_search_calls,
+      (unsigned long long)state->ann_candidates_examined,
+      (unsigned long long)state->ann_candidates_rejected,
+      (unsigned long long)state->ann_rebuilds,
+      (unsigned long long)state->ann_rebuild_failures,
       YAP_V2_compaction_state_name(state->compaction_state),
       (unsigned long long)state->compaction_generation) != 0) goto range;
   *output = rendered; *output_bytes = used; return YAP_V2_OK;

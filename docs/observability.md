@@ -58,6 +58,19 @@ curl -fsS http://127.0.0.1:18400/health/ready
     "model_id": "",
     "dimensions": 0
   },
+  "ann": {
+    "base_generation": 3,
+    "base_vectors": 0,
+    "delta_segments": 0,
+    "missing_base_segments": 0,
+    "base_search_calls": 0,
+    "delta_search_calls": 0,
+    "retry_search_calls": 0,
+    "candidates_examined": 0,
+    "candidates_rejected": 0,
+    "rebuilds": 0,
+    "rebuild_failures": 0
+  },
   "compaction": {
     "state": "idle",
     "generation": 0,
@@ -87,6 +100,17 @@ curl -fsS http://127.0.0.1:18400/health/ready
 | `embedding.state` | ベクトル対応索引なら`precomputed_ready`、語彙索引なら`disabled`です。外部埋め込みサーバーの稼働状態ではありません。 |
 | `embedding.model_id` | 索引`config.toml`に保存されたベクトルモデルの識別子です。 |
 | `embedding.dimensions` | 索引に保存されたベクトルの次元数です。 |
+| `ann.base_generation` | 基底ANNを作ったマニフェスト世代です。ベクトル無効時は0です。 |
+| `ann.base_vectors` | 基底ANNが保持する、その基底世代で可視だった本文断片ベクトル数です。 |
+| `ann.delta_segments` | 基底に含まれず、セグメント単位で追加検索する現行セグメント数です。 |
+| `ann.missing_base_segments` | 基底にはあるものの、現行マニフェストから外れたセグメント数です。 |
+| `ann.base_search_calls` | core起動後に基底ANNを検索した累計回数です。再試行分も含みます。 |
+| `ann.delta_search_calls` | core起動後に更新差分セグメントのANNを検索した累計回数です。 |
+| `ann.retry_search_calls` | 可視性または絞り込みで候補が不足し、取得数を増やした累計回数です。 |
+| `ann.candidates_examined` | ANN候補を現行スナップショットへ照合した累計件数です。 |
+| `ann.candidates_rejected` | 古い版、削除、絞り込みなどで除外したANN候補の累計件数です。 |
+| `ann.rebuilds` | 起動時のキャッシュ再生成を含む、基底ANN構築の成功回数です。 |
+| `ann.rebuild_failures` | 基底ANN再構築の失敗回数です。 |
 | `compaction.state` | `idle`、`running`、`succeeded`、`failed`、`interrupted`、`unknown`のいずれかです。 |
 | `compaction.generation` | `compaction.state`が指す世代です。 |
 | `compaction.updated_at_unix` | 状態ファイルを更新したUnix秒です。 |
@@ -251,6 +275,26 @@ yappod_v2_inflight_request_bytes / yappod_v2_inflight_byte_limit
 ### `yappod_v2_embedding_configured`
 
 索引`config.toml`でベクトルが有効なら`1`、無効なら`0`です。名前に`embedding`を含みますが、外部の埋め込みAPIへ接続確認は行いません。search-webの`[embedding]`が正しいか、サーバーが稼働しているかはこの値から判断できません。
+
+### ANN検索のゲージとカウンター
+
+| メトリクス | 種類 | 意味 |
+|---|---|---|
+| `yappod_v2_ann_base_generation` | gauge | 現在の基底ANNを作った世代です。 |
+| `yappod_v2_ann_base_vectors` | gauge | 基底ANNの可視ベクトル数です。 |
+| `yappod_v2_ann_delta_segments` | gauge | セグメント単位で追加検索する更新差分数です。通常は再構築後に8以下へ戻ります。 |
+| `yappod_v2_ann_missing_base_segments` | gauge | 現行マニフェストから外れた基底セグメント数です。 |
+| `yappod_v2_ann_search_calls_total{kind="base"}` | counter | 基底ANNの検索回数です。 |
+| `yappod_v2_ann_search_calls_total{kind="delta"}` | counter | 更新差分セグメントのANN検索回数です。 |
+| `yappod_v2_ann_retry_search_calls_total` | counter | 候補取得数を増やして再試行した回数です。 |
+| `yappod_v2_ann_candidates_total{result="examined"}` | counter | 現行スナップショットへ照合した候補数です。 |
+| `yappod_v2_ann_candidates_total{result="rejected"}` | counter | 古い版、削除、絞り込みなどで除外した候補数です。 |
+| `yappod_v2_ann_rebuilds_total{result="success"}` | counter | 基底ANN構築の成功回数です。 |
+| `yappod_v2_ann_rebuilds_total{result="failure"}` | counter | 基底ANN再構築の失敗回数です。 |
+
+`delta_segments`または`missing_base_segments`が次の保守周期後も減らず、`result="failure"`が増える
+場合は、coreのログ、メモリー余裕、索引ファイルの検証結果を確認してください。構造と再構築条件は
+[ANN検索の基底スナップショットと更新差分](ann-search.md)を参照してください。
 
 ### `yappod_v2_compaction_state{state="..."}`
 

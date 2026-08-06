@@ -346,7 +346,10 @@ static void *run_reloader(void *opaque) {
   while (!shutdown_requested) {
     while (nanosleep(&interval, &interval) != 0 && errno == EINTR && !shutdown_requested) {}
     interval.tv_sec = 1; interval.tv_nsec = 0;
-    if (!shutdown_requested) (void)YAP_V2_http_runtime_reload(http_runtime);
+    if (!shutdown_requested) {
+      (void)YAP_V2_http_runtime_reload(http_runtime);
+      (void)YAP_V2_http_runtime_maintain_ann(http_runtime);
+    }
   }
   return NULL;
 }
@@ -378,7 +381,10 @@ static void *run_maintenance(void *opaque) {
           maintenance->index_dir, &maintenance->policy, &result,
           &compacted, &small_segments, error, sizeof(error)) == YAP_V2_OK) {
       if (compacted)
-        (void)YAP_V2_http_runtime_reload(maintenance->http_runtime);
+        {
+          (void)YAP_V2_http_runtime_reload(maintenance->http_runtime);
+          (void)YAP_V2_http_runtime_maintain_ann(maintenance->http_runtime);
+        }
     } else {
       fprintf(stderr,
               "Automatic compaction check or run failed for %zu small "
