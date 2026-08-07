@@ -385,7 +385,7 @@ curl -sS http://127.0.0.1:18400/metrics
 
 文書全体の案内は[ドキュメント一覧](docs/README.md)にあります。
 1億語エントリーを1000セグメントへ配置した性能測定の条件、CPU・メモリー・内部SSD負荷、検索時間は、
-[10万・100万文書、1億語エントリー、1000セグメント字句検索ベンチマーク](docs/large-dictionary-benchmark-report-2026-08-01.md)
-
-[ANN検索の基底スナップショット、更新差分、1000セグメント性能測定](docs/ann-search.md)
+[100万文書索引のserver/client並列負荷ベンチマーク](docs/large-dictionary-benchmark-report-2026-08-01.md)
 に記録しています。
+ANN検索のセグメント数依存、基底snapshot、更新差分の性能測定は、
+[ANN検索の基底スナップショット、更新差分、1000セグメント性能測定](docs/ann-search.md)に記録しています。
