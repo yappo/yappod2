@@ -41,6 +41,29 @@ void YAP_V2_core_http_response_free(YAP_V2_CORE_HTTP_RESPONSE *response) {
   YAP_V2_core_http_response_init(response);
 }
 
+void YAP_V2_core_http_client_init(YAP_V2_CORE_HTTP_CLIENT *client) {
+  if (client != NULL) client->handle = NULL;
+}
+
+int YAP_V2_core_http_client_open(YAP_V2_CORE_HTTP_CLIENT *client) {
+  CURL *curl;
+  if (client == NULL || client->handle != NULL)
+    return YAP_V2_CORE_HTTP_INVALID_ARGUMENT;
+  if (pthread_once(&curl_once, initialize_curl) != 0 ||
+      curl_global_status != CURLE_OK)
+    return YAP_V2_CORE_HTTP_IO_ERROR;
+  curl = curl_easy_init();
+  if (curl == NULL) return YAP_V2_CORE_HTTP_IO_ERROR;
+  client->handle = curl;
+  return YAP_V2_CORE_HTTP_OK;
+}
+
+void YAP_V2_core_http_client_close(YAP_V2_CORE_HTTP_CLIENT *client) {
+  if (client == NULL) return;
+  if (client->handle != NULL) curl_easy_cleanup((CURL *)client->handle);
+  client->handle = NULL;
+}
+
 static int parse_content_length(const char *value, size_t *length) {
   size_t parsed = 0U;
   const unsigned char *cursor = (const unsigned char *)value;
@@ -85,6 +108,7 @@ int YAP_V2_core_http_parse_head(const unsigned char *input, size_t input_bytes,
   char *copy = NULL, *cursor, *line_end;
   char version[32], trailing;
   int have_host = 0, have_type = 0, have_authorization = 0;
+  int have_connection = 0;
   if (input == NULL || request == NULL || input_bytes < 4U ||
       input_bytes > YAP_V2_CORE_HTTP_MAX_HEADER_BYTES)
     return YAP_V2_CORE_HTTP_INVALID_ARGUMENT;
@@ -96,6 +120,7 @@ int YAP_V2_core_http_parse_head(const unsigned char *input, size_t input_bytes,
   memcpy(copy, input, input_bytes);
   copy[input_bytes] = '\0';
   YAP_V2_core_http_request_free(request);
+  request->close_connection = 1;
   cursor = copy;
   line_end = strstr(cursor, "\r\n");
   if (line_end == NULL || (size_t)(line_end - cursor) > YAP_V2_CORE_HTTP_MAX_LINE_BYTES) {
@@ -163,6 +188,15 @@ int YAP_V2_core_http_parse_head(const unsigned char *input, size_t input_bytes,
       }
       memcpy(request->authorization, value, value_bytes + 1U);
       have_authorization = 1;
+    } else if (strcasecmp(cursor, "Connection") == 0) {
+      if (have_connection ||
+          (strcasecmp(value, "close") != 0 &&
+           strcasecmp(value, "keep-alive") != 0)) {
+        free(copy);
+        return YAP_V2_CORE_HTTP_INVALID;
+      }
+      request->close_connection = strcasecmp(value, "keep-alive") != 0;
+      have_connection = 1;
     }
     cursor = line_end + 2;
   }
@@ -296,11 +330,13 @@ static int build_url(const char *host, int port, const char *target,
   return written < 0 || (size_t)written >= capacity ? -1 : 0;
 }
 
-int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout_ms,
-                                    const char *method, const char *target,
-                                    const char *authorization, const void *body,
-                                    size_t body_bytes, YAP_V2_CORE_HTTP_RESPONSE *response) {
-  CURL *curl = NULL;
+int YAP_V2_core_http_client_request(YAP_V2_CORE_HTTP_CLIENT *client,
+                                    const char *host, int port,
+                                    uint32_t timeout_ms, const char *method,
+                                    const char *target, const char *authorization,
+                                    const void *body, size_t body_bytes,
+                                    YAP_V2_CORE_HTTP_RESPONSE *response) {
+  CURL *curl;
   CURLcode code;
   struct curl_slist *headers = NULL;
   response_buffer_t buffer = {0};
@@ -308,7 +344,8 @@ int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout
   char *content_type = NULL;
   long http_status = 0L;
   int result = YAP_V2_CORE_HTTP_IO_ERROR;
-  if (host == NULL || port < 1 || port > 65535 || timeout_ms == 0U ||
+  if (client == NULL || client->handle == NULL || host == NULL ||
+      port < 1 || port > 65535 || timeout_ms == 0U ||
       method == NULL || target == NULL || response == NULL ||
       (body_bytes != 0U && body == NULL) ||
       body_bytes > (strcmp(target, "/v2/documents:batch") == 0 ?
@@ -316,12 +353,10 @@ int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout
       build_url(host, port, target, url, sizeof(url)) != 0)
     return YAP_V2_CORE_HTTP_INVALID_ARGUMENT;
   YAP_V2_core_http_response_free(response);
-  if (pthread_once(&curl_once, initialize_curl) != 0 || curl_global_status != CURLE_OK)
-    return YAP_V2_CORE_HTTP_IO_ERROR;
-  curl = curl_easy_init();
-  if (curl == NULL) return YAP_V2_CORE_HTTP_IO_ERROR;
+  curl = (CURL *)client->handle;
+  curl_easy_reset(curl);
   if (append_header(&headers, "Accept: application/json") != 0 ||
-      append_header(&headers, "Connection: close") != 0 ||
+      append_header(&headers, "Connection: keep-alive") != 0 ||
       append_header(&headers, "Expect:") != 0)
     goto done;
   if (body_bytes != 0U && append_header(&headers, "Content-Type: application/json") != 0)
@@ -340,6 +375,7 @@ int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout
       curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)timeout_ms) != CURLE_OK ||
       curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long)timeout_ms) != CURLE_OK ||
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L) != CURLE_OK ||
+      curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L) != CURLE_OK ||
       curl_easy_setopt(curl, CURLOPT_PROXY, "") != CURLE_OK ||
       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L) != CURLE_OK ||
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_response) != CURLE_OK ||
@@ -366,6 +402,5 @@ int YAP_V2_core_http_client_request(const char *host, int port, uint32_t timeout
 done:
   free(buffer.data);
   curl_slist_free_all(headers);
-  if (curl != NULL) curl_easy_cleanup(curl);
   return result;
 }

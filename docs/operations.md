@@ -111,6 +111,10 @@ frontは`[daemon].front_io_threads`本の接続I/Oスレッドを作ります。
 検索compute workerと単一writer threadを作ります。I/O reactorと検索compute workerの既定値は
 それぞれ16です。`[daemon]`の関連する設定は次の意味です。
 
+frontの各I/Oスレッドは専用のcore HTTPクライアントを持ち、HTTP/1.1接続を順次再利用します。したがって、
+定常時のfrontからcoreへの接続数は最大で概ね`front_io_threads`本です。coreが接続を閉じた場合は次の
+要求時に再接続します。
+
 | キー | 制限する対象 |
 |---|---|
 | `front_io_threads` | frontが作成する接続I/Oスレッド数です。 |

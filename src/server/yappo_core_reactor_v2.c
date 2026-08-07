@@ -61,6 +61,7 @@ struct connection {
   int inflight;
   int abandoned;
   int response_pending;
+  int close_after_response;
   int writer_admitted;
 };
 
@@ -148,6 +149,26 @@ static void free_connection(connection_t *connection) {
   free(connection);
 }
 
+static void reset_connection_request(connection_t *connection) {
+  struct timeval timeout;
+  if (connection->writer_admitted) {
+    YAP_V2_runtime_limiter_release(connection->reactor->server->writer_limiter,
+                                   connection->request.content_length);
+    connection->writer_admitted = 0;
+  }
+  YAP_V2_core_http_request_free(&connection->request);
+  YAP_V2_core_http_request_init(&connection->request);
+  connection->request_head_parsed = 0;
+  connection->response_pending = 0;
+  connection->close_after_response = 0;
+  timeout.tv_sec = (time_t)(
+    connection->reactor->server->runtime_policy.request_timeout_ms / 1000U);
+  timeout.tv_usec = (suseconds_t)(
+    (connection->reactor->server->runtime_policy.request_timeout_ms % 1000U) *
+    1000U);
+  bufferevent_set_timeouts(connection->buffered_event, &timeout, &timeout);
+}
+
 static void abandon_connection(connection_t *connection) {
   if (connection->buffered_event != NULL) {
     bufferevent_free(connection->buffered_event);
@@ -167,12 +188,14 @@ static int write_response(connection_t *connection, int status,
     return YAP_V2_INVALID_ARGUMENT;
   output = evbuffer_new();
   if (output == NULL) return YAP_V2_ALLOCATION_FAILED;
+  if (connection->reactor->stopping) connection->close_after_response = 1;
   if (evbuffer_add_printf(
         output,
         "HTTP/1.1 %d %s\r\nServer: Yappo Search Core/2.0\r\n"
         "Content-Type: application/json; charset=utf-8\r\n"
-        "Content-Length: %zu\r\nCache-Control: no-store\r\nConnection: close\r\n",
-        status, reason_phrase(status), body_bytes) < 0 ||
+        "Content-Length: %zu\r\nCache-Control: no-store\r\nConnection: %s\r\n",
+        status, reason_phrase(status), body_bytes,
+        connection->close_after_response ? "close" : "keep-alive") < 0 ||
       (allow != NULL && evbuffer_add_printf(output, "Allow: %s\r\n", allow) < 0) ||
       (accept_query && evbuffer_add(output, "Accept-Query: application/json\r\n",
                                    sizeof("Accept-Query: application/json\r\n") - 1U) != 0) ||
@@ -201,6 +224,12 @@ static void respond_error(connection_t *connection, int status,
     return;
   }
   free(json);
+}
+
+static void respond_fatal_error(connection_t *connection, int status,
+                                const char *code, const char *message) {
+  connection->close_after_response = 1;
+  respond_error(connection, status, code, message, NULL, 0);
 }
 
 static void enqueue_message(reactor_t *reactor, message_t *message) {
@@ -366,14 +395,27 @@ static void submit_request(connection_t *connection) {
 
 static void write_callback(struct bufferevent *buffered_event, void *opaque) {
   connection_t *connection = opaque;
-  if (connection->response_pending &&
-      evbuffer_get_length(bufferevent_get_output(buffered_event)) == 0U)
+  if (!connection->response_pending ||
+      evbuffer_get_length(bufferevent_get_output(buffered_event)) != 0U)
+    return;
+  if (connection->close_after_response) {
+    abandon_connection(connection);
+    return;
+  }
+  reset_connection_request(connection);
+  if (bufferevent_enable(buffered_event, EV_READ) != 0)
     abandon_connection(connection);
 }
 
 static void event_callback(struct bufferevent *buffered_event, short events,
                            void *opaque) {
   connection_t *connection = opaque;
+  if ((events & BEV_EVENT_EOF) != 0 &&
+      (connection->inflight || connection->response_pending)) {
+    connection->close_after_response = 1;
+    (void)bufferevent_disable(buffered_event, EV_READ);
+    return;
+  }
   if ((events & BEV_EVENT_EOF) != 0 && !connection->inflight &&
       !connection->response_pending) {
     size_t buffered_bytes = evbuffer_get_length(
@@ -382,7 +424,7 @@ static void event_callback(struct bufferevent *buffered_event, short events,
         (connection->request_head_parsed &&
          connection->request.have_content_length &&
          buffered_bytes < connection->request.content_length)) {
-      respond_error(connection, 400, "invalid_request", "Bad Request", NULL, 0);
+      abandon_connection(connection);
       return;
     }
   }
@@ -402,12 +444,14 @@ static void read_callback(struct bufferevent *buffered_event, void *opaque) {
     int status;
     if (delimiter.pos < 0) {
       if (input_bytes >= YAP_V2_CORE_HTTP_MAX_HEADER_BYTES)
-        respond_error(connection, 413, "header_too_large", "Content Too Large", NULL, 0);
+        respond_fatal_error(connection, 413, "header_too_large",
+                            "Content Too Large");
       return;
     }
     head_bytes = (size_t)delimiter.pos + 4U;
     if (head_bytes > YAP_V2_CORE_HTTP_MAX_HEADER_BYTES) {
-      respond_error(connection, 413, "header_too_large", "Content Too Large", NULL, 0);
+      respond_fatal_error(connection, 413, "header_too_large",
+                          "Content Too Large");
       return;
     }
     head = evbuffer_pullup(input, (ev_ssize_t)head_bytes);
@@ -417,11 +461,12 @@ static void read_callback(struct bufferevent *buffered_event, void *opaque) {
     }
     status = YAP_V2_core_http_parse_head(head, head_bytes, &connection->request);
     if (status != YAP_V2_CORE_HTTP_OK) {
-      respond_error(connection, 400, "invalid_request", "Bad Request", NULL, 0);
+      respond_fatal_error(connection, 400, "invalid_request", "Bad Request");
       return;
     }
     evbuffer_drain(input, head_bytes);
     connection->request_head_parsed = 1;
+    connection->close_after_response = connection->request.close_connection;
     if (strcmp(connection->request.target, "/v2/documents:batch") == 0) {
       struct timeval ingest_timeout;
       ingest_timeout.tv_sec = (time_t)(
@@ -436,7 +481,8 @@ static void read_callback(struct bufferevent *buffered_event, void *opaque) {
                      server->runtime_policy.ingest_max_body_bytes :
                      YAP_V2_HTTP_MAX_BODY_BYTES;
       if (connection->request.content_length > limit) {
-        respond_error(connection, 413, "body_too_large", "Content Too Large", NULL, 0);
+        respond_fatal_error(connection, 413, "body_too_large",
+                            "Content Too Large");
         return;
       }
       if (strcmp(connection->request.target, "/v2/documents:batch") == 0 &&
@@ -444,7 +490,8 @@ static void read_callback(struct bufferevent *buffered_event, void *opaque) {
         if (YAP_V2_runtime_limiter_acquire(
               server->writer_limiter,
               connection->request.content_length) != YAP_V2_OK) {
-          respond_error(connection, 503, "overloaded", "Service Unavailable", NULL, 0);
+          respond_fatal_error(connection, 503, "overloaded",
+                              "Service Unavailable");
           return;
         }
         connection->writer_admitted = 1;
@@ -458,7 +505,8 @@ static void read_callback(struct bufferevent *buffered_event, void *opaque) {
       connection->request.content_length != 0U) {
     connection->request.body = malloc(connection->request.content_length);
     if (connection->request.body == NULL) {
-      respond_error(connection, 503, "overloaded", "Service Unavailable", NULL, 0);
+      respond_fatal_error(connection, 503, "overloaded",
+                          "Service Unavailable");
       return;
     }
     if (evbuffer_remove(input, connection->request.body,

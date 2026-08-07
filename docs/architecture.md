@@ -70,8 +70,9 @@ flowchart LR
   検索は不変runtimeを要求単位で参照し、更新後は変更のないsegment資源を共有した候補runtimeを構築して、
   短時間のポインタ交換で新世代を公開します。
   独立した保守スレッドはマニフェストdescriptorから小セグメント数を定期確認し、設定した閾値を
-  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。persistent connectionなどの
-  後続状態は[単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
+  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。frontの各I/O workerは専用の
+  libcurlハンドルを持ち、coreとのHTTP/1.1接続を要求間で再利用します。後続状態は
+  [単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
 
 公開HTTPと内部HTTPの正確なmethod、path、header、状態コードは
 [frontとcoreの通信仕様](yappod-core-protocol.md)を参照してください。
