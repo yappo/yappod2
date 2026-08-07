@@ -67,6 +67,8 @@ flowchart LR
 - `yappod_core`は内部HTTPを検証し、1本のacceptorから複数のlibevent reactorへ接続を分配します。
   reactorは非blockingの増分送受信だけを行い、容量固定の検索executorまたは単一writer executorへ
   処理を渡します。reactor数、検索compute worker数、更新待ち件数と本文byte数は独立して設定できます。
+  検索は不変runtimeを要求単位で参照し、更新後は変更のないsegment資源を共有した候補runtimeを構築して、
+  短時間のポインタ交換で新世代を公開します。
   独立した保守スレッドはマニフェストdescriptorから小セグメント数を定期確認し、設定した閾値を
   超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。persistent connectionなどの
   後続状態は[単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
