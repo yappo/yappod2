@@ -213,6 +213,8 @@ static void *run_maintenance(void *opaque) {
     sleep_maintenance_interval(MAINTENANCE_POLL_INTERVAL_MS);
     if (shutdown_requested) break;
     if (maintenance_has_foreground_work(maintenance)) {
+      YAP_V2_http_runtime_record_maintenance_deferral(
+        maintenance->http_runtime);
       idle_samples = 0U;
       continue;
     }

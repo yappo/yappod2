@@ -408,6 +408,17 @@ coreへ接続でき、検証済みの索引を利用できる場合に、`200`�
     "model_id": "example-model-v1",
     "dimensions": 768
   },
+  "update_pipeline": {
+    "microbatches": 0,
+    "requests": 0,
+    "operations": 0,
+    "published_generations": 0,
+    "generations_saved": 0,
+    "max_batch_requests": 0,
+    "max_batch_operations": 0,
+    "wal_recoveries": 0,
+    "maintenance_foreground_deferrals": 0
+  },
   "compaction": {
     "state": "idle",
     "generation": 0,

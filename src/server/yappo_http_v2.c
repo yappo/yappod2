@@ -118,6 +118,15 @@ typedef struct {
   pthread_mutex_t ann_maintenance_lock;
   char *index_dir;
   HTTP_RUNTIME *current;
+  uint64_t ingest_microbatches;
+  uint64_t ingest_requests;
+  uint64_t ingest_operations;
+  uint64_t ingest_published_generations;
+  uint64_t ingest_generations_saved;
+  uint64_t ingest_max_batch_requests;
+  uint64_t ingest_max_batch_operations;
+  uint64_t update_wal_recoveries;
+  uint64_t maintenance_foreground_deferrals;
 } HTTP_RUNTIME_STATE;
 
 static int path_join(char *out, size_t capacity, const char *a, const char *b) {
@@ -1278,7 +1287,8 @@ static void update_group_add_ids(const char **slots, size_t capacity,
 static int apply_ingest_group(
     const char *index_dir, HTTP_PARSED_INGEST *parsed,
     YAP_V2_HTTP_INGEST_ITEM *items, const size_t *indices,
-    size_t index_count) {
+    size_t index_count, uint64_t *published_generations,
+    uint64_t *published_requests) {
   YAP_V2_INGEST_OPERATION *combined;
   YAP_V2_UPDATE_RESULT update;
   char error[256] = {0};
@@ -1307,7 +1317,8 @@ static int apply_ingest_group(
       update_status_is_client_error(status)) {
     YAP_V2_update_result_free(&update);
     for (i = 0U; i < index_count; i++)
-      (void)apply_ingest_group(index_dir, parsed, items, &indices[i], 1U);
+      (void)apply_ingest_group(index_dir, parsed, items, &indices[i], 1U,
+                               published_generations, published_requests);
     return YAP_V2_OK;
   }
   for (i = 0U; i < index_count; i++) {
@@ -1325,6 +1336,11 @@ static int apply_ingest_group(
       update_error_response(status, error, &items[index]);
     }
   }
+  if (status == YAP_V2_OK) {
+    *published_generations = saturated_add_u64(*published_generations, 1U);
+    *published_requests = saturated_add_u64(
+      *published_requests, (uint64_t)index_count);
+  }
   YAP_V2_update_result_free(&update);
   return status;
 }
@@ -1337,8 +1353,9 @@ int YAP_V2_http_runtime_execute_ingest_batch(
   HTTP_PARSED_INGEST *parsed;
   const char **id_slots;
   size_t *group_indices;
-  size_t group_count = 0U, group_operations = 0U, i, j;
-  int published = 0;
+  size_t group_count = 0U, group_operations = 0U;
+  size_t parsed_operations = 0U, i, j;
+  uint64_t published_generations = 0U, published_requests = 0U;
   if (runtime == NULL || runtime->state == NULL || items == NULL ||
       item_count == 0U)
     return YAP_V2_INVALID_ARGUMENT;
@@ -1372,14 +1389,16 @@ int YAP_V2_http_runtime_execute_ingest_batch(
         else
           parsed[i].upserts++;
       }
+    if (parsed[i].parse_status == YAP_V2_OK)
+      parsed_operations += parsed[i].operation_count;
   }
   for (i = 0U; i < item_count; i++) {
     int split = 0;
     if (parsed[i].parse_status != YAP_V2_OK) {
       if (group_count != 0U) {
-        if (apply_ingest_group(state->index_dir, parsed, items,
-                               group_indices, group_count) == YAP_V2_OK)
-          published = 1;
+        (void)apply_ingest_group(
+          state->index_dir, parsed, items, group_indices, group_count,
+          &published_generations, &published_requests);
         group_count = 0U; group_operations = 0U;
         memset(id_slots, 0, ID_SLOT_CAPACITY * sizeof(*id_slots));
       }
@@ -1392,9 +1411,9 @@ int YAP_V2_http_runtime_execute_ingest_batch(
              update_group_contains_ids(id_slots, ID_SLOT_CAPACITY,
                                        &parsed[i]));
     if (split) {
-      if (apply_ingest_group(state->index_dir, parsed, items,
-                             group_indices, group_count) == YAP_V2_OK)
-        published = 1;
+      (void)apply_ingest_group(
+        state->index_dir, parsed, items, group_indices, group_count,
+        &published_generations, &published_requests);
       group_count = 0U; group_operations = 0U;
       memset(id_slots, 0, ID_SLOT_CAPACITY * sizeof(*id_slots));
     }
@@ -1402,11 +1421,11 @@ int YAP_V2_http_runtime_execute_ingest_batch(
     group_operations += parsed[i].operation_count;
     update_group_add_ids(id_slots, ID_SLOT_CAPACITY, &parsed[i]);
   }
-  if (group_count != 0U &&
-      apply_ingest_group(state->index_dir, parsed, items,
-                         group_indices, group_count) == YAP_V2_OK)
-    published = 1;
-  if (published && runtime_state_reload(state) != YAP_V2_OK) {
+  if (group_count != 0U)
+    (void)apply_ingest_group(
+      state->index_dir, parsed, items, group_indices, group_count,
+      &published_generations, &published_requests);
+  if (published_generations != 0U && runtime_state_reload(state) != YAP_V2_OK) {
     for (i = 0U; i < item_count; i++) {
       if (items[i].http_status != 200) continue;
       free(items[i].response);
@@ -1418,6 +1437,24 @@ int YAP_V2_http_runtime_execute_ingest_batch(
       items[i].result = items[i].response == NULL ? -1 : 0;
     }
   }
+  pthread_mutex_lock(&state->lock);
+  state->ingest_microbatches = saturated_add_u64(
+    state->ingest_microbatches, 1U);
+  state->ingest_requests = saturated_add_u64(
+    state->ingest_requests, (uint64_t)item_count);
+  state->ingest_operations = saturated_add_u64(
+    state->ingest_operations, (uint64_t)parsed_operations);
+  state->ingest_published_generations = saturated_add_u64(
+    state->ingest_published_generations, published_generations);
+  state->ingest_generations_saved = saturated_add_u64(
+    state->ingest_generations_saved,
+    published_requests > published_generations ?
+      published_requests - published_generations : 0U);
+  if ((uint64_t)item_count > state->ingest_max_batch_requests)
+    state->ingest_max_batch_requests = (uint64_t)item_count;
+  if ((uint64_t)parsed_operations > state->ingest_max_batch_operations)
+    state->ingest_max_batch_operations = (uint64_t)parsed_operations;
+  pthread_mutex_unlock(&state->lock);
   pthread_mutex_unlock(&state->update_lock);
   for (i = 0U; i < item_count; i++)
     YAP_V2_update_operations_free(parsed[i].operations,
@@ -1433,14 +1470,17 @@ void YAP_V2_http_runtime_init(YAP_V2_HTTP_RUNTIME *runtime) {
 int YAP_V2_http_runtime_open(YAP_V2_HTTP_RUNTIME *runtime, const char *index_dir) {
   HTTP_RUNTIME_STATE *state;
   char recovery_error[256] = {0};
+  int had_wal;
   int status;
   if (runtime == NULL || runtime->state != NULL || index_dir == NULL)
     return YAP_V2_INVALID_ARGUMENT;
+  had_wal = YAP_V2_update_wal_exists(index_dir);
   status = YAP_V2_update_recover(index_dir, recovery_error,
                                  sizeof(recovery_error));
   if (status != YAP_V2_OK) return status;
   state = calloc(1U, sizeof(*state));
   if (state == NULL) return YAP_V2_ALLOCATION_FAILED;
+  state->update_wal_recoveries = had_wal ? 1U : 0U;
   if (pthread_mutex_init(&state->lock, NULL) != 0) { free(state); return YAP_V2_IO_ERROR; }
   if (pthread_mutex_init(&state->update_lock, NULL) != 0) {
     pthread_mutex_destroy(&state->lock); free(state); return YAP_V2_IO_ERROR;
@@ -1548,11 +1588,35 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
     operational->ann_rebuild_failures = current->ann_rebuild_failures;
     pthread_mutex_unlock(&current->ann_stats_lock);
   }
+  pthread_mutex_lock(&state->lock);
+  operational->ingest_microbatches = state->ingest_microbatches;
+  operational->ingest_requests = state->ingest_requests;
+  operational->ingest_operations = state->ingest_operations;
+  operational->ingest_published_generations =
+    state->ingest_published_generations;
+  operational->ingest_generations_saved = state->ingest_generations_saved;
+  operational->ingest_max_batch_requests = state->ingest_max_batch_requests;
+  operational->ingest_max_batch_operations = state->ingest_max_batch_operations;
+  operational->update_wal_recoveries = state->update_wal_recoveries;
+  operational->maintenance_foreground_deferrals =
+    state->maintenance_foreground_deferrals;
+  pthread_mutex_unlock(&state->lock);
   {
     int available = current != NULL;
     runtime_release(current);
     return available ? YAP_V2_OK : YAP_V2_CONFLICT;
   }
+}
+
+void YAP_V2_http_runtime_record_maintenance_deferral(
+    YAP_V2_HTTP_RUNTIME *runtime) {
+  HTTP_RUNTIME_STATE *state;
+  if (runtime == NULL || runtime->state == NULL) return;
+  state = runtime->state;
+  pthread_mutex_lock(&state->lock);
+  state->maintenance_foreground_deferrals = saturated_add_u64(
+    state->maintenance_foreground_deferrals, 1U);
+  pthread_mutex_unlock(&state->lock);
 }
 
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime) {

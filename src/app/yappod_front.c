@@ -429,8 +429,8 @@ static int core_ready(worker_t *worker, YAP_V2_OPERATIONAL_STATE *state) {
                                       &response) == YAP_V2_CORE_HTTP_OK &&
       response.status == 200) {
     ready = state == NULL ||
-            YAP_V2_operational_state_merge_ann_json(state, response.body,
-                                                     response.body_bytes) == YAP_V2_OK;
+            YAP_V2_operational_state_merge_core_json(state, response.body,
+                                                      response.body_bytes) == YAP_V2_OK;
   }
   YAP_V2_core_http_response_free(&response);
   return ready;

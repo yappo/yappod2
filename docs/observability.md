@@ -71,6 +71,17 @@ curl -fsS http://127.0.0.1:18400/health/ready
     "rebuilds": 0,
     "rebuild_failures": 0
   },
+  "update_pipeline": {
+    "microbatches": 12,
+    "requests": 40,
+    "operations": 310,
+    "published_generations": 15,
+    "generations_saved": 25,
+    "max_batch_requests": 8,
+    "max_batch_operations": 96,
+    "wal_recoveries": 0,
+    "maintenance_foreground_deferrals": 18
+  },
   "compaction": {
     "state": "idle",
     "generation": 0,
@@ -245,6 +256,24 @@ frontがディスク上のマニフェストから読んだ現在の世代です
 世代数だけでは断片化を判断できません。更新直後に世代が増えるのは正常です。
 `yappod_v2_manifest_segments`と`yappod_v2_auto_compaction_needed`が自動実行後も下がらない場合に、
 コンパクション状態、空き容量、coreのエラーログを確認してください。
+
+### 更新pipeline
+
+| メトリクス | 意味 |
+|---|---|
+| `yappod_v2_ingest_microbatches_total` | coreのwriterが処理したmicrobatch数です。 |
+| `yappod_v2_ingest_requests_total` | microbatchへ入ったHTTP更新要求数です。 |
+| `yappod_v2_ingest_operations_total` | 構文検証に成功してmicrobatchへ入った更新操作数です。 |
+| `yappod_v2_ingest_published_generations_total` | writerが公開したmanifest世代数です。 |
+| `yappod_v2_ingest_generations_saved_total` | microbatchにより「要求ごとに一世代」の場合より減らせた世代数です。 |
+| `yappod_v2_ingest_max_batch_requests` | 起動後に観測した一microbatchの最大要求数です。 |
+| `yappod_v2_ingest_max_batch_operations` | 起動後に観測した一microbatchの最大操作数です。 |
+| `yappod_v2_update_wal_recoveries_total` | core起動時に検出し、再実行または完了確認したWAL数です。 |
+| `yappod_v2_maintenance_foreground_deferrals_total` | 検索または更新の処理枠が使用中だったため、保守開始判定を延期した回数です。 |
+
+`ingest_requests_total - ingest_published_generations_total`では、入力不正や同一IDによる世代分割も混ざります。
+microbatchだけの効果は`ingest_generations_saved_total`を使用してください。これらはcoreプロセス起動後の累積値で、
+frontはcoreの準備完了応答から取得して公開します。
 
 ### `yappod_v2_inflight_requests`
 
