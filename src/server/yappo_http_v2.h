@@ -41,6 +41,8 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
                               YAP_V2_OPERATIONAL_STATE *state);
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime);
 int YAP_V2_http_runtime_maintain_ann(YAP_V2_HTTP_RUNTIME *runtime);
+void YAP_V2_http_runtime_record_maintenance_deferral(
+  YAP_V2_HTTP_RUNTIME *runtime);
 int YAP_V2_http_runtime_execute_ingest_batch(
   YAP_V2_HTTP_RUNTIME *runtime, YAP_V2_HTTP_INGEST_ITEM *items,
   size_t item_count);

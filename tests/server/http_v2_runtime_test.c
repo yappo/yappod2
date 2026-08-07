@@ -413,6 +413,7 @@ static void test_ingest_batch_publishes_one_generation(void **state) {
   ytest_env_t env;
   YAP_V2_HTTP_RUNTIME runtime;
   YAP_V2_HTTP_INGEST_ITEM items[2];
+  YAP_V2_OPERATIONAL_STATE operational;
   YAP_V2_MANIFEST manifest;
   char path[PATH_MAX];
   size_t i;
@@ -448,6 +449,19 @@ static void test_ingest_batch_publishes_one_generation(void **state) {
   assert_int_equal(manifest.generation, 2U);
   assert_int_equal(manifest.segment_count, 2U);
   YAP_V2_manifest_free(&manifest);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational),
+                   YAP_V2_OK);
+  assert_int_equal(operational.ingest_microbatches, 1U);
+  assert_int_equal(operational.ingest_requests, 2U);
+  assert_int_equal(operational.ingest_operations, 2U);
+  assert_int_equal(operational.ingest_published_generations, 1U);
+  assert_int_equal(operational.ingest_generations_saved, 1U);
+  assert_int_equal(operational.ingest_max_batch_requests, 2U);
+  assert_int_equal(operational.ingest_max_batch_operations, 2U);
+  YAP_V2_http_runtime_record_maintenance_deferral(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational),
+                   YAP_V2_OK);
+  assert_int_equal(operational.maintenance_foreground_deferrals, 1U);
   assert_runtime_search_id(&runtime, "alpha", "doc-batch-a", 2U);
   assert_runtime_search_id(&runtime, "beta", "doc-batch-b", 2U);
   YAP_V2_http_runtime_close(&runtime);

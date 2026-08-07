@@ -37,6 +37,7 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 | 更新WALと異常終了回復 | 実装済みです。操作列、更新前・公開予定世代、CRC32Cを同期し、core起動時に再実行または完了確認します。 |
 | durable/searchableの応答分離 | 未実装です。現在は検索runtimeの切り替え後にだけ成功を返します。 |
 | size-tiered merge | 実装済みです。4倍幅の同一サイズ階層から最大8セグメント、合計512 MiBまでを選びます。 |
+| 更新・保守pipelineの観測 | 実装済みです。microbatch、操作数、公開・削減世代、WAL回復、保守延期を公開します。 |
 
 正式な現在動作は[アーキテクチャ](architecture.md)と[設定リファレンス](configuration.md)を優先します。
 この表は各実装段階の完了時に更新します。
@@ -223,12 +224,13 @@ ANN基底、更新差分、cursor世代を混ぜません。
 1. 新しい接続の受付を止めます。
 2. 新しい検索と更新をqueueへ入れません。
 3. deadline内の検索応答を送信します。
-4. writer queueのdurable境界まで処理し、未公開bufferはWALから回復可能な状態にします。
+4. writer executorは新規投入を止め、受理済みmicrobatchをWAL、segment、manifest公開までdrainします。
 5. maintenanceへキャンセル可能な停止を通知します。
 6. reactor、compute worker、writer、maintenanceの順にjoinします。
 7. 最後のsnapshot参照を解放し、PIDファイルを回収します。
 
-強制終了後も、公開済みmanifestと同期済みWALだけから回復できなければなりません。
+通常終了はwriter queueをdrainします。`SIGKILL`、電源断、プロセス異常終了では、公開済みmanifestと同期済みWAL
+だけから回復します。executorの過負荷拒否と終了時drainは同じ容量固定queueを使う試験で継続確認します。
 
 ## 計測と水平シャードへ進む条件
 

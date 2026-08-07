@@ -163,6 +163,7 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
                                   char **json, size_t *json_bytes) {
   yyjson_mut_doc *document;
   yyjson_mut_val *root, *embedding, *ann, *compaction, *segment_health;
+  yyjson_mut_val *update_pipeline;
   char *rendered;
   if (state == NULL || service == NULL || json == NULL || json_bytes == NULL) return YAP_V2_INVALID_ARGUMENT;
   *json = NULL; *json_bytes = 0U; document = yyjson_mut_doc_new(NULL);
@@ -171,8 +172,9 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
   ann = yyjson_mut_obj(document);
   compaction = yyjson_mut_obj(document);
   segment_health = yyjson_mut_obj(document);
+  update_pipeline = yyjson_mut_obj(document);
   if (root == NULL || embedding == NULL || ann == NULL || compaction == NULL ||
-      segment_health == NULL ||
+      segment_health == NULL || update_pipeline == NULL ||
       !yyjson_mut_obj_add_str(document, root, "status", state->ready ? "ready" : "not_ready") ||
       !yyjson_mut_obj_add_str(document, root, "service", service) ||
       !yyjson_mut_obj_add_bool(document, root, "ready", state->ready != 0) ||
@@ -234,6 +236,31 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
       !yyjson_mut_obj_add_uint(document, ann, "rebuild_failures",
                               state->ann_rebuild_failures) ||
       !yyjson_mut_obj_add_val(document, root, "ann", ann) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline, "microbatches",
+                              state->ingest_microbatches) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline, "requests",
+                              state->ingest_requests) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline, "operations",
+                              state->ingest_operations) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline,
+                              "published_generations",
+                              state->ingest_published_generations) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline,
+                              "generations_saved",
+                              state->ingest_generations_saved) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline,
+                              "max_batch_requests",
+                              state->ingest_max_batch_requests) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline,
+                              "max_batch_operations",
+                              state->ingest_max_batch_operations) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline, "wal_recoveries",
+                              state->update_wal_recoveries) ||
+      !yyjson_mut_obj_add_uint(document, update_pipeline,
+                              "maintenance_foreground_deferrals",
+                              state->maintenance_foreground_deferrals) ||
+      !yyjson_mut_obj_add_val(document, root, "update_pipeline",
+                             update_pipeline) ||
       !yyjson_mut_obj_add_str(document, compaction, "state",
         YAP_V2_compaction_state_name(state->compaction_state)) ||
       !yyjson_mut_obj_add_uint(document, compaction, "generation", state->compaction_generation) ||
@@ -248,16 +275,18 @@ int YAP_V2_operational_state_json(const YAP_V2_OPERATIONAL_STATE *state, const c
   *json = rendered; return YAP_V2_OK;
 }
 
-int YAP_V2_operational_state_merge_ann_json(YAP_V2_OPERATIONAL_STATE *state,
-                                            const unsigned char *json,
-                                            size_t json_bytes) {
+int YAP_V2_operational_state_merge_core_json(YAP_V2_OPERATIONAL_STATE *state,
+                                             const unsigned char *json,
+                                             size_t json_bytes) {
   yyjson_doc *document;
-  yyjson_val *root, *ann, *value;
+  yyjson_val *root, *ann, *update_pipeline, *value;
   if (state == NULL || json == NULL || json_bytes == 0U) return YAP_V2_INVALID_ARGUMENT;
   document = yyjson_read((const char *)json, json_bytes, YYJSON_READ_NOFLAG);
   root = document == NULL ? NULL : yyjson_doc_get_root(document);
   ann = yyjson_is_obj(root) ? yyjson_obj_get(root, "ann") : NULL;
-  if (!yyjson_is_obj(ann)) {
+  update_pipeline = yyjson_is_obj(root) ?
+                    yyjson_obj_get(root, "update_pipeline") : NULL;
+  if (!yyjson_is_obj(ann) || !yyjson_is_obj(update_pipeline)) {
     if (document != NULL) yyjson_doc_free(document);
     return YAP_V2_INVALID_FORMAT;
   }
@@ -277,6 +306,21 @@ int YAP_V2_operational_state_merge_ann_json(YAP_V2_OPERATIONAL_STATE *state,
   COPY_ANN_UINT("rebuilds", ann_rebuilds);
   COPY_ANN_UINT("rebuild_failures", ann_rebuild_failures);
 #undef COPY_ANN_UINT
+#define COPY_UPDATE_UINT(json_key, field) \
+  value = yyjson_obj_get(update_pipeline, json_key); \
+  if (!yyjson_is_uint(value)) { yyjson_doc_free(document); return YAP_V2_INVALID_FORMAT; } \
+  state->field = yyjson_get_uint(value)
+  COPY_UPDATE_UINT("microbatches", ingest_microbatches);
+  COPY_UPDATE_UINT("requests", ingest_requests);
+  COPY_UPDATE_UINT("operations", ingest_operations);
+  COPY_UPDATE_UINT("published_generations", ingest_published_generations);
+  COPY_UPDATE_UINT("generations_saved", ingest_generations_saved);
+  COPY_UPDATE_UINT("max_batch_requests", ingest_max_batch_requests);
+  COPY_UPDATE_UINT("max_batch_operations", ingest_max_batch_operations);
+  COPY_UPDATE_UINT("wal_recoveries", update_wal_recoveries);
+  COPY_UPDATE_UINT("maintenance_foreground_deferrals",
+                   maintenance_foreground_deferrals);
+#undef COPY_UPDATE_UINT
   yyjson_doc_free(document);
   return YAP_V2_OK;
 }
@@ -386,6 +430,15 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
       "yappod_v2_ann_candidates_total{result=\"rejected\"} %llu\n"
       "# TYPE yappod_v2_ann_rebuilds_total counter\nyappod_v2_ann_rebuilds_total{result=\"success\"} %llu\n"
       "yappod_v2_ann_rebuilds_total{result=\"failure\"} %llu\n"
+      "# TYPE yappod_v2_ingest_microbatches_total counter\nyappod_v2_ingest_microbatches_total %llu\n"
+      "# TYPE yappod_v2_ingest_requests_total counter\nyappod_v2_ingest_requests_total %llu\n"
+      "# TYPE yappod_v2_ingest_operations_total counter\nyappod_v2_ingest_operations_total %llu\n"
+      "# TYPE yappod_v2_ingest_published_generations_total counter\nyappod_v2_ingest_published_generations_total %llu\n"
+      "# TYPE yappod_v2_ingest_generations_saved_total counter\nyappod_v2_ingest_generations_saved_total %llu\n"
+      "# TYPE yappod_v2_ingest_max_batch_requests gauge\nyappod_v2_ingest_max_batch_requests %llu\n"
+      "# TYPE yappod_v2_ingest_max_batch_operations gauge\nyappod_v2_ingest_max_batch_operations %llu\n"
+      "# TYPE yappod_v2_update_wal_recoveries_total counter\nyappod_v2_update_wal_recoveries_total %llu\n"
+      "# TYPE yappod_v2_maintenance_foreground_deferrals_total counter\nyappod_v2_maintenance_foreground_deferrals_total %llu\n"
       "# TYPE yappod_v2_compaction_state gauge\nyappod_v2_compaction_state{state=\"%s\"} 1\n"
       "# TYPE yappod_v2_compaction_generation gauge\nyappod_v2_compaction_generation %llu\n",
       state->ready != 0, (unsigned long long)state->generation,
@@ -412,6 +465,15 @@ int YAP_V2_metrics_render(YAP_V2_METRICS *metrics, const YAP_V2_OPERATIONAL_STAT
       (unsigned long long)state->ann_candidates_rejected,
       (unsigned long long)state->ann_rebuilds,
       (unsigned long long)state->ann_rebuild_failures,
+      (unsigned long long)state->ingest_microbatches,
+      (unsigned long long)state->ingest_requests,
+      (unsigned long long)state->ingest_operations,
+      (unsigned long long)state->ingest_published_generations,
+      (unsigned long long)state->ingest_generations_saved,
+      (unsigned long long)state->ingest_max_batch_requests,
+      (unsigned long long)state->ingest_max_batch_operations,
+      (unsigned long long)state->update_wal_recoveries,
+      (unsigned long long)state->maintenance_foreground_deferrals,
       YAP_V2_compaction_state_name(state->compaction_state),
       (unsigned long long)state->compaction_generation) != 0) goto range;
   *output = rendered; *output_bytes = used; return YAP_V2_OK;

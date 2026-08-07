@@ -410,6 +410,18 @@ static void test_concurrent_ingest_uses_one_generation(void **state) {
   assert_int_equal(manifest.generation, 2U);
   assert_int_equal(manifest.segment_count, 2U);
   YAP_V2_manifest_free(&manifest);
+  {
+    char *response = get(ctx, "/metrics");
+    assert_non_null(strstr(response, "yappod_v2_ingest_microbatches_total 1"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_requests_total 4"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_operations_total 4"));
+    assert_non_null(strstr(
+      response, "yappod_v2_ingest_published_generations_total 1"));
+    assert_non_null(strstr(
+      response, "yappod_v2_ingest_generations_saved_total 3"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_max_batch_requests 4"));
+    free(response);
+  }
   assert_int_equal(pthread_cond_destroy(&gate.ready), 0);
   assert_int_equal(pthread_mutex_destroy(&gate.lock), 0);
 }

@@ -144,6 +144,10 @@ ANN再構築と自動コンパクションは一つの保守スレッドで直�
 utility QoSで実行します。開始済みの保守jobは途中停止しないため、非常に大きなANN再構築やコンパクションが
 検索と重なった場合は、そのjobが終わるまでCPU、メモリー、ディスクI/Oを共有します。
 
+`SIGTERM`または`SIGINT`を受けたcoreは新しい接続の受付を止め、writer executorが受理済みの更新を
+microbatch単位でdrainしてから検索executorとreactorを閉じます。queueへ入る前に過負荷拒否した要求は対象外です。
+強制終了でdrainできなかった場合でも、同期済み`update.wal`は次回起動時に回復します。
+
 タイムアウト値を増やす前に、coreへの接続、索引の大きさ、同時実行数、クライアント切断、ディスクI/Oを確認します。search-webの`yappod_timeout_ms`、起動待ちの`startup_timeout_ms`、LLMや埋め込みのタイムアウトは別の待ち時間です。
 
 ## 索引のオンライン更新
