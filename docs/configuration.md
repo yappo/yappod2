@@ -132,8 +132,8 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `ingest_timeout_ms` | 整数 | 1〜600000 | `60000` | 任意 | 文書更新について、frontが受理したクライアントソケット、frontからcoreへの内部HTTP要求、coreが応答を返すまでに適用する期限です。 |
 | `auto_compact_enabled` | 真偽値 | `true`、`false` | `true` | 任意 | coreによる小セグメントの自動コンパクションを有効にします。frontは値を読みますが処理には使いません。 |
 | `auto_compact_check_interval_ms` | 整数 | 1000〜3600000 | `30000` | 任意 | coreが自動コンパクションの要否を確認する間隔です。確認はマニフェストのdescriptorだけを読みます。 |
-| `auto_compact_small_segment_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | セグメント内の全コンポーネントファイルの記録サイズ合計がこの値未満なら、小セグメントとして数えます。 |
-| `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 自動コンパクションを開始する、マニフェスト上で隣接した小セグメント数です。 |
+| `auto_compact_small_segment_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | セグメントサイズ階層の基準値です。この値の1/64を下限に4倍ごとの階層を作ります。この値未満は小セグメント監視値にも数えます。 |
+| `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 同じサイズ階層の隣接セグメントがこの個数に達したとき、自動コンパクションを開始します。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | `POST /v2/documents:batch`をBearer認証します。省略時は更新APIを認証なしで受け付けます。外部API用の`authorization_token_env`とは別の機能です。 |
 
 文書更新は検索用の`max_inflight`と`max_inflight_bytes`を消費しません。frontとcoreは同じ更新件数・本文byte数の
