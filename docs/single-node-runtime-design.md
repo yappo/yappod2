@@ -31,7 +31,7 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 | 容量固定の検索executorと単一writer executor | 実装済みです。 |
 | libeventによる非blocking接続 | 実装済みです。1本のacceptorが複数reactorへ接続を分配し、executor完了はmailboxで元のreactorへ戻します。 |
 | front/core間のpersistent connection | 未実装です。現在は1接続1要求で応答後に閉じます。 |
-| 検索要求単位のsnapshot参照保持と短時間の公開交換 | 未実装です。 |
+| 検索要求単位のsnapshot参照保持と短時間の公開交換 | 実装済みです。変更のないsegment資源も新旧世代で共有します。 |
 | 負荷budget付きmaintenance scheduler | 未実装です。 |
 | WAL、更新buffer、refresh、tiered merge | 未実装です。 |
 
@@ -40,19 +40,22 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 
 ## 現在の実装
 
-現在の`yappod_core`は、設定した`core_io_threads`個のpthreadが同じlisten socketで`accept`します。
-一つのI/Oスレッドが要求を同期的に読み込み、検索は`core_search_threads`個のcompute worker、更新は
-単一writer threadへ渡して完了を待ち、応答を書き出して切断します。内部HTTPは1要求ごとに
-`Connection: close`を使います。
+現在の`yappod_core`は、一つのacceptorが接続を`core_io_threads`個のlibevent reactorへ分配します。
+reactorはHTTPを増分解析し、検索は`core_search_threads`個のcompute worker、更新は単一writer threadへ
+渡します。処理完了はmailboxで接続元のreactorへ戻すため、reactorは検索、更新、部分的な要求本文を
+待って停止しません。内部HTTPは現在1要求ごとに`Connection: close`を使います。
 
 検索componentのうち語彙索引とベクトルは`mmap`で開きます。通常検索の読み出しはOSのページ
 キャッシュを通りますが、未常駐ページのpage faultは検索を実行しているworkerを停止させます。
 更新、manifest公開、component公開は耐久性境界で`fsync`を同期実行します。
 
-runtimeは検索中にread lockを保持します。更新処理自体は専用mutexで直列化されていますが、更新後の
-runtime再読み込みと世代切替はwrite lockを取得するため、その時点で実行中の検索完了を待ちます。
-コンパクションとANN保守には独立スレッドがありますが、検索と同じディスク、メモリー帯域、runtime
-write lockを使う負荷の調整機構はありません。
+検索要求は開始時に不変runtimeへの参照を取得し、応答を構築した後で解放します。更新後の候補runtimeは
+検索と並行して構築し、変更のない語彙、ベクトル、segment ANN、メタデータ、文書snapshotを旧runtimeと
+共有します。新しい世代の公開時に保持するmutexは現在runtimeへのポインタ交換だけです。旧runtimeと
+旧世代だけの資源は、それを使用している検索がすべて終了してから解放します。
+
+コンパクションとANN保守には独立スレッドがありますが、検索と同じディスク、CPU、メモリー帯域を使う
+負荷の調整機構はありません。
 
 ## 目標構成
 
@@ -120,7 +123,8 @@ macOSにはLinuxの`io_uring`と同じ契約もないためです。
 
 新しいsnapshotは検索へ公開する前に、次の順序で準備します。
 
-1. manifestとcomponentを検証してmapします。
+1. manifestを検証し、旧世代とdescriptorが一致するcomponentは参照を共有し、追加または変更された
+   componentだけを検証してmapします。
 2. 追加された語彙辞書、posting、ベクトル、可視性表について、設定した予熱量の`madvise`または同等の
    OS hintを発行します。
 3. 最低限の構造検証と代表アクセスを終えます。
@@ -232,13 +236,13 @@ queue待ち時間、`503`数を記録します。warm cache、cold cache、検�
 3. libeventによる非同期接続、endpoint別deadline、完了通知へ移行します。実装済みです。
 4. 更新をwriter queueへ移し、件数と本文合計byteで検索queueとは独立に負荷制御します。実装済みです。
 5. front/core間のpersistent connectionを追加し、接続確立コストを測定します。
-6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。
+6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。実装済みです。
 7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。
 8. WAL、更新buffer、refresh条件、durable/searchable待機を実装します。
 9. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
 
-各段階では、現在のCLI、TOML、canonical NDJSON、公開HTTP API、front/core通信、メトリクス、v2索引形式を
-変更する場合に、対応する正式文書と受け入れテストを同時に更新します。途中段階を最終構成として記載せず、
+各段階で旧CLI、旧TOML、旧内部通信、旧索引形式との後方互換分岐は追加しません。契約を変更する場合は
+現在の正式文書、設定例、実装、受け入れテストを同じ変更で置き換えます。途中段階を最終構成として記載せず、
 実装済みの機能と未実装の設計を設定リファレンスで区別します。
 
 ## 設計判断に使用した一次資料

@@ -67,28 +67,52 @@ static yyjson_mut_val *canonical_json_copy(yyjson_mut_doc *doc, yyjson_val *valu
 }
 
 typedef struct {
+  pthread_mutex_t references_lock;
+  size_t references;
+  YAP_V2_SNAPSHOT_MANAGER manager;
+} HTTP_MANAGER_RESOURCE;
+
+typedef struct {
+  pthread_mutex_t references_lock;
+  size_t references;
+  YAP_V2_LEXICAL_SEGMENT lexical;
+  YAP_V2_VECTOR_SEGMENT vectors;
+  YAP_V2_ANN_SEGMENT ann;
+  YAP_V2_METADATA_INDEX metadata;
+  int has_lexical;
+  int has_vector;
+  int has_metadata;
+} HTTP_SEGMENT_RESOURCE;
+
+typedef struct {
+  pthread_mutex_t references_lock;
+  size_t references;
+  YAP_V2_ANN_CORPUS corpus;
+} HTTP_ANN_RESOURCE;
+
+typedef struct {
+  pthread_mutex_t references_lock;
+  size_t references;
+  int references_initialized;
   YAP_V2_CONFIG config;
   YAP_V2_MANIFEST manifest;
-  YAP_V2_SNAPSHOT_MANAGER manager;
+  HTTP_MANAGER_RESOURCE *manager_resource;
   YAP_V2_SEARCH_SNAPSHOT *snapshot;
   YAP_V2_QUERY_SEGMENT *query;
+  HTTP_SEGMENT_RESOURCE **segments;
   YAP_V2_QUERY_CORPUS_STATS corpus_stats;
-  YAP_V2_LEXICAL_SEGMENT *lexical;
-  YAP_V2_VECTOR_SEGMENT *vectors;
-  YAP_V2_ANN_SEGMENT *ann;
-  YAP_V2_ANN_CORPUS ann_corpus;
+  HTTP_ANN_RESOURCE *ann_resource;
   YAP_V2_ANN_QUERY_PLAN ann_plan;
   pthread_mutex_t ann_stats_lock;
   YAP_V2_QUERY_STATS ann_stats;
   uint64_t ann_rebuilds;
   uint64_t ann_rebuild_failures;
   int ann_stats_initialized;
-  YAP_V2_METADATA_INDEX *metadata;
   size_t count;
 } HTTP_RUNTIME;
 
 typedef struct {
-  pthread_rwlock_t lock;
+  pthread_mutex_t lock;
   pthread_mutex_t update_lock;
   pthread_mutex_t ann_maintenance_lock;
   char *index_dir;
@@ -129,6 +153,90 @@ static const YAP_V2_COMPONENT_DESCRIPTOR *component(const YAP_V2_SEGMENT_DESCRIP
   return NULL;
 }
 
+static void manager_resource_retain(HTTP_MANAGER_RESOURCE *resource) {
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  resource->references++;
+  pthread_mutex_unlock(&resource->references_lock);
+}
+
+static void manager_resource_release(HTTP_MANAGER_RESOURCE *resource) {
+  int destroy = 0;
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  if (resource->references > 0U) {
+    resource->references--;
+    destroy = resource->references == 0U;
+  }
+  pthread_mutex_unlock(&resource->references_lock);
+  if (destroy) {
+    YAP_V2_snapshot_manager_close(&resource->manager);
+    pthread_mutex_destroy(&resource->references_lock);
+    free(resource);
+  }
+}
+
+static int manager_resource_open(const char *index_dir,
+                                 const char *manifest_path,
+                                 const YAP_V2_CONFIG *config,
+                                 HTTP_MANAGER_RESOURCE **output) {
+  HTTP_MANAGER_RESOURCE *resource;
+  int status;
+  resource = calloc(1U, sizeof(*resource));
+  if (resource == NULL) return YAP_V2_ALLOCATION_FAILED;
+  if (pthread_mutex_init(&resource->references_lock, NULL) != 0) {
+    free(resource);
+    return YAP_V2_IO_ERROR;
+  }
+  resource->references = 1U;
+  YAP_V2_snapshot_manager_init(&resource->manager);
+  status = YAP_V2_snapshot_manager_open(&resource->manager, index_dir,
+                                        manifest_path, config);
+  if (status != YAP_V2_OK) {
+    pthread_mutex_destroy(&resource->references_lock);
+    free(resource);
+    return status;
+  }
+  *output = resource;
+  return YAP_V2_OK;
+}
+
+static void ann_resource_retain(HTTP_ANN_RESOURCE *resource) {
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  resource->references++;
+  pthread_mutex_unlock(&resource->references_lock);
+}
+
+static void ann_resource_release(HTTP_ANN_RESOURCE *resource) {
+  int destroy = 0;
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  if (resource->references > 0U) {
+    resource->references--;
+    destroy = resource->references == 0U;
+  }
+  pthread_mutex_unlock(&resource->references_lock);
+  if (destroy) {
+    YAP_V2_ann_corpus_free(&resource->corpus);
+    pthread_mutex_destroy(&resource->references_lock);
+    free(resource);
+  }
+}
+
+static int ann_resource_create(HTTP_ANN_RESOURCE **output) {
+  HTTP_ANN_RESOURCE *resource = calloc(1U, sizeof(*resource));
+  if (resource == NULL) return YAP_V2_ALLOCATION_FAILED;
+  if (pthread_mutex_init(&resource->references_lock, NULL) != 0) {
+    free(resource);
+    return YAP_V2_IO_ERROR;
+  }
+  resource->references = 1U;
+  YAP_V2_ann_corpus_init(&resource->corpus);
+  *output = resource;
+  return YAP_V2_OK;
+}
+
 static void runtime_segment_close(YAP_V2_LEXICAL_SEGMENT *lexical,
                                   YAP_V2_VECTOR_SEGMENT *vectors,
                                   YAP_V2_ANN_SEGMENT *ann,
@@ -137,6 +245,38 @@ static void runtime_segment_close(YAP_V2_LEXICAL_SEGMENT *lexical,
   YAP_V2_vector_segment_close(vectors);
   YAP_V2_lexical_segment_close(lexical);
   YAP_V2_metadata_index_free(metadata);
+}
+
+static void segment_resource_retain(HTTP_SEGMENT_RESOURCE *resource) {
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  resource->references++;
+  pthread_mutex_unlock(&resource->references_lock);
+}
+
+static void segment_resource_release(HTTP_SEGMENT_RESOURCE *resource) {
+  int destroy = 0;
+  if (resource == NULL) return;
+  pthread_mutex_lock(&resource->references_lock);
+  if (resource->references > 0U) {
+    resource->references--;
+    destroy = resource->references == 0U;
+  }
+  pthread_mutex_unlock(&resource->references_lock);
+  if (destroy) {
+    runtime_segment_close(&resource->lexical, &resource->vectors,
+                          &resource->ann, &resource->metadata);
+    pthread_mutex_destroy(&resource->references_lock);
+    free(resource);
+  }
+}
+
+static void segment_resource_bind(HTTP_SEGMENT_RESOURCE *resource,
+                                  YAP_V2_QUERY_SEGMENT *query) {
+  memset(query, 0, sizeof(*query));
+  if (resource->has_lexical) query->lexical = &resource->lexical;
+  if (resource->has_vector) query->vector = &resource->ann;
+  if (resource->has_metadata) query->metadata = &resource->metadata;
 }
 
 static int runtime_segment_open(
@@ -188,34 +328,130 @@ static int runtime_segment_open(
   return YAP_V2_OK;
 }
 
+static int segment_resource_open(
+    const char *index_dir, const YAP_V2_CONFIG *config,
+    const YAP_V2_SEGMENT_DESCRIPTOR *descriptor,
+    HTTP_SEGMENT_RESOURCE **output) {
+  HTTP_SEGMENT_RESOURCE *resource;
+  YAP_V2_QUERY_SEGMENT query;
+  int status;
+  resource = calloc(1U, sizeof(*resource));
+  if (resource == NULL) return YAP_V2_ALLOCATION_FAILED;
+  if (pthread_mutex_init(&resource->references_lock, NULL) != 0) {
+    free(resource);
+    return YAP_V2_IO_ERROR;
+  }
+  resource->references = 1U;
+  status = runtime_segment_open(
+    index_dir, config, descriptor, &query, &resource->lexical,
+    &resource->vectors, &resource->ann, &resource->metadata);
+  if (status != YAP_V2_OK) {
+    runtime_segment_close(&resource->lexical, &resource->vectors,
+                          &resource->ann, &resource->metadata);
+    pthread_mutex_destroy(&resource->references_lock);
+    free(resource);
+    return status;
+  }
+  resource->has_lexical = query.lexical != NULL;
+  resource->has_vector = query.vector != NULL;
+  resource->has_metadata = query.metadata != NULL;
+  *output = resource;
+  return YAP_V2_OK;
+}
+
+static int runtime_ann_views(const HTTP_RUNTIME *runtime,
+                             YAP_V2_ANN_SEGMENT **output) {
+  YAP_V2_ANN_SEGMENT *views;
+  size_t i;
+  if (runtime == NULL || output == NULL || runtime->count == 0U)
+    return YAP_V2_INVALID_ARGUMENT;
+  *output = NULL;
+  views = calloc(runtime->count, sizeof(*views));
+  if (views == NULL) return YAP_V2_ALLOCATION_FAILED;
+  for (i = 0U; i < runtime->count; i++) {
+    if (runtime->segments[i] == NULL) {
+      free(views);
+      return YAP_V2_CONFLICT;
+    }
+    views[i] = runtime->segments[i]->ann;
+    views[i].vectors = runtime->segments[i]->has_vector ?
+                       &runtime->segments[i]->vectors : NULL;
+  }
+  *output = views;
+  return YAP_V2_OK;
+}
+
+static int runtime_build_ann_corpus(const HTTP_RUNTIME *runtime,
+                                    YAP_V2_ANN_CORPUS *corpus) {
+  YAP_V2_ANN_SEGMENT *views = NULL;
+  int status;
+  status = runtime_ann_views(runtime, &views);
+  if (status != YAP_V2_OK) return status;
+  status = YAP_V2_ann_corpus_build(&runtime->manifest, runtime->snapshot,
+                                   views, runtime->count, corpus);
+  free(views);
+  return status;
+}
+
 static void runtime_close(HTTP_RUNTIME *runtime) {
   size_t i;
   if (runtime == NULL) return;
-  if (runtime->ann != NULL && runtime->vectors != NULL &&
-      runtime->lexical != NULL && runtime->metadata != NULL)
+  if (runtime->segments != NULL)
     for (i = 0U; i < runtime->count; i++)
-      runtime_segment_close(&runtime->lexical[i], &runtime->vectors[i],
-                            &runtime->ann[i], &runtime->metadata[i]);
-  free(runtime->query); free(runtime->lexical); free(runtime->vectors);
-  free(runtime->ann); free(runtime->metadata);
+      segment_resource_release(runtime->segments[i]);
+  free(runtime->segments);
+  free(runtime->query);
   YAP_V2_ann_query_plan_free(&runtime->ann_plan);
-  YAP_V2_ann_corpus_free(&runtime->ann_corpus);
+  ann_resource_release(runtime->ann_resource);
   if (runtime->snapshot != NULL) YAP_V2_snapshot_release(runtime->snapshot);
-  YAP_V2_snapshot_manager_close(&runtime->manager);
+  manager_resource_release(runtime->manager_resource);
   YAP_V2_manifest_free(&runtime->manifest);
   if (runtime->ann_stats_initialized) pthread_mutex_destroy(&runtime->ann_stats_lock);
+  if (runtime->references_initialized)
+    pthread_mutex_destroy(&runtime->references_lock);
   memset(runtime, 0, sizeof(*runtime));
+}
+
+static int runtime_enable_references(HTTP_RUNTIME *runtime) {
+  if (runtime == NULL || runtime->references_initialized)
+    return YAP_V2_INVALID_ARGUMENT;
+  if (pthread_mutex_init(&runtime->references_lock, NULL) != 0)
+    return YAP_V2_IO_ERROR;
+  runtime->references = 1U;
+  runtime->references_initialized = 1;
+  return YAP_V2_OK;
+}
+
+static void runtime_retain(HTTP_RUNTIME *runtime) {
+  if (runtime == NULL || !runtime->references_initialized) return;
+  pthread_mutex_lock(&runtime->references_lock);
+  runtime->references++;
+  pthread_mutex_unlock(&runtime->references_lock);
+}
+
+static void runtime_release(HTTP_RUNTIME *runtime) {
+  int destroy = 0;
+  if (runtime == NULL || !runtime->references_initialized) return;
+  pthread_mutex_lock(&runtime->references_lock);
+  if (runtime->references > 0U) {
+    runtime->references--;
+    destroy = runtime->references == 0U;
+  }
+  pthread_mutex_unlock(&runtime->references_lock);
+  if (destroy) {
+    runtime_close(runtime);
+    free(runtime);
+  }
 }
 
 static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   char config_path[4096], manifest_path[4096];
   char error[256]; size_t i; int status;
   memset(runtime, 0, sizeof(*runtime));
-  YAP_V2_ann_corpus_init(&runtime->ann_corpus);
   YAP_V2_ann_query_plan_init(&runtime->ann_plan);
   if (pthread_mutex_init(&runtime->ann_stats_lock, NULL) != 0) return YAP_V2_IO_ERROR;
   runtime->ann_stats_initialized = 1;
-  YAP_V2_manifest_init(&runtime->manifest); YAP_V2_snapshot_manager_init(&runtime->manager);
+  YAP_V2_manifest_init(&runtime->manifest);
   if (path_join(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
       path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0)
     return YAP_V2_INVALID_ARGUMENT;
@@ -223,44 +459,44 @@ static int runtime_open_once(HTTP_RUNTIME *runtime, const char *index_dir) {
   if (status != YAP_V2_OK) return status;
   status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &runtime->manifest);
   if (status != YAP_V2_OK) return status;
-  status = YAP_V2_snapshot_manager_open(&runtime->manager, index_dir, manifest_path, &runtime->config);
+  status = manager_resource_open(index_dir, manifest_path, &runtime->config,
+                                 &runtime->manager_resource);
   if (status != YAP_V2_OK) return status;
-  runtime->snapshot = YAP_V2_snapshot_acquire(&runtime->manager);
+  runtime->snapshot = YAP_V2_snapshot_acquire(&runtime->manager_resource->manager);
   runtime->count = runtime->manifest.segment_count;
-  if (runtime->snapshot == NULL || runtime->count == 0U) return YAP_V2_CONFLICT;
+  if (runtime->snapshot == NULL || runtime->count == 0U ||
+      !YAP_V2_snapshot_matches_manifest(runtime->snapshot, &runtime->manifest))
+    return YAP_V2_CONFLICT;
   runtime->query = calloc(runtime->count, sizeof(*runtime->query));
-  runtime->lexical = calloc(runtime->count, sizeof(*runtime->lexical));
-  runtime->vectors = calloc(runtime->count, sizeof(*runtime->vectors));
-  runtime->ann = calloc(runtime->count, sizeof(*runtime->ann));
-  runtime->metadata = calloc(runtime->count, sizeof(*runtime->metadata));
-  if (runtime->query == NULL || runtime->lexical == NULL || runtime->vectors == NULL ||
-      runtime->ann == NULL || runtime->metadata == NULL) return YAP_V2_ALLOCATION_FAILED;
+  runtime->segments = calloc(runtime->count, sizeof(*runtime->segments));
+  if (runtime->query == NULL || runtime->segments == NULL)
+    return YAP_V2_ALLOCATION_FAILED;
   for (i = 0U; i < runtime->count; i++) {
-    status = runtime_segment_open(
-      index_dir, &runtime->config, &runtime->manifest.segments[i],
-      &runtime->query[i], &runtime->lexical[i], &runtime->vectors[i],
-      &runtime->ann[i], &runtime->metadata[i]);
+    status = segment_resource_open(index_dir, &runtime->config,
+                                   &runtime->manifest.segments[i],
+                                   &runtime->segments[i]);
     if (status != YAP_V2_OK) return status;
+    segment_resource_bind(runtime->segments[i], &runtime->query[i]);
   }
   status = YAP_V2_query_corpus_stats_build(runtime->snapshot, runtime->query,
                                            runtime->count, &runtime->corpus_stats);
+  if (status == YAP_V2_OK) status = ann_resource_create(&runtime->ann_resource);
   if (status == YAP_V2_OK && runtime->config.vector_metric != YAP_V2_VECTOR_DISABLED) {
     int cache_status = YAP_V2_ann_corpus_load_cache(index_dir, &runtime->config,
                                                     &runtime->manifest,
-                                                    &runtime->ann_corpus);
+                                                    &runtime->ann_resource->corpus);
     if (cache_status != YAP_V2_OK) {
-      status = YAP_V2_ann_corpus_build(&runtime->manifest, runtime->snapshot,
-                                       runtime->ann, runtime->count,
-                                       &runtime->ann_corpus);
+      status = runtime_build_ann_corpus(runtime, &runtime->ann_resource->corpus);
       if (status == YAP_V2_OK) {
         runtime->ann_rebuilds = saturated_add_u64(runtime->ann_rebuilds, 1U);
-        if (runtime->ann_corpus.vector_count > 0U)
-          (void)YAP_V2_ann_corpus_save_cache(index_dir, &runtime->ann_corpus);
+        if (runtime->ann_resource->corpus.vector_count > 0U)
+          (void)YAP_V2_ann_corpus_save_cache(
+            index_dir, &runtime->ann_resource->corpus);
       }
     }
   }
   if (status == YAP_V2_OK && runtime->config.vector_metric != YAP_V2_VECTOR_DISABLED)
-    status = YAP_V2_ann_query_plan_build(&runtime->ann_corpus,
+    status = YAP_V2_ann_query_plan_build(&runtime->ann_resource->corpus,
                                          &runtime->manifest,
                                          &runtime->ann_plan);
   return status;
@@ -282,136 +518,225 @@ static int runtime_open(HTTP_RUNTIME *runtime, const char *index_dir) {
   return YAP_V2_CONFLICT;
 }
 
-static int runtime_reload_manifest(HTTP_RUNTIME *runtime,
-                                   const char *index_dir) {
-  YAP_V2_MANIFEST manifest;
+static int runtime_allocate_open(const char *index_dir, HTTP_RUNTIME **output) {
+  HTTP_RUNTIME *runtime;
+  int status;
+  if (index_dir == NULL || output == NULL) return YAP_V2_INVALID_ARGUMENT;
+  *output = NULL;
+  runtime = calloc(1U, sizeof(*runtime));
+  if (runtime == NULL) return YAP_V2_ALLOCATION_FAILED;
+  status = runtime_open(runtime, index_dir);
+  if (status == YAP_V2_OK) status = runtime_enable_references(runtime);
+  if (status != YAP_V2_OK) {
+    runtime_close(runtime);
+    free(runtime);
+    return status;
+  }
+  *output = runtime;
+  return YAP_V2_OK;
+}
+
+static int runtime_allocate_candidate(
+    HTTP_RUNTIME *previous, const char *index_dir,
+    HTTP_ANN_RESOURCE *replacement_ann, HTTP_RUNTIME **output) {
+  HTTP_RUNTIME *runtime = NULL;
   YAP_V2_MANIFEST_SEGMENT_MAP previous_segments;
-  YAP_V2_QUERY_SEGMENT *query = NULL;
-  YAP_V2_LEXICAL_SEGMENT *lexical = NULL;
-  YAP_V2_VECTOR_SEGMENT *vectors = NULL;
-  YAP_V2_ANN_SEGMENT *ann = NULL;
-  YAP_V2_METADATA_INDEX *metadata = NULL;
-  YAP_V2_QUERY_CORPUS_STATS corpus_stats;
-  YAP_V2_ANN_QUERY_PLAN ann_plan;
-  YAP_V2_SEARCH_SNAPSHOT *snapshot = NULL;
-  unsigned char *reused = NULL;
-  unsigned char *opened = NULL;
   char manifest_path[4096];
   size_t i;
-  int status, changed = 0;
-  YAP_V2_manifest_init(&manifest);
-  YAP_V2_manifest_segment_map_init(&previous_segments);
-  YAP_V2_ann_query_plan_init(&ann_plan);
-  if (path_join(manifest_path, sizeof(manifest_path), index_dir, "manifest.yap2") != 0)
+  int manager_changed = 0;
+  int status = YAP_V2_OK;
+  if (previous == NULL || index_dir == NULL || output == NULL)
     return YAP_V2_INVALID_ARGUMENT;
-  status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config, &manifest);
+  *output = NULL;
+  YAP_V2_manifest_segment_map_init(&previous_segments);
+  runtime = calloc(1U, sizeof(*runtime));
+  if (runtime == NULL) return YAP_V2_ALLOCATION_FAILED;
+  runtime->config = previous->config;
+  YAP_V2_manifest_init(&runtime->manifest);
+  YAP_V2_ann_query_plan_init(&runtime->ann_plan);
+  if (pthread_mutex_init(&runtime->ann_stats_lock, NULL) != 0) {
+    free(runtime);
+    return YAP_V2_IO_ERROR;
+  }
+  runtime->ann_stats_initialized = 1;
+  if (path_join(manifest_path, sizeof(manifest_path), index_dir,
+                "manifest.yap2") != 0) {
+    status = YAP_V2_INVALID_ARGUMENT;
+    goto done;
+  }
+  status = YAP_V2_manifest_load_for_config(manifest_path, &runtime->config,
+                                           &runtime->manifest);
   if (status != YAP_V2_OK) goto done;
-  if (manifest.generation < runtime->manifest.generation) {
+  runtime->manager_resource = previous->manager_resource;
+  manager_resource_retain(runtime->manager_resource);
+  status = YAP_V2_snapshot_manager_reload(
+    &runtime->manager_resource->manager, &manager_changed);
+  if (status != YAP_V2_OK) goto done;
+  runtime->snapshot = YAP_V2_snapshot_acquire(&runtime->manager_resource->manager);
+  runtime->count = runtime->manifest.segment_count;
+  if (runtime->snapshot == NULL || runtime->count == 0U ||
+      !YAP_V2_snapshot_matches_manifest(runtime->snapshot, &runtime->manifest)) {
     status = YAP_V2_CONFLICT;
     goto done;
   }
-  if (manifest.generation == runtime->manifest.generation) {
-    status = manifest.segment_count == runtime->manifest.segment_count ?
-             YAP_V2_OK : YAP_V2_CONFLICT;
-    for (i = 0U; status == YAP_V2_OK && i < manifest.segment_count; i++)
-      if (!YAP_V2_segment_descriptor_equal(
-            &manifest.segments[i], &runtime->manifest.segments[i]))
-        status = YAP_V2_CONFLICT;
-    goto done;
-  }
-  if (manifest.segment_count == 0U) {
-    status = YAP_V2_CONFLICT;
-    goto done;
-  }
-  status = YAP_V2_manifest_segment_map_build(&previous_segments,
-                                             &runtime->manifest);
-  if (status != YAP_V2_OK) goto done;
-  query = calloc(manifest.segment_count, sizeof(*query));
-  lexical = calloc(manifest.segment_count, sizeof(*lexical));
-  vectors = calloc(manifest.segment_count, sizeof(*vectors));
-  ann = calloc(manifest.segment_count, sizeof(*ann));
-  metadata = calloc(manifest.segment_count, sizeof(*metadata));
-  opened = calloc(manifest.segment_count, sizeof(*opened));
-  reused = calloc(runtime->count, sizeof(*reused));
-  if (query == NULL || lexical == NULL || vectors == NULL || ann == NULL ||
-      metadata == NULL || opened == NULL ||
-      (runtime->count > 0U && reused == NULL)) {
+  runtime->query = calloc(runtime->count, sizeof(*runtime->query));
+  runtime->segments = calloc(runtime->count, sizeof(*runtime->segments));
+  if (runtime->query == NULL || runtime->segments == NULL) {
     status = YAP_V2_ALLOCATION_FAILED;
     goto done;
   }
-  for (i = 0U; status == YAP_V2_OK && i < manifest.segment_count; i++) {
-    size_t old_index = 0U;
-    int found = YAP_V2_manifest_segment_map_find(
-      &previous_segments, manifest.segments[i].id, &old_index);
-    if (found == YAP_V2_OK &&
+  status = YAP_V2_manifest_segment_map_build(&previous_segments,
+                                              &previous->manifest);
+  if (status != YAP_V2_OK) goto done;
+  for (i = 0U; i < runtime->count; i++) {
+    size_t previous_index = 0U;
+    const YAP_V2_SEGMENT_DESCRIPTOR *descriptor = &runtime->manifest.segments[i];
+    if (YAP_V2_manifest_segment_map_find(&previous_segments, descriptor->id,
+                                         &previous_index) == YAP_V2_OK &&
         YAP_V2_segment_descriptor_equal(
-          &runtime->manifest.segments[old_index], &manifest.segments[i])) {
-      query[i] = runtime->query[old_index];
-      lexical[i] = runtime->lexical[old_index];
-      vectors[i] = runtime->vectors[old_index];
-      ann[i] = runtime->ann[old_index];
-      metadata[i] = runtime->metadata[old_index];
-      if (runtime->query[old_index].lexical != NULL)
-        query[i].lexical = &lexical[i];
-      if (runtime->query[old_index].vector != NULL) {
-        ann[i].vectors = &vectors[i];
-        query[i].vector = &ann[i];
-      }
-      if (runtime->query[old_index].metadata != NULL)
-        query[i].metadata = &metadata[i];
-      reused[old_index] = 1U;
-    } else if (found == YAP_V2_OK || found == YAP_V2_NOT_FOUND) {
-      opened[i] = 1U;
-      status = runtime_segment_open(
-        index_dir, &runtime->config, &manifest.segments[i], &query[i],
-        &lexical[i], &vectors[i], &ann[i], &metadata[i]);
+          descriptor, &previous->manifest.segments[previous_index])) {
+      runtime->segments[i] = previous->segments[previous_index];
+      segment_resource_retain(runtime->segments[i]);
     } else {
-      status = found;
+      status = segment_resource_open(index_dir, &runtime->config, descriptor,
+                                     &runtime->segments[i]);
+      if (status != YAP_V2_OK) goto done;
+    }
+    segment_resource_bind(runtime->segments[i], &runtime->query[i]);
+  }
+  status = YAP_V2_query_corpus_stats_build(runtime->snapshot, runtime->query,
+                                           runtime->count,
+                                           &runtime->corpus_stats);
+  if (status != YAP_V2_OK) goto done;
+  runtime->ann_resource = replacement_ann != NULL ? replacement_ann :
+                          previous->ann_resource;
+  ann_resource_retain(runtime->ann_resource);
+  if (runtime->ann_resource == NULL) {
+    status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  if (runtime->config.vector_metric != YAP_V2_VECTOR_DISABLED) {
+    status = YAP_V2_ann_query_plan_build(&runtime->ann_resource->corpus,
+                                         &runtime->manifest,
+                                         &runtime->ann_plan);
+    if (status != YAP_V2_OK) goto done;
+  }
+  status = runtime_enable_references(runtime);
+done:
+  YAP_V2_manifest_segment_map_free(&previous_segments);
+  if (status != YAP_V2_OK) {
+    runtime_close(runtime);
+    free(runtime);
+    return status;
+  }
+  *output = runtime;
+  return YAP_V2_OK;
+}
+
+static HTTP_RUNTIME *runtime_state_acquire(HTTP_RUNTIME_STATE *state) {
+  HTTP_RUNTIME *current;
+  pthread_mutex_lock(&state->lock);
+  current = state->current;
+  runtime_retain(current);
+  pthread_mutex_unlock(&state->lock);
+  return current;
+}
+
+static void runtime_copy_observability(HTTP_RUNTIME *candidate,
+                                       HTTP_RUNTIME *previous) {
+  if (candidate == NULL || previous == NULL) return;
+  pthread_mutex_lock(&previous->ann_stats_lock);
+  candidate->ann_stats = previous->ann_stats;
+  candidate->ann_rebuilds = previous->ann_rebuilds;
+  candidate->ann_rebuild_failures = previous->ann_rebuild_failures;
+  pthread_mutex_unlock(&previous->ann_stats_lock);
+}
+
+static int runtime_state_publish_replacement(HTTP_RUNTIME_STATE *state,
+                                             HTTP_RUNTIME *expected,
+                                             HTTP_RUNTIME **candidate) {
+  HTTP_RUNTIME *published_previous = NULL;
+  int status = YAP_V2_CONFLICT;
+  if (state == NULL || expected == NULL || candidate == NULL || *candidate == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  pthread_mutex_lock(&state->lock);
+  if (state->current == expected) {
+    published_previous = state->current;
+    state->current = *candidate;
+    *candidate = NULL;
+    status = YAP_V2_OK;
+  }
+  pthread_mutex_unlock(&state->lock);
+  runtime_release(published_previous);
+  return status;
+}
+
+static int runtime_manifest_relation(const HTTP_RUNTIME *current,
+                                     const char *index_dir, int *changed) {
+  YAP_V2_MANIFEST manifest;
+  char manifest_path[4096];
+  size_t i;
+  int status;
+  if (current == NULL || index_dir == NULL || changed == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  *changed = 0;
+  YAP_V2_manifest_init(&manifest);
+  if (path_join(manifest_path, sizeof(manifest_path), index_dir,
+                "manifest.yap2") != 0)
+    return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_manifest_load_for_config(manifest_path, &current->config,
+                                           &manifest);
+  if (status != YAP_V2_OK) goto done;
+  if (manifest.generation < current->manifest.generation) {
+    status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  if (manifest.generation > current->manifest.generation) {
+    *changed = 1;
+    goto done;
+  }
+  if (manifest.segment_count != current->manifest.segment_count) {
+    status = YAP_V2_CONFLICT;
+    goto done;
+  }
+  for (i = 0U; i < manifest.segment_count; i++) {
+    if (!YAP_V2_segment_descriptor_equal(&manifest.segments[i],
+                                         &current->manifest.segments[i])) {
+      status = YAP_V2_CONFLICT;
+      break;
     }
   }
-  if (status == YAP_V2_OK) status = YAP_V2_snapshot_manager_reload(&runtime->manager, &changed);
-  if (status == YAP_V2_OK) {
-    snapshot = YAP_V2_snapshot_acquire(&runtime->manager);
-    if (!YAP_V2_snapshot_matches_manifest(snapshot, &manifest))
-      status = YAP_V2_CONFLICT;
-  }
-  if (status == YAP_V2_OK)
-    status = YAP_V2_query_corpus_stats_build(snapshot, query,
-                                             manifest.segment_count, &corpus_stats);
-  if (status == YAP_V2_OK && runtime->config.vector_metric != YAP_V2_VECTOR_DISABLED)
-    status = YAP_V2_ann_query_plan_build(&runtime->ann_corpus, &manifest, &ann_plan);
-  if (status == YAP_V2_OK) {
-    for (i = 0U; i < runtime->count; i++)
-      if (!reused[i])
-        runtime_segment_close(&runtime->lexical[i], &runtime->vectors[i],
-                              &runtime->ann[i], &runtime->metadata[i]);
-    free(runtime->query); free(runtime->lexical); free(runtime->vectors);
-    free(runtime->ann); free(runtime->metadata);
-    YAP_V2_snapshot_release(runtime->snapshot);
-    YAP_V2_manifest_free(&runtime->manifest);
-    runtime->manifest = manifest; YAP_V2_manifest_init(&manifest);
-    runtime->query = query; query = NULL;
-    runtime->corpus_stats = corpus_stats;
-    runtime->lexical = lexical; lexical = NULL;
-    runtime->vectors = vectors; vectors = NULL;
-    runtime->ann = ann; ann = NULL;
-    runtime->metadata = metadata; metadata = NULL;
-    runtime->snapshot = snapshot; snapshot = NULL;
-    runtime->count = runtime->manifest.segment_count;
-    YAP_V2_ann_query_plan_free(&runtime->ann_plan);
-    runtime->ann_plan = ann_plan; YAP_V2_ann_query_plan_init(&ann_plan);
-  }
 done:
-  if (status != YAP_V2_OK && opened != NULL)
-    for (i = 0U; i < manifest.segment_count; i++)
-      if (opened[i])
-        runtime_segment_close(&lexical[i], &vectors[i], &ann[i],
-                              &metadata[i]);
-  free(query); free(lexical); free(vectors); free(ann); free(metadata);
-  free(opened); free(reused);
-  YAP_V2_snapshot_release(snapshot); YAP_V2_manifest_free(&manifest);
-  YAP_V2_manifest_segment_map_free(&previous_segments);
-  YAP_V2_ann_query_plan_free(&ann_plan);
+  YAP_V2_manifest_free(&manifest);
+  return status;
+}
+
+static int runtime_state_reload(HTTP_RUNTIME_STATE *state) {
+  HTTP_RUNTIME *previous, *candidate = NULL;
+  int changed = 0;
+  int status;
+  previous = runtime_state_acquire(state);
+  if (previous == NULL) return YAP_V2_CONFLICT;
+  status = runtime_manifest_relation(previous, state->index_dir, &changed);
+  if (status != YAP_V2_OK || !changed) {
+    runtime_release(previous);
+    return status;
+  }
+  status = runtime_allocate_candidate(previous, state->index_dir, NULL,
+                                      &candidate);
+  if (status != YAP_V2_OK) {
+    runtime_release(previous);
+    return status;
+  }
+  if (candidate->manifest.generation <= previous->manifest.generation) {
+    runtime_release(candidate);
+    runtime_release(previous);
+    return YAP_V2_CONFLICT;
+  }
+  runtime_copy_observability(candidate, previous);
+  status = runtime_state_publish_replacement(state, previous, &candidate);
+  runtime_release(candidate);
+  runtime_release(previous);
   return status;
 }
 
@@ -855,7 +1180,8 @@ static int http_execute_loaded(HTTP_RUNTIME *runtime, const char *index_dir,
   request.top_k = execution_limit; request.candidate_k = execution_limit < 100U ? 100U : execution_limit;
   status = YAP_V2_query_execute_with_ann(
     runtime->snapshot, runtime->query, runtime->count, &runtime->corpus_stats,
-    runtime->config.vector_metric == YAP_V2_VECTOR_DISABLED ? NULL : &runtime->ann_corpus,
+    runtime->config.vector_metric == YAP_V2_VECTOR_DISABLED ? NULL :
+      &runtime->ann_resource->corpus,
     runtime->config.vector_metric == YAP_V2_VECTOR_DISABLED ? NULL : &runtime->ann_plan,
     &request, hits, execution_limit, &hit_count, &query_stats);
   runtime_record_ann_stats(runtime, &query_stats);
@@ -888,27 +1214,26 @@ int YAP_V2_http_runtime_open(YAP_V2_HTTP_RUNTIME *runtime, const char *index_dir
     return YAP_V2_INVALID_ARGUMENT;
   state = calloc(1U, sizeof(*state));
   if (state == NULL) return YAP_V2_ALLOCATION_FAILED;
-  if (pthread_rwlock_init(&state->lock, NULL) != 0) { free(state); return YAP_V2_IO_ERROR; }
+  if (pthread_mutex_init(&state->lock, NULL) != 0) { free(state); return YAP_V2_IO_ERROR; }
   if (pthread_mutex_init(&state->update_lock, NULL) != 0) {
-    pthread_rwlock_destroy(&state->lock); free(state); return YAP_V2_IO_ERROR;
+    pthread_mutex_destroy(&state->lock); free(state); return YAP_V2_IO_ERROR;
   }
   if (pthread_mutex_init(&state->ann_maintenance_lock, NULL) != 0) {
-    pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+    pthread_mutex_destroy(&state->update_lock); pthread_mutex_destroy(&state->lock);
     free(state); return YAP_V2_IO_ERROR;
   }
   state->index_dir = strdup(index_dir);
-  state->current = calloc(1U, sizeof(*state->current));
-  if (state->index_dir == NULL || state->current == NULL) {
-    free(state->index_dir); free(state->current);
+  if (state->index_dir == NULL) {
+    free(state->index_dir);
     pthread_mutex_destroy(&state->ann_maintenance_lock);
-    pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+    pthread_mutex_destroy(&state->update_lock); pthread_mutex_destroy(&state->lock);
     free(state); return YAP_V2_ALLOCATION_FAILED;
   }
-  status = runtime_open(state->current, state->index_dir);
+  status = runtime_allocate_open(state->index_dir, &state->current);
   if (status != YAP_V2_OK) {
-    runtime_close(state->current); free(state->current); free(state->index_dir);
+    runtime_release(state->current); free(state->index_dir);
     pthread_mutex_destroy(&state->ann_maintenance_lock);
-    pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+    pthread_mutex_destroy(&state->update_lock); pthread_mutex_destroy(&state->lock);
     free(state); return status;
   }
   runtime->state = state;
@@ -919,11 +1244,15 @@ void YAP_V2_http_runtime_close(YAP_V2_HTTP_RUNTIME *runtime) {
   HTTP_RUNTIME_STATE *state;
   if (runtime == NULL || runtime->state == NULL) return;
   state = runtime->state;
-  pthread_rwlock_wrlock(&state->lock);
-  runtime_close(state->current); free(state->current); state->current = NULL;
-  pthread_rwlock_unlock(&state->lock);
+  pthread_mutex_lock(&state->lock);
+  {
+    HTTP_RUNTIME *current = state->current;
+    state->current = NULL;
+    pthread_mutex_unlock(&state->lock);
+    runtime_release(current);
+  }
   pthread_mutex_destroy(&state->ann_maintenance_lock);
-  pthread_mutex_destroy(&state->update_lock); pthread_rwlock_destroy(&state->lock);
+  pthread_mutex_destroy(&state->update_lock); pthread_mutex_destroy(&state->lock);
   free(state->index_dir); free(state); runtime->state = NULL;
 }
 
@@ -941,21 +1270,22 @@ int YAP_V2_http_runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
     result = http_execute_loaded(NULL, state->index_dir, operation, body, body_bytes,
                                  http_status, response, response_bytes);
     if (result == 0 && *http_status == 200) {
-      pthread_rwlock_wrlock(&state->lock);
-      if (runtime_reload_manifest(state->current, state->index_dir) != YAP_V2_OK) {
+      if (runtime_state_reload(state) != YAP_V2_OK) {
         free(*response); *response = error_json("reload_failed",
           "index was updated but the new snapshot could not be loaded", response_bytes);
         *http_status = 503; result = *response == NULL ? -1 : 0;
       }
-      pthread_rwlock_unlock(&state->lock);
     }
     pthread_mutex_unlock(&state->update_lock);
     return result;
   }
-  pthread_rwlock_rdlock(&state->lock);
-  result = http_execute_loaded(state->current, state->index_dir, operation, body,
+  {
+    HTTP_RUNTIME *current = runtime_state_acquire(state);
+    if (current == NULL) return -1;
+    result = http_execute_loaded(current, state->index_dir, operation, body,
                                body_bytes, http_status, response, response_bytes);
-  pthread_rwlock_unlock(&state->lock);
+    runtime_release(current);
+  }
   return result;
 }
 
@@ -966,7 +1296,7 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
   if (runtime == NULL || runtime->state == NULL || operational == NULL)
     return YAP_V2_INVALID_ARGUMENT;
   state = runtime->state;
-  pthread_rwlock_rdlock(&state->lock); current = state->current;
+  current = runtime_state_acquire(state);
   memset(operational, 0, sizeof(*operational));
   operational->ready = current != NULL;
   if (current != NULL) {
@@ -977,8 +1307,8 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
     operational->embedding_dimensions = current->config.vector_dimensions;
     memcpy(operational->embedding_model_id, current->config.vector_model_id,
            strlen(current->config.vector_model_id) + 1U);
-    operational->ann_base_generation = current->ann_corpus.generation;
-    operational->ann_base_vectors = current->ann_corpus.vector_count;
+    operational->ann_base_generation = current->ann_resource->corpus.generation;
+    operational->ann_base_vectors = current->ann_resource->corpus.vector_count;
     operational->ann_delta_segments = current->ann_plan.delta_segment_count;
     operational->ann_missing_base_segments = current->ann_plan.missing_base_segment_count;
     pthread_mutex_lock(&current->ann_stats_lock);
@@ -987,12 +1317,15 @@ int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
     operational->ann_retry_search_calls = current->ann_stats.retry_search_calls;
     operational->ann_candidates_examined = current->ann_stats.candidates_examined;
     operational->ann_candidates_rejected = current->ann_stats.candidates_rejected;
-    pthread_mutex_unlock(&current->ann_stats_lock);
     operational->ann_rebuilds = current->ann_rebuilds;
     operational->ann_rebuild_failures = current->ann_rebuild_failures;
+    pthread_mutex_unlock(&current->ann_stats_lock);
   }
-  pthread_rwlock_unlock(&state->lock);
-  return current == NULL ? YAP_V2_CONFLICT : YAP_V2_OK;
+  {
+    int available = current != NULL;
+    runtime_release(current);
+    return available ? YAP_V2_OK : YAP_V2_CONFLICT;
+  }
 }
 
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime) {
@@ -1001,76 +1334,69 @@ int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime) {
   if (runtime == NULL || runtime->state == NULL) return YAP_V2_INVALID_ARGUMENT;
   state = runtime->state;
   pthread_mutex_lock(&state->update_lock);
-  pthread_rwlock_wrlock(&state->lock);
-  status = runtime_reload_manifest(state->current, state->index_dir);
-  pthread_rwlock_unlock(&state->lock);
+  status = runtime_state_reload(state);
   pthread_mutex_unlock(&state->update_lock);
   return status;
 }
 
 int YAP_V2_http_runtime_maintain_ann(YAP_V2_HTTP_RUNTIME *runtime) {
   HTTP_RUNTIME_STATE *state;
-  YAP_V2_ANN_CORPUS candidate;
-  YAP_V2_ANN_QUERY_PLAN plan;
-  uint64_t generation = 0U;
+  HTTP_RUNTIME *base = NULL, *replacement = NULL;
+  HTTP_ANN_RESOURCE *replacement_ann = NULL;
   int status = YAP_V2_OK, needed = 0;
   if (runtime == NULL || runtime->state == NULL) return YAP_V2_INVALID_ARGUMENT;
   state = runtime->state;
   pthread_mutex_lock(&state->ann_maintenance_lock);
-  YAP_V2_ann_corpus_init(&candidate);
-  YAP_V2_ann_query_plan_init(&plan);
-  pthread_rwlock_rdlock(&state->lock);
-  if (state->current->config.vector_metric != YAP_V2_VECTOR_DISABLED &&
-      (state->current->ann_plan.delta_segment_count > YAP_V2_ANN_MAX_DELTA_SEGMENTS ||
-       state->current->ann_plan.missing_base_segment_count > 0U)) {
+  pthread_mutex_lock(&state->update_lock);
+  base = runtime_state_acquire(state);
+  if (base != NULL && base->config.vector_metric != YAP_V2_VECTOR_DISABLED &&
+      (base->ann_plan.delta_segment_count > YAP_V2_ANN_MAX_DELTA_SEGMENTS ||
+       base->ann_plan.missing_base_segment_count > 0U)) {
     needed = 1;
-    generation = state->current->manifest.generation;
-    status = YAP_V2_ann_corpus_build(&state->current->manifest,
-                                     state->current->snapshot,
-                                     state->current->ann,
-                                     state->current->count, &candidate);
+    status = ann_resource_create(&replacement_ann);
+    if (status == YAP_V2_OK)
+      status = runtime_build_ann_corpus(base, &replacement_ann->corpus);
   }
-  pthread_rwlock_unlock(&state->lock);
   if (!needed) {
+    runtime_release(base);
+    pthread_mutex_unlock(&state->update_lock);
     pthread_mutex_unlock(&state->ann_maintenance_lock);
     return YAP_V2_OK;
   }
   if (status != YAP_V2_OK) {
-    pthread_rwlock_wrlock(&state->lock);
-    state->current->ann_rebuild_failures = saturated_add_u64(
-      state->current->ann_rebuild_failures, 1U);
-    pthread_rwlock_unlock(&state->lock);
-    YAP_V2_ann_corpus_free(&candidate);
-    pthread_mutex_unlock(&state->ann_maintenance_lock);
-    return status;
+    pthread_mutex_lock(&base->ann_stats_lock);
+    base->ann_rebuild_failures = saturated_add_u64(
+      base->ann_rebuild_failures, 1U);
+    pthread_mutex_unlock(&base->ann_stats_lock);
+    goto done;
   }
-  if (candidate.vector_count > 0U)
-    (void)YAP_V2_ann_corpus_save_cache(state->index_dir, &candidate);
-  pthread_rwlock_wrlock(&state->lock);
-  if (state->current->manifest.generation != generation) {
+  if (replacement_ann->corpus.vector_count > 0U)
+    (void)YAP_V2_ann_corpus_save_cache(state->index_dir,
+                                       &replacement_ann->corpus);
+  status = runtime_allocate_candidate(base, state->index_dir, replacement_ann,
+                                      &replacement);
+  if (status == YAP_V2_OK &&
+      replacement->manifest.generation != base->manifest.generation)
     status = YAP_V2_CONFLICT;
-    state->current->ann_rebuild_failures = saturated_add_u64(
-      state->current->ann_rebuild_failures, 1U);
-  } else {
-    status = YAP_V2_ann_query_plan_build(&candidate,
-                                         &state->current->manifest, &plan);
-    if (status == YAP_V2_OK) {
-      YAP_V2_ann_corpus_free(&state->current->ann_corpus);
-      YAP_V2_ann_query_plan_free(&state->current->ann_plan);
-      state->current->ann_corpus = candidate;
-      state->current->ann_plan = plan;
-      YAP_V2_ann_corpus_init(&candidate);
-      YAP_V2_ann_query_plan_init(&plan);
-      state->current->ann_rebuilds = saturated_add_u64(
-        state->current->ann_rebuilds, 1U);
-    } else {
-      state->current->ann_rebuild_failures = saturated_add_u64(
-        state->current->ann_rebuild_failures, 1U);
-    }
+  if (status == YAP_V2_OK) {
+    runtime_copy_observability(replacement, base);
+    pthread_mutex_lock(&replacement->ann_stats_lock);
+    replacement->ann_rebuilds = saturated_add_u64(
+      replacement->ann_rebuilds, 1U);
+    pthread_mutex_unlock(&replacement->ann_stats_lock);
+    status = runtime_state_publish_replacement(state, base, &replacement);
   }
-  pthread_rwlock_unlock(&state->lock);
-  YAP_V2_ann_query_plan_free(&plan);
-  YAP_V2_ann_corpus_free(&candidate);
+  if (status != YAP_V2_OK) {
+    pthread_mutex_lock(&base->ann_stats_lock);
+    base->ann_rebuild_failures = saturated_add_u64(
+      base->ann_rebuild_failures, 1U);
+    pthread_mutex_unlock(&base->ann_stats_lock);
+  }
+done:
+  runtime_release(replacement);
+  ann_resource_release(replacement_ann);
+  runtime_release(base);
+  pthread_mutex_unlock(&state->update_lock);
   pthread_mutex_unlock(&state->ann_maintenance_lock);
   return status;
 }
