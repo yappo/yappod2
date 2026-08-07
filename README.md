@@ -167,6 +167,11 @@ TOMLを`--config`で読みます。主なセクションは次のとおりです
 相対パスは設定ファイルがあるディレクトリを基準に解決します。各キーの型、デフォルト、範囲、利用する
 プログラムは[設定リファレンス](docs/configuration.md)にまとめています。
 
+一台の端末でcoreのCPUとI/Oを利用するためのスレッド、queue、snapshot公開、高頻度更新の設計は
+[単一端末runtimeの並列実行設計](docs/single-node-runtime-design.md)を参照してください。複数端末へ
+水平シャードとレプリカを配置する最終構成は
+[クラスタ構成計画](docs/cluster-architecture-plan.md)に分けて記載しています。
+
 ### 語彙検索用の完成した設定
 
 次は索引作成、直接検索、core/frontの起動に使える最小構成です。`directory`と`run_directory`は、このTOMLを
