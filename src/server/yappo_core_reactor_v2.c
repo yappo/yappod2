@@ -291,6 +291,47 @@ static void run_execution(void *opaque) {
   enqueue_message(execution->reactor, &execution->message);
 }
 
+void YAP_V2_core_reactor_execute_ingest_batch(void *context, void **items,
+                                              size_t item_count) {
+  execution_t **executions = (execution_t **)items;
+  YAP_V2_HTTP_INGEST_ITEM *batch;
+  server_state_t *server;
+  size_t i;
+  (void)context;
+  if (executions == NULL || item_count == 0U) return;
+  server = executions[0]->reactor->server;
+  batch = calloc(item_count, sizeof(*batch));
+  if (batch == NULL) {
+    for (i = 0U; i < item_count; i++) {
+      executions[i]->result = YAP_V2_ALLOCATION_FAILED;
+      enqueue_message(executions[i]->reactor, &executions[i]->message);
+    }
+    return;
+  }
+  for (i = 0U; i < item_count; i++) {
+    connection_t *connection = executions[i]->connection;
+    batch[i].body = connection->request.body;
+    batch[i].body_bytes = connection->request.body_bytes;
+  }
+  if (YAP_V2_http_runtime_execute_ingest_batch(server->runtime, batch,
+                                                item_count) != YAP_V2_OK) {
+    for (i = 0U; i < item_count; i++)
+      executions[i]->result = YAP_V2_IO_ERROR;
+  } else {
+    for (i = 0U; i < item_count; i++) {
+      executions[i]->http_status = batch[i].http_status;
+      executions[i]->json = batch[i].response;
+      executions[i]->json_bytes = batch[i].response_bytes;
+      executions[i]->result = batch[i].result == 0 ? YAP_V2_OK :
+                              YAP_V2_IO_ERROR;
+      batch[i].response = NULL;
+    }
+  }
+  free(batch);
+  for (i = 0U; i < item_count; i++)
+    enqueue_message(executions[i]->reactor, &executions[i]->message);
+}
+
 static const char *allow_for_target(const char *target) {
   if (strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0)
     return "QUERY";
@@ -376,12 +417,16 @@ static void submit_request(connection_t *connection) {
     }
     execution->limiter_acquired = 1;
   }
-  executor = execution->operation == YAP_V2_HTTP_INGEST ?
-             server->writer_executor : server->search_executor;
   connection->execution = execution;
   connection->inflight = 1;
   (void)bufferevent_disable(connection->buffered_event, EV_READ);
-  status = YAP_V2_executor_try_submit(executor, run_execution, execution);
+  if (execution->operation == YAP_V2_HTTP_INGEST)
+    status = YAP_V2_executor_try_submit_item(server->writer_executor,
+                                             execution);
+  else {
+    executor = server->search_executor;
+    status = YAP_V2_executor_try_submit(executor, run_execution, execution);
+  }
   if (status != YAP_V2_OK) {
     connection->execution = NULL;
     connection->inflight = 0;

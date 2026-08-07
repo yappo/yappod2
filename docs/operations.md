@@ -120,7 +120,7 @@ frontの各I/Oスレッドは専用のcore HTTPクライアントを持ち、HTT
 | `front_io_threads` | frontが作成する接続I/Oスレッド数です。 |
 | `core_io_threads` | coreが作成する接続I/Oスレッド数です。 |
 | `core_search_threads` | coreが作成する検索compute worker数です。 |
-| `core_writer_queue_capacity` | coreのwriter処理中とは別に待機できる更新数です。 |
+| `core_writer_queue_capacity` | frontとcoreで、writer処理中とは別に待機できる更新数です。 |
 | `core_writer_queue_bytes` | coreが処理中または待機中として予約できる更新本文の合計バイト数です。 |
 | `max_inflight` | 同時に受理する検索、取得、本文断片準備の件数です。 |
 | `max_inflight_bytes` | 処理中の検索、取得、本文断片準備の本文合計バイト数です。 |
@@ -132,10 +132,11 @@ frontの各I/Oスレッドは専用のcore HTTPクライアントを持ち、HTT
 超えません。coreのreactor数は接続数ではなく、同時に進めるソケットI/O callbackの分散数です。
 `max_inflight`または`max_inflight_bytes`を超えた処理は`503 overloaded`になります。
 文書更新は検索executorと別のwriter executorを使うため、更新待ちが検索用の処理枠を占有しません。
-frontは現在2件目の更新を`503 overloaded`として拒否します。coreへ直接接続した場合は処理中の1件とは
-別に`core_writer_queue_capacity`件まで待機できます。ただし処理中と待機中の更新本文合計は
-`core_writer_queue_bytes`を超えられず、coreは本文確保前に予約できなければ拒否します。要求本文1件の上限は、検索、取得、
-本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
+frontとcoreは処理中の1件とは別に`core_writer_queue_capacity`件まで待機させます。単一writerは最初の要求から
+最大10ミリ秒待ち、合計10000操作までを同じセグメント集合とmanifest世代へまとめます。同じ文書IDを含む
+要求どうしは入力順を変えないよう別の世代へ分けます。ただし処理中と待機中の更新本文合計は
+`core_writer_queue_bytes`を超えられず、本文確保前に予約できなければ拒否します。要求本文1件の上限は、検索、
+取得、本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
 coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
 
 ANN再構築と自動コンパクションは一つの保守スレッドで直列実行します。検索または更新が処理中なら新しい

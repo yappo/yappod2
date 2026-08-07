@@ -138,10 +138,12 @@ coreは保持中のスナップショットとディスク上の運用状態を�
 ## 処理上限と期限
 
 frontとcoreは、検索、取得、本文断片準備について、それぞれ`max_inflight`と
-`max_inflight_bytes`の処理枠を持ちます。文書更新はこの枠を消費しません。frontは現在1件だけを転送し、
-coreは単一writer threadで処理しながら`core_writer_queue_capacity`件まで待機させます。いずれかの処理枠を
-超えると`503 overloaded`です。さらに処理中と待機中の更新本文合計を`core_writer_queue_bytes`で制限し、
-HTTPヘッダーの`Content-Length`を確認した時点で予約できなければ、本文を確保せず拒否します。
+`max_inflight_bytes`の処理枠を持ちます。文書更新はこの枠を消費しません。frontとcoreは単一writerの処理中とは
+別に`core_writer_queue_capacity`件まで待機させます。writerは最初の要求から最大10ミリ秒、合計10000操作までを
+一つの公開世代へ集約します。同じ文書IDを含む要求どうしは順序を保つため別の世代へ分けます。いずれかの
+処理枠を超えると`503 overloaded`です。さらに処理中と待機中の更新本文合計を
+`core_writer_queue_bytes`で制限し、HTTPヘッダーの`Content-Length`を確認した時点で予約できなければ、本文を
+確保せず拒否します。
 
 通常のJSON本文上限は1 MiBです。`POST /v2/documents:batch`だけは
 `ingest_max_body_bytes`を使い、デフォルト64 MiB、設定可能な最大値256 MiBです。

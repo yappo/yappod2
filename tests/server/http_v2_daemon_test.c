@@ -24,6 +24,18 @@
 #include "server/yappo_core_http_v2.h"
 
 typedef struct { ytest_env_t env; ytest_daemon_stack_t stack; char run[PATH_MAX]; char policy[PATH_MAX]; } context_t;
+typedef struct {
+  pthread_mutex_t lock;
+  pthread_cond_t ready;
+  size_t waiting;
+  int start;
+} ingest_batch_gate_t;
+typedef struct {
+  context_t *context;
+  ingest_batch_gate_t *gate;
+  size_t id;
+  char *response;
+} ingest_batch_worker_t;
 static const char *policy_source = NULL;
 static YAP_V2_BYTES_VIEW view(const char *s) { YAP_V2_BYTES_VIEW v={(const unsigned char *)s,strlen(s)}; return v; }
 static void add(YAP_V2_SEGMENT_DESCRIPTOR *s,const YAP_V2_COMPONENT_DESCRIPTOR *c){assert_int_equal(YAP_V2_segment_descriptor_add_component(s,c),YAP_V2_OK);}
@@ -111,6 +123,17 @@ static int setup_single_worker(void **state) {
 }
 
 static int teardown_single_worker(void **state) {
+  return teardown(state);
+}
+
+static int setup_ingest_batch(void **state) {
+  policy_source =
+    "[daemon]\ncore_writer_queue_capacity=8\n"
+    "auto_compact_enabled=false\n";
+  return setup(state);
+}
+
+static int teardown_ingest_batch(void **state) {
   return teardown(state);
 }
 
@@ -325,6 +348,70 @@ static void test_front_core_atomic_nrt_updates(void **state) {
   assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"generation\":4"));free(response);
   response=post(ctx,"/v2/search","{\"query\":\"banana\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
   assert_null(strstr(response,"\"id\":\"doc-live\""));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
+static void *run_ingest_batch_worker(void *opaque) {
+  ingest_batch_worker_t *worker = opaque;
+  char body[512];
+  pthread_mutex_lock(&worker->gate->lock);
+  worker->gate->waiting++;
+  pthread_cond_broadcast(&worker->gate->ready);
+  while (!worker->gate->start)
+    pthread_cond_wait(&worker->gate->ready, &worker->gate->lock);
+  pthread_mutex_unlock(&worker->gate->lock);
+  if (snprintf(
+    body, sizeof(body),
+    "{\"operations\":[{\"operation\":\"upsert\","
+    "\"id\":\"batch-%zu\",\"body\":\"micro batch %zu\","
+    "\"vectors\":[[1,0]]}]}", worker->id, worker->id) <= 0)
+    return NULL;
+  worker->response = post(worker->context, "/v2/documents:batch", body);
+  return NULL;
+}
+
+static void test_concurrent_ingest_uses_one_generation(void **state) {
+  enum { WORKERS = 4 };
+  context_t *ctx = *state;
+  ingest_batch_gate_t gate;
+  ingest_batch_worker_t workers[WORKERS];
+  pthread_t threads[WORKERS];
+  YAP_V2_MANIFEST manifest;
+  char path[PATH_MAX];
+  size_t i;
+  memset(&gate, 0, sizeof(gate));
+  memset(workers, 0, sizeof(workers));
+  assert_int_equal(pthread_mutex_init(&gate.lock, NULL), 0);
+  assert_int_equal(pthread_cond_init(&gate.ready, NULL), 0);
+  for (i = 0U; i < WORKERS; i++) {
+    workers[i].context = ctx;
+    workers[i].gate = &gate;
+    workers[i].id = i;
+    assert_int_equal(pthread_create(&threads[i], NULL,
+                                    run_ingest_batch_worker,
+                                    &workers[i]), 0);
+  }
+  pthread_mutex_lock(&gate.lock);
+  while (gate.waiting != WORKERS)
+    pthread_cond_wait(&gate.ready, &gate.lock);
+  gate.start = 1;
+  pthread_cond_broadcast(&gate.ready);
+  pthread_mutex_unlock(&gate.lock);
+  for (i = 0U; i < WORKERS; i++) {
+    assert_int_equal(pthread_join(threads[i], NULL), 0);
+    assert_non_null(workers[i].response);
+    assert_non_null(strstr(workers[i].response, "200 OK"));
+    assert_non_null(strstr(workers[i].response, "\"generation\":2"));
+    free(workers[i].response);
+  }
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
+                                   "manifest.yap2"), 0);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.generation, 2U);
+  assert_int_equal(manifest.segment_count, 2U);
+  YAP_V2_manifest_free(&manifest);
+  assert_int_equal(pthread_cond_destroy(&gate.ready), 0);
+  assert_int_equal(pthread_mutex_destroy(&gate.lock), 0);
 }
 
 static void test_write_token_protects_daemon_ingest(void **state) {
@@ -561,6 +648,7 @@ int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_core_keeps_connection_for_sequential_requests,setup,teardown),
   cmocka_unit_test_setup_teardown(test_liveness_survives_readiness_failure,setup,teardown),
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_concurrent_ingest_uses_one_generation,setup_ingest_batch,teardown_ingest_batch),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
   cmocka_unit_test_setup_teardown(test_configured_single_worker_serves_requests,setup_single_worker,teardown_single_worker),

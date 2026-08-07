@@ -66,7 +66,8 @@ flowchart LR
   `yappod_core`へ転送します。
 - `yappod_core`は内部HTTPを検証し、1本のacceptorから複数のlibevent reactorへ接続を分配します。
   reactorは非blockingの増分送受信だけを行い、容量固定の検索executorまたは単一writer executorへ
-  処理を渡します。reactor数、検索compute worker数、更新待ち件数と本文byte数は独立して設定できます。
+  処理を渡します。writerは同時到着したHTTP更新を最大10ミリ秒、合計10000操作まで一つの公開世代へ
+  集約します。reactor数、検索compute worker数、更新待ち件数と本文byte数は独立して設定できます。
   検索は不変runtimeを要求単位で参照し、更新後は変更のないsegment資源を共有した候補runtimeを構築して、
   短時間のポインタ交換で新世代を公開します。
   一つの保守schedulerはforegroundの検索・更新がないことを確認してANN再構築とcompactionを直列実行します。

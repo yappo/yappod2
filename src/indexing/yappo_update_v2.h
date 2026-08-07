@@ -18,6 +18,12 @@ typedef struct {
 void YAP_V2_update_result_init(YAP_V2_UPDATE_RESULT *result);
 void YAP_V2_update_result_free(YAP_V2_UPDATE_RESULT *result);
 void YAP_V2_update_set_failpoint_for_testing(const char *name);
+void YAP_V2_update_operations_free(YAP_V2_INGEST_OPERATION *operations,
+                                   size_t count);
+int YAP_V2_update_parse_json_batch(
+  const unsigned char *input, size_t input_bytes,
+  YAP_V2_INGEST_OPERATION **operations_out, size_t *count_out,
+  char *error, size_t error_size);
 
 int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
                         size_t operation_count, YAP_V2_UPDATE_RESULT *result,

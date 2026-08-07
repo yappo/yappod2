@@ -123,7 +123,7 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `front_io_threads` | 整数 | 1〜1024 | `16` | 任意 | frontが公開接続の受付、要求の読み書き、coreへの転送に使用するI/Oスレッド数です。 |
 | `core_io_threads` | 整数 | 1〜1024 | `16` | 任意 | coreが内部接続の受付と要求の読み書きに使用するI/Oスレッド数です。検索計算数とは独立しています。 |
 | `core_search_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの上限付き検索queueを処理するcompute worker数です。検索、取得、本文断片準備を実行します。 |
-| `core_writer_queue_capacity` | 整数 | 1〜1024 | `1` | 任意 | coreの単一writer threadが処理中の更新とは別に、待機させる更新要求数です。満杯の場合は`503 overloaded`を返します。 |
+| `core_writer_queue_capacity` | 整数 | 1〜1024 | `1` | 任意 | frontとcoreが単一writerの処理中とは別に待機させる更新要求数です。満杯の場合は`503 overloaded`を返します。待機した要求は最大10ミリ秒、合計10000操作まで同じ世代へ集約されます。 |
 | `core_writer_queue_bytes` | 整数 | 1〜1073741824 | `134217728` | 任意 | coreが処理中または待機中として受理する文書更新本文の合計バイト数です。HTTP本文を確保する前に予約し、超過時は`503 overloaded`を返します。 |
 | `max_inflight` | 整数 | 1〜1024 | `16` | 任意 | frontとcoreが、それぞれ同時に処理中として保持する検索、取得、本文断片準備の件数上限です。どちらかで上限に達すると`503 overloaded`になります。ヘルスチェック、メトリクス、文書更新はこの処理枠の対象外です。 |
 | `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreが処理中として保持する検索、取得、本文断片準備の本文合計バイト数です。1件の大きさが残量を超える場合も`503 overloaded`になります。 |
@@ -136,11 +136,12 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 自動コンパクションを開始する、マニフェスト上で隣接した小セグメント数です。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | `POST /v2/documents:batch`をBearer認証します。省略時は更新APIを認証なしで受け付けます。外部API用の`authorization_token_env`とは別の機能です。 |
 
-文書更新は検索用の`max_inflight`と`max_inflight_bytes`を消費しません。coreでは更新を単一writer
-threadへ直列化し、処理中の1件に加えて`core_writer_queue_capacity`件まで待機できます。frontは現在、
-更新の転送を1件へ制限しているため、通常のfront経由では2件目を`503 overloaded`として拒否します。
-件数に空きがあっても、処理中と待機中の本文合計が`core_writer_queue_bytes`を超える要求は本文確保前に
-拒否します。writer queueの容量はcore内部接続を直接使用する運用と、frontの非同期I/O化に向けた境界です。
+文書更新は検索用の`max_inflight`と`max_inflight_bytes`を消費しません。frontとcoreは同じ更新件数・本文byte数の
+上限を使い、coreでは更新を単一writer threadへ直列化します。処理中の1件に加えて
+`core_writer_queue_capacity`件まで待機できます。writerは最初の要求から最大10ミリ秒待ち、待機中の要求を
+合計10000操作まで同じセグメント集合とmanifest世代へ集約します。同じ文書IDを含む要求どうしは順序を守るため
+別の世代へ分けます。件数に空きがあっても、処理中と待機中の本文合計が`core_writer_queue_bytes`を超える要求は
+本文確保前に拒否します。
 
 自動コンパクションはcore内の独立した保守スレッドで実行します。検索用ワーカースレッドと
 マニフェスト再読み込みスレッドを占有しません。コンパクション自体は手動実行と同じ

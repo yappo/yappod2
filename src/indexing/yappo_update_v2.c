@@ -310,8 +310,13 @@ int YAP_V2_build_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *ope
                           YAP_V2_BUILD_BATCH_OPERATIONS, result, error, error_size);
 }
 
-static void free_operations(YAP_V2_INGEST_OPERATION *operations, size_t count) {
-  size_t i; for (i = 0U; i < count; i++) YAP_V2_ingest_operation_free(&operations[i]); free(operations);
+void YAP_V2_update_operations_free(YAP_V2_INGEST_OPERATION *operations,
+                                   size_t count) {
+  size_t i;
+  if (operations == NULL) return;
+  for (i = 0U; i < count; i++)
+    YAP_V2_ingest_operation_free(&operations[i]);
+  free(operations);
 }
 
 static int parse_lines(const unsigned char *input, size_t input_bytes,
@@ -324,10 +329,10 @@ static int parse_lines(const unsigned char *input, size_t input_bytes,
     size_t end = offset; int status;
     while (end < input_bytes && input[end] != '\n') end++;
     if (end > offset && input[end - 1U] == '\r') end--;
-    if (end == offset) { set_error(error, error_size, "empty NDJSON records are not allowed"); free_operations(operations, count); return YAP_V2_INVALID_FORMAT; }
-    if (count == YAP_V2_UPDATE_MAX_OPERATIONS) { set_error(error, error_size, "batch exceeds 10000 operations"); free_operations(operations, count); return YAP_V2_OUT_OF_RANGE; }
+    if (end == offset) { set_error(error, error_size, "empty NDJSON records are not allowed"); YAP_V2_update_operations_free(operations, count); return YAP_V2_INVALID_FORMAT; }
+    if (count == YAP_V2_UPDATE_MAX_OPERATIONS) { set_error(error, error_size, "batch exceeds 10000 operations"); YAP_V2_update_operations_free(operations, count); return YAP_V2_OUT_OF_RANGE; }
     status = YAP_V2_ingest_parse_ndjson((const char *)input + offset, end - offset, &operations[count], error, error_size);
-    if (status != YAP_V2_OK) { free_operations(operations, count); return status; }
+    if (status != YAP_V2_OK) { YAP_V2_update_operations_free(operations, count); return status; }
     count++; offset = end;
     if (offset < input_bytes && input[offset] == '\r') offset++;
     if (offset < input_bytes && input[offset] == '\n') offset++;
@@ -342,15 +347,19 @@ int YAP_V2_update_ndjson(const char *index_dir, const unsigned char *input, size
   if (index_dir == NULL || input == NULL || result == NULL) return YAP_V2_INVALID_ARGUMENT;
   status = parse_lines(input, input_bytes, &operations, &count, error, error_size);
   if (status == YAP_V2_OK) status = YAP_V2_update_apply(index_dir, operations, count, result, error, error_size);
-  free_operations(operations, count); return status;
+  YAP_V2_update_operations_free(operations, count); return status;
 }
 
-int YAP_V2_update_json_batch(const char *index_dir, const unsigned char *input,
-                             size_t input_bytes, YAP_V2_UPDATE_RESULT *result,
-                             char *error, size_t error_size) {
+int YAP_V2_update_parse_json_batch(
+    const unsigned char *input, size_t input_bytes,
+    YAP_V2_INGEST_OPERATION **operations_out, size_t *count_out,
+    char *error, size_t error_size) {
   yyjson_doc *document; yyjson_val *root, *array, *item; yyjson_arr_iter iterator;
   YAP_V2_INGEST_OPERATION *operations = NULL; size_t count = 0U; int status = YAP_V2_INVALID_FORMAT;
-  if (index_dir == NULL || input == NULL || result == NULL) return YAP_V2_INVALID_ARGUMENT;
+  if (input == NULL || operations_out == NULL || count_out == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  *operations_out = NULL;
+  *count_out = 0U;
   document = yyjson_read((const char *)input, input_bytes, YYJSON_READ_NOFLAG);
   if (document == NULL) { set_error(error, error_size, "invalid JSON"); return status; }
   root = yyjson_doc_get_root(document); array = yyjson_is_obj(root) ? yyjson_obj_get(root, "operations") : NULL;
@@ -367,9 +376,35 @@ int YAP_V2_update_json_batch(const char *index_dir, const unsigned char *input,
     if (status != YAP_V2_OK) goto done;
     count++;
   }
-  status = YAP_V2_update_apply(index_dir, operations, count, result, error, error_size);
+  status = validate_unique_ids(operations, count);
+  if (status == YAP_V2_DUPLICATE)
+    set_error(error, error_size, "batch contains duplicate document IDs");
+  if (status == YAP_V2_OK) {
+    *operations_out = operations;
+    *count_out = count;
+    operations = NULL;
+  }
 done:
-  free_operations(operations, count); yyjson_doc_free(document); return status;
+  YAP_V2_update_operations_free(operations, count);
+  yyjson_doc_free(document);
+  return status;
+}
+
+int YAP_V2_update_json_batch(const char *index_dir, const unsigned char *input,
+                             size_t input_bytes, YAP_V2_UPDATE_RESULT *result,
+                             char *error, size_t error_size) {
+  YAP_V2_INGEST_OPERATION *operations = NULL;
+  size_t count = 0U;
+  int status;
+  if (index_dir == NULL || input == NULL || result == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_update_parse_json_batch(input, input_bytes, &operations,
+                                          &count, error, error_size);
+  if (status == YAP_V2_OK)
+    status = YAP_V2_update_apply(index_dir, operations, count, result,
+                                 error, error_size);
+  YAP_V2_update_operations_free(operations, count);
+  return status;
 }
 
 static int read_operations(const char *path, YAP_V2_INGEST_OPERATION **operations_out,
@@ -411,7 +446,7 @@ static int read_operations(const char *path, YAP_V2_INGEST_OPERATION **operation
   free(line);
   if (fclose(file) != 0 && status == YAP_V2_OK) status = YAP_V2_IO_ERROR;
   if (status != YAP_V2_OK) {
-    free_operations(operations, count);
+    YAP_V2_update_operations_free(operations, count);
     return status;
   }
   *operations_out = operations;
@@ -449,7 +484,7 @@ int YAP_V2_update_main(int argc, char **argv) {
   YAP_V2_update_result_init(&result);
   status = YAP_V2_update_apply(application.index_directory, operations, operation_count,
                                &result, error, sizeof(error));
-  free_operations(operations, operation_count);
+  YAP_V2_update_operations_free(operations, operation_count);
   if (status != YAP_V2_OK) { fprintf(stderr, "Update failed: %s (%s)\n", error, YAP_V2_status_string(status)); return EXIT_FAILURE; }
   printf("{\"generation\":%llu,\"accepted\":%zu,\"upserts\":%zu,\"deletes\":%zu,\"segment_ids\":[",
          (unsigned long long)result.generation, result.accepted, result.upserts, result.deletes);
