@@ -643,6 +643,8 @@ int main(int argc, char **argv) {
   worker_t *workers = NULL;
   size_t started = 0U, clients_opened = 0U;
   size_t io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
+  size_t writer_queue_capacity = 1U;
+  size_t writer_queue_bytes = YAP_APPLICATION_DEFAULT_WRITER_QUEUE_BYTES;
   int foreground = 0, have_port = 0, have_core_port = 0;
   YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
@@ -689,6 +691,8 @@ int main(int argc, char **argv) {
     port = application.front_port;
     runtime_policy = application.runtime_policy;
     io_threads = application.front_io_threads;
+    writer_queue_capacity = application.core_writer_queue_capacity;
+    writer_queue_bytes = application.core_writer_queue_bytes;
     compaction_policy = application.compaction_policy;
     if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
@@ -716,8 +720,8 @@ int main(int argc, char **argv) {
   memset(&ingest_limiter, 0, sizeof(ingest_limiter));
   {
     YAP_V2_RUNTIME_POLICY ingest_policy = runtime_policy;
-    ingest_policy.max_inflight = 1U;
-    ingest_policy.max_inflight_bytes = runtime_policy.ingest_max_body_bytes;
+    ingest_policy.max_inflight = writer_queue_capacity + 1U;
+    ingest_policy.max_inflight_bytes = writer_queue_bytes;
     if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK ||
         YAP_V2_runtime_limiter_init(&ingest_limiter, &ingest_policy) != YAP_V2_OK ||
         YAP_V2_metrics_init(&metrics) != YAP_V2_OK) {

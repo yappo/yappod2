@@ -23,5 +23,7 @@ int YAP_V2_core_reactor_server_open(
 void YAP_V2_core_reactor_server_stop_accepting(
   YAP_V2_CORE_REACTOR_SERVER *server);
 void YAP_V2_core_reactor_server_close(YAP_V2_CORE_REACTOR_SERVER *server);
+void YAP_V2_core_reactor_execute_ingest_batch(void *context, void **items,
+                                              size_t item_count);
 
 #endif

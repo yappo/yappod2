@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "common/yappo_types_v2.h"
 
@@ -28,7 +29,23 @@ typedef struct {
   size_t rejected;
   int accepting;
   int initialized;
+  size_t max_batch;
+  uint32_t max_delay_microseconds;
+  YAP_V2_EXECUTOR_BATCH_FUNCTION batch_function;
+  void *batch_context;
+  void **batch_items;
 } EXECUTOR_STATE;
+
+static void deadline_after_microseconds(struct timespec *deadline,
+                                        uint32_t microseconds) {
+  (void)clock_gettime(CLOCK_REALTIME, deadline);
+  deadline->tv_sec += (time_t)(microseconds / 1000000U);
+  deadline->tv_nsec += (long)(microseconds % 1000000U) * 1000L;
+  if (deadline->tv_nsec >= 1000000000L) {
+    deadline->tv_sec++;
+    deadline->tv_nsec -= 1000000000L;
+  }
+}
 
 static void *run_worker(void *opaque) {
   EXECUTOR_STATE *state = opaque;
@@ -52,6 +69,43 @@ static void *run_worker(void *opaque) {
     pthread_mutex_lock(&state->lock);
     state->active--;
     state->completed++;
+    pthread_mutex_unlock(&state->lock);
+  }
+  return NULL;
+}
+
+static void *run_batch_worker(void *opaque) {
+  EXECUTOR_STATE *state = opaque;
+  void **items = state->batch_items;
+  for (;;) {
+    size_t count = 0U;
+    struct timespec deadline;
+    pthread_mutex_lock(&state->lock);
+    while (state->queued == 0U && state->accepting)
+      pthread_cond_wait(&state->available, &state->lock);
+    if (state->queued == 0U && !state->accepting) {
+      pthread_mutex_unlock(&state->lock);
+      break;
+    }
+    deadline_after_microseconds(&deadline, state->max_delay_microseconds);
+    while (state->accepting && state->queued < state->max_batch) {
+      int wait_status = pthread_cond_timedwait(&state->available, &state->lock,
+                                               &deadline);
+      if (wait_status != 0) break;
+    }
+    while (count < state->max_batch && state->queued != 0U) {
+      items[count++] = state->jobs[state->head].context;
+      state->head = (state->head + 1U) % state->queue_capacity;
+      state->queued--;
+    }
+    state->active += count;
+    pthread_mutex_unlock(&state->lock);
+
+    state->batch_function(state->batch_context, items, count);
+
+    pthread_mutex_lock(&state->lock);
+    state->active -= count;
+    state->completed += count;
     pthread_mutex_unlock(&state->lock);
   }
   return NULL;
@@ -119,6 +173,49 @@ int YAP_V2_executor_open(YAP_V2_EXECUTOR *executor, size_t worker_threads,
   return YAP_V2_OK;
 }
 
+int YAP_V2_executor_open_batch(YAP_V2_EXECUTOR *executor,
+                               size_t queue_capacity, size_t max_batch,
+                               uint32_t max_delay_microseconds,
+                               YAP_V2_EXECUTOR_BATCH_FUNCTION function,
+                               void *batch_context) {
+  EXECUTOR_STATE *state;
+  int status;
+  if (executor == NULL || executor->state != NULL || queue_capacity == 0U ||
+      max_batch == 0U || max_batch > queue_capacity ||
+      max_delay_microseconds == 0U || function == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_executor_open(executor, 1U, queue_capacity);
+  if (status != YAP_V2_OK) return status;
+  state = executor->state;
+  pthread_mutex_lock(&state->lock);
+  state->max_batch = max_batch;
+  state->max_delay_microseconds = max_delay_microseconds;
+  state->batch_function = function;
+  state->batch_context = batch_context;
+  pthread_mutex_unlock(&state->lock);
+  /* Replace the ordinary worker before it can consume submitted work. */
+  pthread_mutex_lock(&state->lock);
+  state->accepting = 0;
+  pthread_cond_broadcast(&state->available);
+  pthread_mutex_unlock(&state->lock);
+  (void)pthread_join(state->threads[0], NULL);
+  state->started_threads = 0U;
+  state->batch_items = calloc(max_batch, sizeof(*state->batch_items));
+  if (state->batch_items == NULL) {
+    YAP_V2_executor_close(executor);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  pthread_mutex_lock(&state->lock);
+  state->accepting = 1;
+  pthread_mutex_unlock(&state->lock);
+  if (pthread_create(&state->threads[0], NULL, run_batch_worker, state) != 0) {
+    YAP_V2_executor_close(executor);
+    return YAP_V2_IO_ERROR;
+  }
+  state->started_threads = 1U;
+  return YAP_V2_OK;
+}
+
 int YAP_V2_executor_try_submit(YAP_V2_EXECUTOR *executor,
                                YAP_V2_EXECUTOR_FUNCTION function,
                                void *context) {
@@ -128,7 +225,8 @@ int YAP_V2_executor_try_submit(YAP_V2_EXECUTOR *executor,
     return YAP_V2_INVALID_ARGUMENT;
   state = executor->state;
   pthread_mutex_lock(&state->lock);
-  if (!state->accepting || state->queued == state->queue_capacity) {
+  if (state->batch_function != NULL || !state->accepting ||
+      state->queued == state->queue_capacity) {
     state->rejected++;
     pthread_mutex_unlock(&state->lock);
     return YAP_V2_EXECUTOR_FULL;
@@ -136,6 +234,29 @@ int YAP_V2_executor_try_submit(YAP_V2_EXECUTOR *executor,
   tail = (state->head + state->queued) % state->queue_capacity;
   state->jobs[tail].function = function;
   state->jobs[tail].context = context;
+  state->queued++;
+  state->submitted++;
+  pthread_cond_signal(&state->available);
+  pthread_mutex_unlock(&state->lock);
+  return YAP_V2_OK;
+}
+
+int YAP_V2_executor_try_submit_item(YAP_V2_EXECUTOR *executor, void *item) {
+  EXECUTOR_STATE *state;
+  size_t tail;
+  if (executor == NULL || executor->state == NULL)
+    return YAP_V2_INVALID_ARGUMENT;
+  state = executor->state;
+  pthread_mutex_lock(&state->lock);
+  if (state->batch_function == NULL || !state->accepting ||
+      state->queued == state->queue_capacity) {
+    state->rejected++;
+    pthread_mutex_unlock(&state->lock);
+    return YAP_V2_EXECUTOR_FULL;
+  }
+  tail = (state->head + state->queued) % state->queue_capacity;
+  state->jobs[tail].function = NULL;
+  state->jobs[tail].context = item;
   state->queued++;
   state->submitted++;
   pthread_cond_signal(&state->available);
@@ -178,6 +299,7 @@ void YAP_V2_executor_close(YAP_V2_EXECUTOR *executor) {
   pthread_mutex_destroy(&state->lock);
   free(state->threads);
   free(state->jobs);
+  free(state->batch_items);
   free(state);
   executor->state = NULL;
 }

@@ -33,7 +33,9 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 | front/core間のpersistent connection | 実装済みです。frontの各I/O workerが専用接続キャッシュを持ちます。 |
 | 検索要求単位のsnapshot参照保持と短時間の公開交換 | 実装済みです。変更のないsegment資源も新旧世代で共有します。 |
 | 負荷budget付きmaintenance scheduler | 実装済みです。ANNとcompactionを直列化し、foreground処理中は開始を延期します。 |
-| WAL、更新buffer、refresh、tiered merge | 未実装です。 |
+| 更新microbatchとrefresh | 実装済みです。HTTP更新を最大10ミリ秒、合計10000操作まで集約し、一つの世代として公開します。 |
+| WALとdurable/searchableの分離 | 未実装です。現在は検索runtimeの切り替え後にだけ成功を返します。 |
+| size-tiered merge | 未実装です。 |
 
 正式な現在動作は[アーキテクチャ](architecture.md)と[設定リファレンス](configuration.md)を優先します。
 この表は各実装段階の完了時に更新します。
@@ -139,18 +141,26 @@ componentだけを対象にします。cold cache性能とwarm cache性能は負
 
 ## 更新I/Oと高頻度更新
 
-更新要求は一つの上限付きwriter queueへ入れ、単一writer threadが世代順に処理します。manifestの公開順序、
-文書IDの最新版、削除、耐久性を壊さないため、同じシャードに複数のmanifest writerを置きません。
+更新要求は一つの上限付きwriter queueへ入れ、単一writer threadが世代順に処理します。writerは最初の要求を
+受け取ってから最大10ミリ秒待ち、queue内の要求を合計10000操作まで一つのrefreshへまとめます。要求をまたいで
+同じ文書IDが現れる位置、または操作数上限の手前でグループを分割するため、入力順と同一IDの更新順序は変えません。
+同じrefreshに入った要求は一つのセグメント集合とmanifest世代を共有します。個々のHTTP応答には、その要求自身の
+受理件数と、共有する公開世代を返します。
 
-`fsync`はdurable応答の境界なので、単に非同期化して応答を先に返しません。I/O reactorからは切り離し、
-writer threadがWALと公開対象を同期した後で完了を通知します。公開APIでは将来、次の二つを区別します。
+CLIの`yappo_makeindex update`は常駐writerを使わないため、現在も一回の起動につき一世代を公開します。
+manifestの公開順序、文書IDの最新版、削除、耐久性を壊さないため、同じシャードに複数のmanifest writerを
+置きません。
+
+`fsync`は成功応答の境界なので、単に非同期化して応答を先に返しません。I/O reactorからは切り離し、
+writer threadがセグメントとmanifestを同期し、検索runtimeを新世代へ切り替えた後で完了を通知します。
+WALの実装後は、公開APIで次の二つを区別できる設計にします。
 
 - durable: 更新がWALへ永続化され、再起動後に再適用できます。
 - searchable: 指定した更新が含まれるsnapshotへ切り替わり、検索できます。
 
-高頻度更新では、API要求ごとに物理セグメントとmanifest世代を一つ作る方式を最終形にしません。writerは
-複数のdurable更新をメモリー上の世代付きbufferへ集約し、経過時間、operation数、推定component byte数の
-いずれかが閾値へ達した時点でrefreshします。一回のrefreshは複数の更新transactionを含められます。
+現在のmicrobatchは、短時間に同時到着した要求を要求本文のまま上限付きqueueで保持し、時間または操作数の
+閾値でrefreshします。将来のWAL導入後は、WALへ同期済みの更新を世代付きbufferへ移し、推定component byte数も
+refresh条件へ加えます。一回のrefreshは複数の更新transactionを含められます。
 
 ```mermaid
 flowchart LR
@@ -163,9 +173,9 @@ flowchart LR
     Publish --> Searchable["searchable完了"]
 ```
 
-bufferが上限へ達してもflushできない場合は更新を無制限に受理せず、backpressureを返します。WAL、buffer、
-refresh、segment作成、manifest公開の再起動回復規則を実装するまでは、現在の「一更新batchにつき一世代」
-という公開契約を維持します。
+queueの要求数または本文合計byte数が上限へ達した場合は更新を無制限に受理せず、`503 overloaded`を返します。
+WALをまだ持たないため、プロセス停止時に未処理queueだけから更新を復元することはできず、成功応答も
+検索runtimeへの公開完了前には返しません。
 
 flush後のセグメントはbyte数によるtierへ分類します。各tierには許容セグメント数を設け、超過時はサイズの
 近いセグメントから、出力サイズ、削除回収量、世代の局所性、書き込み増幅を使ってmerge候補を評価します。
@@ -241,7 +251,8 @@ queue待ち時間、`503`数を記録します。warm cache、cold cache、検�
 5. front/core間のpersistent connectionを追加します。実装済みです。接続確立コストは負荷試験で測定します。
 6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。実装済みです。
 7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。実装済みです。
-8. WAL、更新buffer、refresh条件、durable/searchable待機を実装します。
+8. 時間・操作数上限付きの更新microbatchとrefreshを実装します。実装済みです。WAL、byte数によるrefresh条件、
+   durable/searchable待機の分離は残っています。
 9. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
 
 各段階で旧CLI、旧TOML、旧内部通信、旧索引形式との後方互換分岐は追加しません。契約を変更する場合は

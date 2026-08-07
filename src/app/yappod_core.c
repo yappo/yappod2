@@ -25,6 +25,7 @@
 #define DEFAULT_CORE_PORT 18401
 #define MAINTENANCE_POLL_INTERVAL_MS 250U
 #define MAINTENANCE_IDLE_SAMPLES 2U
+#define INGEST_BATCH_DELAY_MICROSECONDS 10000U
 typedef struct {
   const char *index_dir;
   YAP_V2_HTTP_RUNTIME *http_runtime;
@@ -368,8 +369,10 @@ int main(int argc, char **argv) {
   }
   if (YAP_V2_executor_open(&search_executor, search_threads,
                            runtime_policy.max_inflight) != YAP_V2_OK ||
-      YAP_V2_executor_open(&writer_executor, 1U,
-                           writer_queue_capacity) != YAP_V2_OK) {
+      YAP_V2_executor_open_batch(
+        &writer_executor, writer_queue_capacity + 1U,
+        writer_queue_capacity + 1U, INGEST_BATCH_DELAY_MICROSECONDS,
+        YAP_V2_core_reactor_execute_ingest_batch, NULL) != YAP_V2_OK) {
     fputs("Cannot start core executors\n", stderr);
     (void)close(listen_socket); listen_socket = -1;
     YAP_V2_executor_close(&writer_executor);

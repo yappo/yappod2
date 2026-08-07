@@ -1,6 +1,7 @@
 #include "server/yappo_http_v2.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1201,6 +1202,228 @@ unavailable:
 done:
   free((void *)request.filter_json.data); free(vector); free(hits); if (document != NULL) yyjson_doc_free(document);
   return *response == NULL ? -1 : 0;
+}
+
+typedef struct {
+  YAP_V2_INGEST_OPERATION *operations;
+  size_t operation_count;
+  size_t upserts;
+  size_t deletes;
+  int parse_status;
+  char error[256];
+} HTTP_PARSED_INGEST;
+
+static int update_status_is_client_error(int status) {
+  return status == YAP_V2_INVALID_ARGUMENT ||
+         status == YAP_V2_INVALID_FORMAT || status == YAP_V2_OUT_OF_RANGE ||
+         status == YAP_V2_DUPLICATE ||
+         status == YAP_V2_SEGMENT_CAPACITY_EXCEEDED;
+}
+
+static void update_error_response(int status, const char *message,
+                                  YAP_V2_HTTP_INGEST_ITEM *item) {
+  const char *resolved = message != NULL && message[0] != '\0' ? message :
+                         YAP_V2_status_string(status);
+  if (update_status_is_client_error(status)) {
+    item->http_status = 400;
+    item->response = error_json("invalid_batch", resolved,
+                                &item->response_bytes);
+  } else if (status == YAP_V2_CONFLICT) {
+    item->http_status = 409;
+    item->response = error_json("generation_conflict", resolved,
+                                &item->response_bytes);
+  } else {
+    item->http_status = 503;
+    item->response = error_json("update_unavailable", resolved,
+                                &item->response_bytes);
+  }
+  item->result = item->response == NULL ? -1 : 0;
+}
+
+static size_t update_id_hash(const char *value) {
+  size_t hash = (size_t)1469598103934665603ULL;
+  const unsigned char *cursor = (const unsigned char *)value;
+  while (*cursor != '\0') {
+    hash ^= *cursor++;
+    hash *= (size_t)1099511628211ULL;
+  }
+  return hash;
+}
+
+static int update_group_contains_ids(const char *const *slots, size_t capacity,
+                                     const HTTP_PARSED_INGEST *parsed) {
+  size_t i;
+  for (i = 0U; i < parsed->operation_count; i++) {
+    const char *id = parsed->operations[i].id;
+    size_t slot = update_id_hash(id) & (capacity - 1U);
+    while (slots[slot] != NULL) {
+      if (strcmp(slots[slot], id) == 0) return 1;
+      slot = (slot + 1U) & (capacity - 1U);
+    }
+  }
+  return 0;
+}
+
+static void update_group_add_ids(const char **slots, size_t capacity,
+                                 const HTTP_PARSED_INGEST *parsed) {
+  size_t i;
+  for (i = 0U; i < parsed->operation_count; i++) {
+    const char *id = parsed->operations[i].id;
+    size_t slot = update_id_hash(id) & (capacity - 1U);
+    while (slots[slot] != NULL) slot = (slot + 1U) & (capacity - 1U);
+    slots[slot] = id;
+  }
+}
+
+static int apply_ingest_group(
+    const char *index_dir, HTTP_PARSED_INGEST *parsed,
+    YAP_V2_HTTP_INGEST_ITEM *items, const size_t *indices,
+    size_t index_count) {
+  YAP_V2_INGEST_OPERATION *combined;
+  YAP_V2_UPDATE_RESULT update;
+  char error[256] = {0};
+  size_t operation_count = 0U, offset = 0U, i;
+  int status;
+  for (i = 0U; i < index_count; i++)
+    operation_count += parsed[indices[i]].operation_count;
+  combined = calloc(operation_count, sizeof(*combined));
+  if (combined == NULL) {
+    for (i = 0U; i < index_count; i++)
+      update_error_response(YAP_V2_ALLOCATION_FAILED, NULL,
+                            &items[indices[i]]);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  for (i = 0U; i < index_count; i++) {
+    HTTP_PARSED_INGEST *batch = &parsed[indices[i]];
+    memcpy(combined + offset, batch->operations,
+           batch->operation_count * sizeof(*combined));
+    offset += batch->operation_count;
+  }
+  YAP_V2_update_result_init(&update);
+  status = YAP_V2_update_apply(index_dir, combined, operation_count, &update,
+                               error, sizeof(error));
+  free(combined);
+  if (status != YAP_V2_OK && index_count > 1U &&
+      update_status_is_client_error(status)) {
+    YAP_V2_update_result_free(&update);
+    for (i = 0U; i < index_count; i++)
+      (void)apply_ingest_group(index_dir, parsed, items, &indices[i], 1U);
+    return YAP_V2_OK;
+  }
+  for (i = 0U; i < index_count; i++) {
+    size_t index = indices[i];
+    if (status == YAP_V2_OK) {
+      YAP_V2_UPDATE_RESULT individual = update;
+      individual.accepted = parsed[index].operation_count;
+      individual.upserts = parsed[index].upserts;
+      individual.deletes = parsed[index].deletes;
+      items[index].http_status = 200;
+      items[index].response = update_json(&individual,
+                                           &items[index].response_bytes);
+      items[index].result = items[index].response == NULL ? -1 : 0;
+    } else {
+      update_error_response(status, error, &items[index]);
+    }
+  }
+  YAP_V2_update_result_free(&update);
+  return status;
+}
+
+int YAP_V2_http_runtime_execute_ingest_batch(
+    YAP_V2_HTTP_RUNTIME *runtime, YAP_V2_HTTP_INGEST_ITEM *items,
+    size_t item_count) {
+  enum { ID_SLOT_CAPACITY = 32768 };
+  HTTP_RUNTIME_STATE *state;
+  HTTP_PARSED_INGEST *parsed;
+  const char **id_slots;
+  size_t *group_indices;
+  size_t group_count = 0U, group_operations = 0U, i, j;
+  int published = 0;
+  if (runtime == NULL || runtime->state == NULL || items == NULL ||
+      item_count == 0U)
+    return YAP_V2_INVALID_ARGUMENT;
+  state = runtime->state;
+  parsed = calloc(item_count, sizeof(*parsed));
+  group_indices = calloc(item_count, sizeof(*group_indices));
+  id_slots = calloc(ID_SLOT_CAPACITY, sizeof(*id_slots));
+  if (parsed == NULL || group_indices == NULL || id_slots == NULL) {
+    free(parsed); free(group_indices); free(id_slots);
+    return YAP_V2_ALLOCATION_FAILED;
+  }
+  pthread_mutex_lock(&state->update_lock);
+  for (i = 0U; i < item_count; i++) {
+    memset(&items[i].http_status, 0,
+           sizeof(items[i]) - offsetof(YAP_V2_HTTP_INGEST_ITEM, http_status));
+    if (items[i].body == NULL || items[i].body_bytes == 0U ||
+        items[i].body_bytes > YAP_V2_HTTP_MAX_INGEST_BODY_BYTES) {
+      parsed[i].parse_status = YAP_V2_INVALID_ARGUMENT;
+      (void)snprintf(parsed[i].error, sizeof(parsed[i].error),
+                     "request body is invalid");
+      continue;
+    }
+    parsed[i].parse_status = YAP_V2_update_parse_json_batch(
+      items[i].body, items[i].body_bytes, &parsed[i].operations,
+      &parsed[i].operation_count, parsed[i].error,
+      sizeof(parsed[i].error));
+    if (parsed[i].parse_status == YAP_V2_OK)
+      for (j = 0U; j < parsed[i].operation_count; j++) {
+        if (parsed[i].operations[j].kind == YAP_V2_INGEST_DELETE)
+          parsed[i].deletes++;
+        else
+          parsed[i].upserts++;
+      }
+  }
+  for (i = 0U; i < item_count; i++) {
+    int split = 0;
+    if (parsed[i].parse_status != YAP_V2_OK) {
+      if (group_count != 0U) {
+        if (apply_ingest_group(state->index_dir, parsed, items,
+                               group_indices, group_count) == YAP_V2_OK)
+          published = 1;
+        group_count = 0U; group_operations = 0U;
+        memset(id_slots, 0, ID_SLOT_CAPACITY * sizeof(*id_slots));
+      }
+      update_error_response(parsed[i].parse_status, parsed[i].error, &items[i]);
+      continue;
+    }
+    split = group_count != 0U &&
+            (parsed[i].operation_count >
+               YAP_V2_UPDATE_MAX_OPERATIONS - group_operations ||
+             update_group_contains_ids(id_slots, ID_SLOT_CAPACITY,
+                                       &parsed[i]));
+    if (split) {
+      if (apply_ingest_group(state->index_dir, parsed, items,
+                             group_indices, group_count) == YAP_V2_OK)
+        published = 1;
+      group_count = 0U; group_operations = 0U;
+      memset(id_slots, 0, ID_SLOT_CAPACITY * sizeof(*id_slots));
+    }
+    group_indices[group_count++] = i;
+    group_operations += parsed[i].operation_count;
+    update_group_add_ids(id_slots, ID_SLOT_CAPACITY, &parsed[i]);
+  }
+  if (group_count != 0U &&
+      apply_ingest_group(state->index_dir, parsed, items,
+                         group_indices, group_count) == YAP_V2_OK)
+    published = 1;
+  if (published && runtime_state_reload(state) != YAP_V2_OK) {
+    for (i = 0U; i < item_count; i++) {
+      if (items[i].http_status != 200) continue;
+      free(items[i].response);
+      items[i].response = error_json(
+        "reload_failed",
+        "index was updated but the new snapshot could not be loaded",
+        &items[i].response_bytes);
+      items[i].http_status = 503;
+      items[i].result = items[i].response == NULL ? -1 : 0;
+    }
+  }
+  pthread_mutex_unlock(&state->update_lock);
+  for (i = 0U; i < item_count; i++)
+    YAP_V2_update_operations_free(parsed[i].operations,
+                                  parsed[i].operation_count);
+  free(parsed); free(group_indices); free(id_slots);
+  return YAP_V2_OK;
 }
 
 void YAP_V2_http_runtime_init(YAP_V2_HTTP_RUNTIME *runtime) {

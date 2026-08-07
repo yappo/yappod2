@@ -403,10 +403,62 @@ static void test_ann_base_delta_update_delete_and_rebuild(void **state) {
   ytest_env_destroy(&env);
 }
 
+static void test_ingest_batch_publishes_one_generation(void **state) {
+  static const char first[] =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-batch-a\","
+    "\"body\":\"batch alpha\",\"vectors\":[[1,0]]}]}";
+  static const char second[] =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-batch-b\","
+    "\"body\":\"batch beta\",\"vectors\":[[0,1]]}]}";
+  ytest_env_t env;
+  YAP_V2_HTTP_RUNTIME runtime;
+  YAP_V2_HTTP_INGEST_ITEM items[2];
+  YAP_V2_MANIFEST manifest;
+  char path[PATH_MAX];
+  size_t i;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_http_runtime_init(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_open(&runtime, env.tmp_root), YAP_V2_OK);
+  memset(items, 0, sizeof(items));
+  items[0].body = (const unsigned char *)first;
+  items[0].body_bytes = sizeof(first) - 1U;
+  items[1].body = (const unsigned char *)second;
+  items[1].body_bytes = sizeof(second) - 1U;
+  assert_int_equal(YAP_V2_http_runtime_execute_ingest_batch(
+    &runtime, items, 2U), YAP_V2_OK);
+  for (i = 0U; i < 2U; i++) {
+    yyjson_doc *document;
+    yyjson_val *root;
+    assert_int_equal(items[i].result, 0);
+    assert_int_equal(items[i].http_status, 200);
+    document = yyjson_read(items[i].response, items[i].response_bytes, 0U);
+    assert_non_null(document);
+    root = yyjson_doc_get_root(document);
+    assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "generation")), 2U);
+    assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "accepted")), 1U);
+    yyjson_doc_free(document);
+    free(items[i].response);
+  }
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root,
+                                   "manifest.yap2"), 0);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.generation, 2U);
+  assert_int_equal(manifest.segment_count, 2U);
+  YAP_V2_manifest_free(&manifest);
+  assert_runtime_search_id(&runtime, "alpha", "doc-batch-a", 2U);
+  assert_runtime_search_id(&runtime, "beta", "doc-batch-b", 2U);
+  YAP_V2_http_runtime_close(&runtime);
+  ytest_env_destroy(&env);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_real_search_and_retrieve_runtime),
     cmocka_unit_test(test_runtime_reload_reuses_reorders_and_replaces_segments),
+    cmocka_unit_test(test_ingest_batch_publishes_one_generation),
     cmocka_unit_test(test_ann_base_delta_update_delete_and_rebuild)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
