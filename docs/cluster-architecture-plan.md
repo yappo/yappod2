@@ -527,7 +527,7 @@ frontの公開要求数と、coreへの内部要求数は別に制限します�
 frontは要求受理時に、予想されるfan-out分の最低限の予約を取ります。途中で無制限に候補配列や再試行を
 増やしません。coreは過負荷を待ち行列へ無期限に積まず、早い段階で明示的に拒否します。
 
-各coreの`worker_threads`と計算用同時実行数は別の値として調整できるようにします。ソケット待機用スレッドが
+各coreの`core_io_threads`と`core_search_threads`は別の値として調整します。ソケット待機用スレッドが
 CPU負荷の高い検索数をそのまま決める構造にせず、frontは多数のcore通信をevent loopと永続接続で扱い、
 coreはbounded compute poolで検索します。
 

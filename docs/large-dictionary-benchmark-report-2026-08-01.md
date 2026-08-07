@@ -505,6 +505,10 @@ yappodの検索I/Oとは断定できません。高負荷後のシステムメ�
 
 ### 過負荷保護プロファイル
 
+この節の`worker_threads`は測定時点の旧設定名です。現在はfront接続、core接続、core検索計算を
+`front_io_threads`、`core_io_threads`、`core_search_threads`へ分離しており、数値を比較するときは測定時の
+単一設定だったことに注意してください。
+
 `worker_threads=16`と`max_inflight=16`が同じ場合、同時数32と64でも503は発生しませんでした。
 16本を超える接続は処理枠を取得する前のソケット待ち行列へ並ぶためです。待ち行列ではなく
 明示的な503で保護する構成を確認するため、同じcoreへ`worker_threads=16`、

@@ -105,23 +105,29 @@ Yappod2サーバーはログファイルを追記モードで開きます。フ�
 
 ## 同時処理とタイムアウト
 
-coreとfrontは、`[daemon].worker_threads`で指定した数のワーカースレッドをそれぞれ作ります。
-デフォルトは16です。両プロセスへ同じ値を適用し、接続を受け付けた一つのworkerが一つのHTTP要求を
-処理します。`[daemon]`の関連する設定は次の意味です。
+frontは`[daemon].front_io_threads`本、coreは`core_io_threads`本の接続I/Oスレッドを作ります。coreは
+接続I/Oとは別に、`core_search_threads`本の検索compute workerと単一writer threadを作ります。
+I/Oスレッドと検索compute workerの既定値はそれぞれ16です。接続を受け付けたI/Oスレッドは検索計算を
+上限付きexecutorへ渡し、完了までその接続を保持します。`[daemon]`の関連する設定は次の意味です。
 
 | キー | 制限する対象 |
 |---|---|
-| `worker_threads` | coreとfrontがそれぞれ作成するワーカースレッド数です。 |
+| `front_io_threads` | frontが作成する接続I/Oスレッド数です。 |
+| `core_io_threads` | coreが作成する接続I/Oスレッド数です。 |
+| `core_search_threads` | coreが作成する検索compute worker数です。 |
+| `core_writer_queue_capacity` | coreのwriter処理中とは別に待機できる更新数です。 |
 | `max_inflight` | 同時に受理する検索、取得、本文断片準備の件数です。 |
 | `max_inflight_bytes` | 処理中の検索、取得、本文断片準備の本文合計バイト数です。 |
 | `request_timeout_ms` | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
 | `ingest_max_body_bytes` | 文書更新1件の本文上限です。デフォルト64 MiB、最大256 MiBです。 |
 | `ingest_timeout_ms` | 文書更新に適用するソケットと内部HTTPの期限です。デフォルト60000ミリ秒です。 |
 
-実際に同時処理できる通常要求数は、ワーカースレッド数と`max_inflight`の小さい方を超えません。
+実際に同時処理できる通常要求数は、frontとcoreのI/Oスレッド数、coreの検索compute worker数、
+`max_inflight`のうち最も小さい値を超えません。
 `max_inflight`または`max_inflight_bytes`を超えた処理は`503 overloaded`になります。
-文書更新は通常要求と別の1件分の処理枠を使うため、更新待ちが検索用の処理枠を占有しません。
-同時に2件目の更新が到着した場合は`503 overloaded`です。要求本文1件の上限は、検索、取得、
+文書更新は検索executorと別のwriter executorを使うため、更新待ちが検索用の処理枠を占有しません。
+frontは現在2件目の更新を`503 overloaded`として拒否します。coreへ直接接続した場合は処理中の1件とは
+別に`core_writer_queue_capacity`件まで待機できます。要求本文1件の上限は、検索、取得、
 本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
 coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
 
