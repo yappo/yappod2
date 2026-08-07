@@ -5,6 +5,7 @@
 #include "config/yappo_config_v2.h"
 #include "storage/yappo_manifest_v2.h"
 #include "indexing/yappo_segment_planner_v2.h"
+#include "indexing/yappo_update_v2.h"
 #include "components/yappo_vector_v2.h"
 #include "storage/yappo_writer_lock_v2.h"
 
@@ -612,6 +613,17 @@ static int compact_internal(
   if (status != YAP_V2_OK) {
     set_error(error, error_size, "cannot acquire index writer lock");
     goto done;
+  }
+  while (YAP_V2_update_wal_exists(index_dir)) {
+    YAP_V2_writer_lock_release(&writer_lock);
+    status = YAP_V2_update_recover(index_dir, error, error_size);
+    if (status != YAP_V2_OK) goto done;
+    status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
+    if (status != YAP_V2_OK) {
+      set_error(error, error_size,
+                "cannot reacquire index writer lock after WAL recovery");
+      goto done;
+    }
   }
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }

@@ -122,6 +122,7 @@ set(YAPPOD_INDEXING_SOURCES
   ${SRC_DIR}/indexing/yappo_ingest.c
   ${SRC_DIR}/indexing/yappo_build_v2.c
   ${SRC_DIR}/indexing/yappo_update_v2.c
+  ${SRC_DIR}/indexing/yappo_update_wal_v2.c
   ${SRC_DIR}/indexing/yappo_segment_planner_v2.c
   ${SRC_DIR}/indexing/yappo_compact_v2.c
 )
