@@ -594,6 +594,12 @@ if(YAPPOD_TESTS_NODAEMON)
   target_include_directories(v2_load_probe PRIVATE ${TEST_COMMON_DIR})
   target_link_libraries(v2_load_probe PRIVATE yappod_test_support yappod::yyjson Threads::Threads)
 
+  add_executable(v2_mixed_load_probe ${QUALITY_TEST_DIR}/v2_mixed_load_probe.c)
+  yappod_enable_warnings(v2_mixed_load_probe)
+  target_include_directories(v2_mixed_load_probe PRIVATE ${TEST_COMMON_DIR})
+  target_link_libraries(v2_mixed_load_probe PRIVATE
+    yappod_test_support yappod::yyjson Threads::Threads)
+
   add_executable(v2_segment_search_benchmark
     ${QUALITY_TEST_DIR}/v2_segment_search_benchmark.c
     ${QUALITY_TEST_DIR}/search_quality_metrics.c

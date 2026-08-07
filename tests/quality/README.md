@@ -74,6 +74,29 @@ descriptor記録数です。CI実行環境の速度差で判定を変えず、�
 その他の失敗を含む要求総数を全体実時間で割った値です。P50、P95、P99は成功した要求だけから
 計算します。接続再利用を行うクライアントの性能とは分けて解釈してください。
 
+### 検索・更新混在probe
+
+`v2_mixed_load_probe`は、語彙検索だけ、更新だけ、または両方を同時に開始して、それぞれの成功件数、
+過負荷拒否件数、P50、P95、P99、処理量を分けて出力します。更新では要求ごとに異なる文書IDを生成するため、
+同じIDの順序維持によってmicrobatchが意図せず分割されません。
+
+```sh
+./build/v2_mixed_load_probe \
+  --port FRONT_PORT \
+  --core-pid CORE_PID \
+  --front-pid FRONT_PID \
+  --search-request lexical-request.json \
+  --search-requests 6000 \
+  --search-concurrency 8 \
+  --update-requests 256 \
+  --update-concurrency 8 \
+  --update-prefix million-mixed \
+  --require-all-success
+```
+
+`--search-*`をすべて省略すると更新だけ、`--update-*`をすべて省略すると検索だけを測定します。
+文書IDの重複を避けるため、同じ索引へ複数回実行するときは異なる`--update-prefix`を指定してください。
+
 実行前に、対象が負荷試験を許可された環境であることを確認してください。開発者の既存デーモンや本番環境へ無断で実行してはいけません。
 
 ## `v2_segment_search_benchmark`
