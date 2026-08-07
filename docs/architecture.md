@@ -64,11 +64,12 @@ flowchart LR
   新しいsegment群へ置き換えます。
 - `yappod_front`は公開HTTP、認証、処理上限、運用endpointを担当します。検索、取得、登録は
   `yappod_core`へ転送します。
-- `yappod_core`は内部HTTPを検証し、接続I/Oスレッドから容量固定の検索executorまたは単一writer
-  executorへ処理を渡します。接続I/O数、検索compute worker数、更新待ち行列は独立して設定できます。
+- `yappod_core`は内部HTTPを検証し、1本のacceptorから複数のlibevent reactorへ接続を分配します。
+  reactorは非blockingの増分送受信だけを行い、容量固定の検索executorまたは単一writer executorへ
+  処理を渡します。reactor数、検索compute worker数、更新待ち件数と本文byte数は独立して設定できます。
   独立した保守スレッドはマニフェストdescriptorから小セグメント数を定期確認し、設定した閾値を
-  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。接続自体はまだ同期I/Oであり、
-  libeventへの移行状態は[単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
+  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。persistent connectionなどの
+  後続状態は[単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
 
 公開HTTPと内部HTTPの正確なmethod、path、header、状態コードは
 [frontとcoreの通信仕様](yappod-core-protocol.md)を参照してください。

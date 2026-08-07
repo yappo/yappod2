@@ -23,6 +23,7 @@ export interface DaemonConfig {
   coreIoThreads: number;
   coreSearchThreads: number;
   coreWriterQueueCapacity: number;
+  coreWriterQueueBytes: number;
   maxInflight: number;
   maxInflightBytes: number;
   requestTimeoutMs: number;
@@ -196,7 +197,8 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
   onlyKeys(daemon, [
     "run_directory", "core_host", "core_port", "front_host", "front_port", "max_inflight",
     "front_io_threads", "core_io_threads", "core_search_threads",
-    "core_writer_queue_capacity", "max_inflight_bytes", "request_timeout_ms", "ingest_max_body_bytes",
+    "core_writer_queue_capacity", "core_writer_queue_bytes", "max_inflight_bytes",
+    "request_timeout_ms", "ingest_max_body_bytes",
     "ingest_timeout_ms", "write_token", "auto_compact_enabled",
     "auto_compact_check_interval_ms", "auto_compact_small_segment_bytes",
     "auto_compact_min_small_segments",
@@ -217,6 +219,8 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
                                "daemon.core_search_threads"),
     coreWriterQueueCapacity: integer(daemon.core_writer_queue_capacity, 1, 1, 1024,
                                      "daemon.core_writer_queue_capacity"),
+    coreWriterQueueBytes: integer(daemon.core_writer_queue_bytes, 134217728, 1, 1073741824,
+                                  "daemon.core_writer_queue_bytes"),
     maxInflight: integer(daemon.max_inflight, 16, 1, 1024, "daemon.max_inflight"),
     maxInflightBytes: integer(daemon.max_inflight_bytes, 4194304, 1, 1073741824, "daemon.max_inflight_bytes"),
     requestTimeoutMs: integer(daemon.request_timeout_ms, 5000, 1, 60000, "daemon.request_timeout_ms"),

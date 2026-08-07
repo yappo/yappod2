@@ -33,7 +33,7 @@ static const char valid[] =
   "[daemon]\nrun_directory='./run'\ncore_host='127.0.0.1'\ncore_port=18401\n"
   "front_host='127.0.0.1'\nfront_port=18400\nmax_inflight=8\n"
   "front_io_threads=4\ncore_io_threads=5\ncore_search_threads=6\n"
-  "core_writer_queue_capacity=7\n"
+  "core_writer_queue_capacity=7\ncore_writer_queue_bytes=268435456\n"
   "max_inflight_bytes=8192\nrequest_timeout_ms=2500\n"
   "ingest_max_body_bytes=33554432\ningest_timeout_ms=120000\n"
   "auto_compact_enabled=false\nauto_compact_check_interval_ms=5000\n"
@@ -56,6 +56,7 @@ static void test_loads_shared_config_and_resolves_paths(void **state) {
   assert_int_equal(config.core_io_threads, 5U);
   assert_int_equal(config.core_search_threads, 6U);
   assert_int_equal(config.core_writer_queue_capacity, 7U);
+  assert_int_equal(config.core_writer_queue_bytes, 268435456U);
   assert_int_equal(config.runtime_policy.max_inflight, 8U);
   assert_int_equal(config.runtime_policy.request_timeout_ms, 2500U);
   assert_int_equal(config.runtime_policy.ingest_max_body_bytes, 33554432U);
@@ -138,6 +139,8 @@ static void test_execution_threads_defaults_and_ranges(void **state) {
   assert_int_equal(config.core_io_threads, YAP_APPLICATION_DEFAULT_IO_THREADS);
   assert_int_equal(config.core_search_threads, YAP_APPLICATION_DEFAULT_SEARCH_THREADS);
   assert_int_equal(config.core_writer_queue_capacity, 1U);
+  assert_int_equal(config.core_writer_queue_bytes,
+                   YAP_APPLICATION_DEFAULT_WRITER_QUEUE_BYTES);
 
   assert_true(snprintf(source, sizeof(source), "%s", valid) > 0);
   {

@@ -200,6 +200,7 @@ void YAP_application_config_init(YAP_APPLICATION_CONFIG *config) {
   config->core_io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
   config->core_search_threads = YAP_APPLICATION_DEFAULT_SEARCH_THREADS;
   config->core_writer_queue_capacity = 1U;
+  config->core_writer_queue_bytes = YAP_APPLICATION_DEFAULT_WRITER_QUEUE_BYTES;
   YAP_V2_compaction_policy_init(&config->compaction_policy);
 }
 
@@ -213,7 +214,7 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
   static const char *const daemon_keys[] = {"run_directory", "core_host", "core_port",
     "front_host", "front_port", "max_inflight", "max_inflight_bytes",
     "front_io_threads", "core_io_threads", "core_search_threads",
-    "core_writer_queue_capacity",
+    "core_writer_queue_capacity", "core_writer_queue_bytes",
     "request_timeout_ms", "ingest_max_body_bytes", "ingest_timeout_ms", "write_token",
     "auto_compact_enabled", "auto_compact_check_interval_ms",
     "auto_compact_small_segment_bytes", "auto_compact_min_small_segments", NULL};
@@ -338,6 +339,11 @@ int YAP_application_config_load(const char *path, YAP_APPLICATION_CONFIG *config
                        1024U, 0, error, error_size);
   if (status != YAP_V2_OK) goto done;
   config->core_writer_queue_capacity = value;
+  value = (uint32_t)config->core_writer_queue_bytes;
+  status = read_uint32(daemon, "core_writer_queue_bytes", &value, 1U,
+                       YAP_APPLICATION_MAX_WRITER_QUEUE_BYTES, 0, error, error_size);
+  if (status != YAP_V2_OK) goto done;
+  config->core_writer_queue_bytes = value;
   value = (uint32_t)config->runtime_policy.max_inflight;
   status = read_uint32(daemon, "max_inflight", &value, 1U, 1024U, 0, error, error_size);
   if (status != YAP_V2_OK) goto done;

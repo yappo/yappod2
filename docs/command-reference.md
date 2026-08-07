@@ -372,6 +372,7 @@ yappod_core [--foreground] --index INDEX_DIR [--port PORT]
 coreは`daemon.core_io_threads`本のI/Oスレッドで内部接続を受け、検索、取得、本文断片準備を
 `daemon.core_search_threads`本のcompute workerへ渡します。どちらの既定値も16本です。更新は
 単一writer threadへ渡し、処理中とは別に`daemon.core_writer_queue_capacity`件まで待機できます。
+処理中と待機中の更新本文合計は`daemon.core_writer_queue_bytes`を超えません。
 1秒ごとに新しいマニフェストを確認し、公開済み世代を検出すると検証に成功したスナップショットへ
 切り替えます。また、独立した保守スレッドが既定で30秒ごとに小セグメント数を確認し、閾値に達した
 場合だけ範囲コンパクションを実行します。`SIGTERM`または`SIGINT`で待ち受けを閉じて終了します。

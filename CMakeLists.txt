@@ -129,6 +129,7 @@ set(YAPPOD_INDEXING_SOURCES
 set(YAPPOD_SERVER_SOURCES
   ${SRC_DIR}/server/yappo_observability_v2.c
   ${SRC_DIR}/server/yappo_core_http_v2.c
+  ${SRC_DIR}/server/yappo_core_reactor_v2.c
   ${SRC_DIR}/server/yappo_executor_v2.c
   ${SRC_DIR}/server/yappo_http_v2.c
 )
@@ -171,7 +172,7 @@ add_library(yappod_server STATIC ${YAPPOD_SERVER_SOURCES})
 add_library(yappod::server ALIAS yappod_server)
 target_include_directories(yappod_server PUBLIC ${SRC_DIR})
 target_link_libraries(yappod_server PRIVATE yappod_query yappod_indexing
-  yappod::yyjson CURL::libcurl Threads::Threads)
+  yappod::yyjson CURL::libcurl Libevent::core Threads::Threads)
 
 set(YAPPOD_INTERNAL_LIBRARIES
   yappod_common

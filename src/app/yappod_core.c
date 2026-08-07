@@ -1,7 +1,5 @@
-#include "server/yappo_core_http_v2.h"
 #include "server/yappo_http_v2.h"
-#include "common/yappo_net.h"
-#include "server/yappo_observability_v2.h"
+#include "server/yappo_core_reactor_v2.h"
 #include "server/yappo_executor_v2.h"
 #include "config/yappo_runtime_policy_v2.h"
 #include "config/yappo_application_config.h"
@@ -23,29 +21,6 @@
 
 #define DEFAULT_CORE_PORT 18401
 typedef struct {
-  size_t id;
-  int listen_socket;
-  const char *index_dir;
-  YAP_V2_HTTP_RUNTIME *http_runtime;
-  YAP_V2_EXECUTOR *search_executor;
-  YAP_V2_EXECUTOR *writer_executor;
-} worker_t;
-
-typedef struct {
-  pthread_mutex_t lock;
-  pthread_cond_t completed_condition;
-  YAP_V2_HTTP_RUNTIME *http_runtime;
-  YAP_V2_HTTP_OPERATION operation;
-  const unsigned char *body;
-  size_t body_bytes;
-  int http_status;
-  char *json;
-  size_t json_bytes;
-  int result;
-  int completed;
-} execution_t;
-
-typedef struct {
   const char *index_dir;
   YAP_V2_HTTP_RUNTIME *http_runtime;
   YAP_V2_COMPACTION_POLICY policy;
@@ -59,6 +34,7 @@ static char error_file[YAP_APPLICATION_PATH_BYTES] = "core.error";
 static YAP_V2_RUNTIME_POLICY runtime_policy;
 static YAP_V2_COMPACTION_POLICY compaction_policy;
 static YAP_V2_RUNTIME_LIMITER runtime_limiter;
+static YAP_V2_RUNTIME_LIMITER writer_limiter;
 
 static void usage(FILE *output, const char *program) {
   fprintf(output,
@@ -83,11 +59,7 @@ static int parse_port(const char *text, int *port) {
 static void request_shutdown(int signal_number) {
   (void)signal_number;
   shutdown_requested = 1;
-  if (listen_socket >= 0) {
-    (void)shutdown(listen_socket, SHUT_RDWR);
-    (void)close(listen_socket);
-  }
-  listen_socket = -1;
+  if (listen_socket >= 0) (void)shutdown(listen_socket, SHUT_RDWR);
 }
 
 static int prepare_signal_wait(sigset_t *shutdown_signals) {
@@ -171,248 +143,6 @@ static int create_listener(const char *host, int port) {
   return descriptor;
 }
 
-static int make_error_json(const char *code, const char *message,
-                           char **json, size_t *json_bytes) {
-  int length = snprintf(NULL, 0, "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}",
-                        code, message);
-  if (length < 0) return -1;
-  *json = malloc((size_t)length + 1U);
-  if (*json == NULL) return -1;
-  (void)snprintf(*json, (size_t)length + 1U,
-                 "{\"error\":{\"code\":\"%s\",\"message\":\"%s\"}}", code, message);
-  *json_bytes = (size_t)length;
-  return 0;
-}
-
-static const char *allow_for_target(const char *target) {
-  if (strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0)
-    return "QUERY";
-  if (strcmp(target, "/v2/documents:batch") == 0) return "POST";
-  if (strcmp(target, "/health/ready") == 0) return "GET";
-  return NULL;
-}
-
-static int query_target(const char *target) {
-  return strcmp(target, "/v2/search") == 0 || strcmp(target, "/v2/retrieve") == 0;
-}
-
-static int send_json(FILE *stream, int status, const char *allow, int accept_query,
-                     const char *json, size_t json_bytes) {
-  return YAP_V2_core_http_write_response(stream, status,
-    "application/json; charset=utf-8", allow, accept_query, json, json_bytes);
-}
-
-static int send_error(FILE *stream, int status, const char *code, const char *message,
-                      const char *allow, int accept_query) {
-  char *json = NULL;
-  size_t json_bytes = 0U;
-  int result;
-  if (make_error_json(code, message, &json, &json_bytes) != 0) return -1;
-  result = send_json(stream, status, allow, accept_query, json, json_bytes);
-  free(json);
-  return result;
-}
-
-static void run_execution(void *opaque) {
-  execution_t *execution = opaque;
-  int result = YAP_V2_http_runtime_execute(
-    execution->http_runtime, execution->operation, execution->body,
-    execution->body_bytes, &execution->http_status, &execution->json,
-    &execution->json_bytes);
-  pthread_mutex_lock(&execution->lock);
-  execution->result = result;
-  execution->completed = 1;
-  pthread_cond_signal(&execution->completed_condition);
-  pthread_mutex_unlock(&execution->lock);
-}
-
-static int execute_queued(YAP_V2_EXECUTOR *executor,
-                          YAP_V2_HTTP_RUNTIME *http_runtime,
-                          YAP_V2_HTTP_OPERATION operation,
-                          const unsigned char *body, size_t body_bytes,
-                          int *http_status, char **json, size_t *json_bytes) {
-  execution_t execution;
-  int status;
-  memset(&execution, 0, sizeof(execution));
-  if (pthread_mutex_init(&execution.lock, NULL) != 0) return YAP_V2_IO_ERROR;
-  if (pthread_cond_init(&execution.completed_condition, NULL) != 0) {
-    pthread_mutex_destroy(&execution.lock);
-    return YAP_V2_IO_ERROR;
-  }
-  execution.http_runtime = http_runtime;
-  execution.operation = operation;
-  execution.body = body;
-  execution.body_bytes = body_bytes;
-  status = YAP_V2_executor_try_submit(executor, run_execution, &execution);
-  if (status == YAP_V2_OK) {
-    pthread_mutex_lock(&execution.lock);
-    while (!execution.completed)
-      pthread_cond_wait(&execution.completed_condition, &execution.lock);
-    pthread_mutex_unlock(&execution.lock);
-    *http_status = execution.http_status;
-    *json = execution.json;
-    *json_bytes = execution.json_bytes;
-    status = execution.result == 0 ? YAP_V2_OK : YAP_V2_IO_ERROR;
-  }
-  pthread_cond_destroy(&execution.completed_condition);
-  pthread_mutex_destroy(&execution.lock);
-  return status;
-}
-
-static int handle_request(FILE *stream, const char *index_dir,
-                          YAP_V2_HTTP_RUNTIME *http_runtime,
-                          YAP_V2_EXECUTOR *search_executor,
-                          YAP_V2_EXECUTOR *writer_executor) {
-  YAP_V2_CORE_HTTP_REQUEST request;
-  YAP_V2_HTTP_OPERATION operation = YAP_V2_HTTP_SEARCH;
-  char *json = NULL;
-  size_t json_bytes = 0U;
-  YAP_V2_RUNTIME_LIMITER *admission_limiter = NULL;
-  int http_status = 500;
-  int status, result = -1;
-  const char *allow;
-  int accept_query;
-  YAP_V2_core_http_request_init(&request);
-  status = YAP_V2_core_http_read_request(stream, YAP_V2_HTTP_MAX_BODY_BYTES,
-                                         runtime_policy.ingest_max_body_bytes, &request);
-  if (status == YAP_V2_CORE_HTTP_TOO_LARGE) {
-    result = send_error(stream, 413, "body_too_large", "Content Too Large",
-                        NULL, 0);
-    goto done;
-  }
-  if (status != YAP_V2_CORE_HTTP_OK) {
-    result = send_error(stream, 400, "invalid_request", "Bad Request", NULL, 0);
-    goto done;
-  }
-  allow = allow_for_target(request.target);
-  accept_query = query_target(request.target);
-  if (allow == NULL) {
-    result = send_error(stream, 404, "not_found", "Not Found", NULL, 0);
-    goto done;
-  }
-  if ((accept_query && strcmp(request.method, "QUERY") != 0) ||
-      (strcmp(request.target, "/v2/documents:batch") == 0 &&
-       strcmp(request.method, "POST") != 0) ||
-      (strcmp(request.target, "/health/ready") == 0 &&
-       strcmp(request.method, "GET") != 0)) {
-    result = send_error(stream, 405, "method_not_allowed", "Method Not Allowed",
-                        allow, accept_query);
-    goto done;
-  }
-  if (strcmp(request.target, "/health/ready") == 0) {
-    YAP_V2_OPERATIONAL_STATE state, disk_state;
-    char probe_error[256] = {0};
-    memset(&state, 0, sizeof(state));
-    memset(&disk_state, 0, sizeof(disk_state));
-    if (request.have_content_length) {
-      result = send_error(stream, 400, "invalid_request", "Bad Request", "GET", 0);
-      goto done;
-    }
-    status = YAP_V2_http_runtime_state(http_runtime, &state);
-    if (status == YAP_V2_OK &&
-        YAP_V2_operational_probe_index_with_policy(
-          index_dir, &compaction_policy, &disk_state, probe_error,
-          sizeof(probe_error)) == YAP_V2_OK) {
-      state.compaction_state = disk_state.compaction_state;
-      state.compaction_generation = disk_state.compaction_generation;
-      state.compaction_updated_at_unix = disk_state.compaction_updated_at_unix;
-      if (state.generation == disk_state.generation) {
-        state.document_records = disk_state.document_records;
-        state.passage_records = disk_state.passage_records;
-        state.tombstone_records = disk_state.tombstone_records;
-        state.component_file_bytes = disk_state.component_file_bytes;
-        state.smallest_segment_bytes = disk_state.smallest_segment_bytes;
-        state.largest_segment_bytes = disk_state.largest_segment_bytes;
-        state.small_segment_run = disk_state.small_segment_run;
-        state.small_segment_threshold_bytes =
-          disk_state.small_segment_threshold_bytes;
-        state.auto_compaction_trigger_segments =
-          disk_state.auto_compaction_trigger_segments;
-        state.auto_compaction_enabled =
-          disk_state.auto_compaction_enabled;
-        state.auto_compaction_needed = disk_state.auto_compaction_needed;
-      }
-    }
-    http_status = status == YAP_V2_OK && state.ready ? 200 : 503;
-    if (YAP_V2_operational_state_json(&state, "yappod_core", &json, &json_bytes) !=
-        YAP_V2_OK) goto done;
-  } else {
-    if (!request.have_content_length || request.body_bytes == 0U) {
-      result = send_error(stream, 400, "invalid_request", "Bad Request",
-                          allow, accept_query);
-      goto done;
-    }
-    if (!request.json_content_type) {
-      result = send_error(stream, 415, "unsupported_media_type",
-                          "Unsupported Media Type", allow, accept_query);
-      goto done;
-    }
-    if (strcmp(request.target, "/v2/search") == 0) operation = YAP_V2_HTTP_SEARCH;
-    else if (strcmp(request.target, "/v2/retrieve") == 0) operation = YAP_V2_HTTP_RETRIEVE;
-    else operation = YAP_V2_HTTP_INGEST;
-    admission_limiter = operation == YAP_V2_HTTP_INGEST ? NULL : &runtime_limiter;
-    if (admission_limiter != NULL &&
-        YAP_V2_runtime_limiter_acquire(admission_limiter, request.body_bytes) != YAP_V2_OK) {
-      admission_limiter = NULL;
-      http_status = 503;
-      if (make_error_json("overloaded", "Service Unavailable", &json, &json_bytes) != 0) {
-        goto done;
-      }
-    } else {
-      if (operation == YAP_V2_HTTP_INGEST)
-        (void)YAP_V2_socket_set_deadline(fileno(stream), runtime_policy.ingest_timeout_ms);
-      if (operation == YAP_V2_HTTP_INGEST &&
-          YAP_V2_authorize_write(&runtime_policy,
-            request.authorization[0] == '\0' ? NULL : request.authorization) != YAP_V2_OK) {
-        http_status = 401;
-        if (make_error_json("unauthorized", "Unauthorized", &json, &json_bytes) != 0) {
-          goto done;
-        }
-      } else {
-        status = execute_queued(operation == YAP_V2_HTTP_INGEST ? writer_executor :
-                               search_executor, http_runtime, operation,
-                               request.body, request.body_bytes, &http_status,
-                               &json, &json_bytes);
-        if (status == YAP_V2_EXECUTOR_FULL) {
-          http_status = 503;
-          if (make_error_json("overloaded", "Service Unavailable", &json,
-                              &json_bytes) != 0) goto done;
-        } else if (status != YAP_V2_OK) {
-          goto done;
-        }
-      }
-    }
-  }
-  result = send_json(stream, http_status, NULL, accept_query, json, json_bytes);
-done:
-  if (admission_limiter != NULL)
-    YAP_V2_runtime_limiter_release(admission_limiter, request.body_bytes);
-  free(json);
-  YAP_V2_core_http_request_free(&request);
-  return result;
-}
-
-static void *run_worker(void *opaque) {
-  worker_t *worker = opaque;
-  while (!shutdown_requested) {
-    struct sockaddr_storage address;
-    socklen_t address_bytes = sizeof(address);
-    FILE *stream = NULL;
-    int descriptor = -1;
-    if (YAP_Net_accept_stream(worker->listen_socket, (struct sockaddr *)&address,
-                              &address_bytes, &stream, &descriptor, "core",
-                              (int)worker->id) != 0) {
-      if (shutdown_requested) break;
-      continue;
-    }
-    if (YAP_V2_socket_set_deadline(descriptor, runtime_policy.request_timeout_ms) == YAP_V2_OK)
-      (void)handle_request(stream, worker->index_dir, worker->http_runtime,
-                           worker->search_executor, worker->writer_executor);
-    YAP_Net_close_stream(&stream, &descriptor);
-  }
-  return NULL;
-}
-
 static void *run_reloader(void *opaque) {
   YAP_V2_HTTP_RUNTIME *http_runtime = opaque;
   struct timespec interval = {1, 0};
@@ -478,17 +208,19 @@ int main(int argc, char **argv) {
   int have_port = 0;
   sigset_t shutdown_signals;
   YAP_V2_HTTP_RUNTIME http_runtime;
-  pthread_t *threads = NULL, reloader_thread, maintenance_thread;
-  worker_t *workers = NULL;
+  pthread_t reloader_thread, maintenance_thread;
   maintenance_t maintenance;
-  size_t started = 0U, io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
+  size_t io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
   size_t search_threads = YAP_APPLICATION_DEFAULT_SEARCH_THREADS;
   size_t writer_queue_capacity = 1U;
+  size_t writer_queue_bytes = YAP_APPLICATION_DEFAULT_WRITER_QUEUE_BYTES;
   int foreground = 0, reloader_started = 0, maintenance_started = 0;
   YAP_V2_EXECUTOR search_executor, writer_executor;
+  YAP_V2_CORE_REACTOR_SERVER reactor_server;
   YAP_V2_http_runtime_init(&http_runtime);
   YAP_V2_executor_init(&search_executor);
   YAP_V2_executor_init(&writer_executor);
+  YAP_V2_core_reactor_server_init(&reactor_server);
   YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -529,6 +261,7 @@ int main(int argc, char **argv) {
     io_threads = application.core_io_threads;
     search_threads = application.core_search_threads;
     writer_queue_capacity = application.core_writer_queue_capacity;
+    writer_queue_bytes = application.core_writer_queue_bytes;
     compaction_policy = application.compaction_policy;
     if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
@@ -541,21 +274,24 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Invalid v2 index\n");
     return EXIT_FAILURE;
   }
-  threads = calloc(io_threads, sizeof(*threads));
-  workers = calloc(io_threads, sizeof(*workers));
-  if (threads == NULL || workers == NULL) {
-    fputs("Cannot allocate worker state\n", stderr);
-    free(threads); free(workers);
-    YAP_V2_http_runtime_close(&http_runtime);
-    return EXIT_FAILURE;
-  }
   memset(&runtime_limiter, 0, sizeof(runtime_limiter));
+  memset(&writer_limiter, 0, sizeof(writer_limiter));
   if (YAP_V2_runtime_limiter_init(&runtime_limiter, &runtime_policy) != YAP_V2_OK) {
     fprintf(stderr, "Invalid runtime policy: %s\n", policy_error);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
-    free(threads); free(workers);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
+  }
+  {
+    YAP_V2_RUNTIME_POLICY writer_policy = runtime_policy;
+    writer_policy.max_inflight = writer_queue_capacity + 1U;
+    writer_policy.max_inflight_bytes = writer_queue_bytes;
+    if (YAP_V2_runtime_limiter_init(&writer_limiter, &writer_policy) != YAP_V2_OK) {
+      fputs("Invalid writer queue policy\n", stderr);
+      YAP_V2_runtime_limiter_close(&runtime_limiter);
+      YAP_V2_http_runtime_close(&http_runtime);
+      return EXIT_FAILURE;
+    }
   }
   listen_socket = create_listener(listen_host, port);
   if (listen_socket < 0) {
@@ -563,7 +299,7 @@ int main(int argc, char **argv) {
     YAP_V2_executor_close(&writer_executor);
     YAP_V2_executor_close(&search_executor);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
-    free(threads); free(workers);
+    YAP_V2_runtime_limiter_close(&writer_limiter);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -574,7 +310,7 @@ int main(int argc, char **argv) {
       YAP_V2_executor_close(&writer_executor);
       YAP_V2_executor_close(&search_executor);
       YAP_V2_runtime_limiter_close(&runtime_limiter);
-      free(threads); free(workers);
+      YAP_V2_runtime_limiter_close(&writer_limiter);
       YAP_V2_http_runtime_close(&http_runtime);
       return daemon_status > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -584,7 +320,7 @@ int main(int argc, char **argv) {
     YAP_V2_executor_close(&writer_executor);
     YAP_V2_executor_close(&search_executor);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
-    free(threads); free(workers);
+    YAP_V2_runtime_limiter_close(&writer_limiter);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -597,7 +333,21 @@ int main(int argc, char **argv) {
     YAP_V2_executor_close(&writer_executor);
     YAP_V2_executor_close(&search_executor);
     YAP_V2_runtime_limiter_close(&runtime_limiter);
-    free(threads); free(workers);
+    YAP_V2_runtime_limiter_close(&writer_limiter);
+    YAP_V2_http_runtime_close(&http_runtime);
+    return EXIT_FAILURE;
+  }
+  if (YAP_V2_core_reactor_server_open(
+        &reactor_server, listen_socket, index_dir, &http_runtime,
+        &search_executor, &writer_executor, &runtime_limiter, &writer_limiter,
+        &runtime_policy,
+        &compaction_policy, io_threads) != YAP_V2_OK) {
+    fputs("Cannot start core I/O reactors\n", stderr);
+    (void)close(listen_socket); listen_socket = -1;
+    YAP_V2_executor_close(&writer_executor);
+    YAP_V2_executor_close(&search_executor);
+    YAP_V2_runtime_limiter_close(&runtime_limiter);
+    YAP_V2_runtime_limiter_close(&writer_limiter);
     YAP_V2_http_runtime_close(&http_runtime);
     return EXIT_FAILURE;
   }
@@ -615,16 +365,7 @@ int main(int argc, char **argv) {
     else
       request_shutdown(SIGTERM);
   }
-  for (started = 0U; started < io_threads; started++) {
-    workers[started].id = started;
-    workers[started].listen_socket = listen_socket;
-    workers[started].index_dir = index_dir;
-    workers[started].http_runtime = &http_runtime;
-    workers[started].search_executor = &search_executor;
-    workers[started].writer_executor = &writer_executor;
-    if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
-  }
-  if (started != io_threads || !reloader_started ||
+  if (!reloader_started ||
       (compaction_policy.enabled && !maintenance_started)) {
     request_shutdown(SIGTERM);
   } else {
@@ -632,16 +373,17 @@ int main(int argc, char **argv) {
     if (sigwait(&shutdown_signals, &signal_number) != 0) signal_number = SIGTERM;
     request_shutdown(signal_number);
   }
-  for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
+  YAP_V2_core_reactor_server_stop_accepting(&reactor_server);
+  listen_socket = -1;
   if (reloader_started) (void)pthread_join(reloader_thread, NULL);
   if (maintenance_started) (void)pthread_join(maintenance_thread, NULL);
-  if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_executor_close(&writer_executor);
   YAP_V2_executor_close(&search_executor);
+  YAP_V2_core_reactor_server_close(&reactor_server);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
-  free(threads); free(workers);
+  YAP_V2_runtime_limiter_close(&writer_limiter);
   YAP_V2_http_runtime_close(&http_runtime);
-  return started == io_threads && reloader_started &&
+  return reloader_started &&
     (!compaction_policy.enabled || maintenance_started) ?
     EXIT_SUCCESS : EXIT_FAILURE;
 }

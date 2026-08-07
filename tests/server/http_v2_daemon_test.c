@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <signal.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +92,15 @@ static int setup_tiny_memory_limit(void **state) {
 }
 
 static int teardown_tiny_memory_limit(void **state) {
+  return teardown(state);
+}
+
+static int setup_tiny_writer_limit(void **state) {
+  policy_source = "[daemon]\ncore_writer_queue_bytes=1\n";
+  return setup(state);
+}
+
+static int teardown_tiny_writer_limit(void **state) {
   return teardown(state);
 }
 
@@ -267,6 +278,47 @@ static void test_configured_single_worker_serves_requests(void **state) {
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
+static void test_single_reactor_is_not_blocked_by_partial_request(void **state) {
+  context_t *ctx = *state;
+  struct sockaddr_in address;
+  struct timespec start, end;
+  const char partial[] =
+    "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 100\r\n";
+  const char health[] =
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+  char *response = NULL;
+  int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  assert_true(descriptor >= 0);
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons((uint16_t)ctx->stack.core_port);
+  assert_int_equal(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr), 1);
+  assert_int_equal(connect(descriptor, (struct sockaddr *)&address,
+                           sizeof(address)), 0);
+  assert_int_equal(send(descriptor, partial, sizeof(partial) - 1U, 0),
+                   sizeof(partial) - 1U);
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port, health, &response), 0);
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &end), 0);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_true(elapsed_seconds(start, end) < 1.0);
+  free(response);
+  close(descriptor);
+}
+
+static void test_writer_bytes_rejects_from_headers(void **state) {
+  context_t *ctx = *state;
+  const char request[] =
+    "POST /v2/documents:batch HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n";
+  char *response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port, request, &response), 0);
+  assert_non_null(strstr(response, "503 Service Unavailable"));
+  assert_non_null(strstr(response, "\"code\":\"overloaded\""));
+  free(response);
+}
+
 static void test_core_automatically_compacts_small_segments(void **state) {
   context_t *ctx = *state;
   char *response = NULL;
@@ -403,6 +455,8 @@ int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
   cmocka_unit_test_setup_teardown(test_configured_single_worker_serves_requests,setup_single_worker,teardown_single_worker),
+  cmocka_unit_test_setup_teardown(test_single_reactor_is_not_blocked_by_partial_request,setup_single_worker,teardown_single_worker),
+  cmocka_unit_test_setup_teardown(test_writer_bytes_rejects_from_headers,setup_tiny_writer_limit,teardown_tiny_writer_limit),
   cmocka_unit_test_setup_teardown(test_core_automatically_compacts_small_segments,setup_automatic_compaction,teardown_automatic_compaction),
   cmocka_unit_test_setup_teardown(test_foreground_process_lifecycle,setup_index_only,teardown_index_only)
 };return cmocka_run_group_tests(tests,NULL,NULL);}
