@@ -33,6 +33,11 @@
 [frontとcoreの通信仕様](yappod-core-protocol.md)、
 [監視とメトリクス](observability.md)です。
 
+将来のクラスタ化は、この互換性境界を維持する変更ではありません。クラスタ用の公開API、設定、
+内部protocol、catalog、索引形式は新しい契約として一括して導入し、現在のstandalone形式を読むfallback、
+旧APIのalias、新旧nodeの混在運転は実装しません。切り替え方針は
+[クラスタ構成計画](cluster-architecture-plan.md)を参照してください。
+
 ### 変更可能なC契約
 
 すべてのCヘッダー、型、構造体の形、関数、シンボル、ソース互換性、ABIは内部契約です。

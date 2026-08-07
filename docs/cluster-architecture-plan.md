@@ -9,6 +9,11 @@ front、複数のcore、文書の水平シャード、レプリカ、必要に�
 [設定リファレンス](configuration.md)、[frontとcoreの通信仕様](yappod-core-protocol.md)を
 一次資料とします。
 
+クラスタ用の公開API、設定、内部protocol、catalog、索引形式には、現在のstandalone構成との後方互換性を
+持たせません。旧形式reader、旧API alias、設定fallback、旧版と新版のnodeを同じクラスタへ参加させる
+version negotiationは実装しません。導入時は全roleを同じbuildへ一括して置き換えるか、別の保存先へ
+同じbuildの新クラスタを構築して外部の接続先を切り替えます。
+
 クラスタ化の前に、一つのcoreプロセス内でネットワークI/O、検索計算、更新、保守を分離します。
 この単一端末の実装順序と負荷試験は
 [単一端末runtimeの並列実行設計](single-node-runtime-design.md)を一次資料とします。同じ索引を開く
@@ -477,7 +482,7 @@ minimum generationを指定しない検索は、frontが保持する最新の検
 4. 子の文書、統計、checksum、代表検索、ANN品質を検証します。
 5. 短い切替区間で親と子の更新位置を一致させます。
 6. 一つの新しい`cluster_epoch`で親を対象外にし、二つの子を対象へ加えます。
-7. rollback保持期間後に親のreplicaを回収します。
+7. 切り替え安全保持期間後に親のreplicaを回収します。
 
 切替前の検索は親だけ、切替後の検索は子だけを使います。同じ検索で親と子を両方検索しません。
 
@@ -549,9 +554,10 @@ coreはbounded compute poolで検索します。
 具体的なwire形式とtransportは、実装前のprotocol RFCと負荷試験で確定します。ただし、frontが接続ごとに
 直列待機する方式、無制限の応答、core portの外部公開、平文の更新認証情報は許可しません。
 
-クラスタ内部のmajor protocolが一致しないnodeはreadyにしません。rolling upgradeでは、同じシャードの
-replicaを一台ずつdrainし、更新し、snapshot一致を確認してから戻します。常に利用可能なreplica数を維持し、
-frontとcoreの非互換版を同じ検索へ混ぜません。
+クラスタ内部のprotocol、catalog、索引形式、build指紋が一つでも一致しないnodeはreadyにしません。
+異なるbuildを同じクラスタへ参加させるrolling upgradeは行いません。更新時は全roleを停止して同じbuildへ
+置き換えるか、同じbuildだけで構成した新クラスタを別に構築し、snapshotと検索品質を検証してから外部の
+接続先を一度だけ切り替えます。
 
 ## 設定の分離
 
@@ -661,7 +667,7 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
   P50、P95、P99、CPU、RSS、ディスクI/O、ネットワークを同時に保存します。
 - 検索中のreplica停止、primary停止、controller quorum喪失、catalog遅延、ネットワーク分断を再現し、
   文書化した失敗契約と一致します。
-- standalone構成の機能と性能に意図しない回帰がありません。
+- 置換前baselineと比較し、クラスタ構成の機能と性能に許容条件を超える回帰がありません。
 
 相対性能の数値目標は、最初の同一データ・同一機材によるbaseline測定で固定し、その後に都合よく変更しません。
 測定機材、OS、compiler、索引設定、問い合わせ集合、warm-up、測定時間をレポートへ残します。
@@ -684,8 +690,10 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
 
 - cluster、node、shard、replica、role、epoch、transactionの型と責務を追加します。
 - standaloneのruntimeを、一つのshard runtimeとして呼び出せる境界へ整理します。
-- 現在の公開APIとstandalone索引形式を変えず、依存方向と所有関係をテストします。
-- クラスタ用protocol RFC、上限、エラー、version negotiationを確定します。
+- 公開API、設定、内部protocol、catalog、索引形式をクラスタ専用の新しい契約へ置き換え、依存方向と
+  所有関係をテストします。
+- クラスタ用protocol RFC、上限、エラー、全roleで一致させるbuild指紋を確定します。旧契約の読取りと
+  異なるbuild間のversion negotiationは実装しません。
 
 ### 第3段階: controllerとクラスタカタログ
 
@@ -724,7 +732,7 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
 
 - mTLS、node認可、鍵ローテーション、監査ログを実装します。
 - cluster全体のhealth、metrics、trace、alert、capacity reportを追加します。
-- rolling upgrade、backup、restore、disaster recovery、region障害手順を検証します。
+- 全roleの一括更新、新クラスタへの切り替え、backup、restore、disaster recovery、region障害手順を検証します。
 - chaos試験と長時間の更新・検索混在試験を自動化します。
 
 ### 第9段階: 垂直分割と大規模fan-out
@@ -734,23 +742,25 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
 - frontが上限になる規模でだけ中間集約を追加します。
 - 同じデータと負荷で、分離前より総費用、RPS、tail latency、障害影響が改善したことを確認します。
 
-## 移行計画
+## 一括置換計画
 
-standalone索引を複数プロセスから同時に書き換えません。クラスタ移行は別の保存先へ新しいshardを構築し、
-検証後に公開先を切り替えます。
+standaloneの公開API、設定、内部protocol、索引ファイルをクラスタ実装から読みません。canonical NDJSONまたは
+正式な可視文書exportから、別の保存先へクラスタ索引を新規構築し、検証後に公開先を切り替えます。
 
-1. 元のcanonical NDJSON、または固定したstandalone snapshotの可視文書exportを入力にします。
+1. 元のcanonical NDJSON、または固定したstandalone snapshotから作成した可視文書exportを入力にします。
 2. 文書IDのhash範囲で入力を分割し、各primary shardをbuildします。
 3. replicaへ複製し、文書数、本文断片数、checksum、設定指紋を確認します。
 4. 全体統計を作り、単一索引との語彙score、順位、ANN品質を比較します。
 5. 本番queryを複製するshadow searchで、結果差、P95、P99、CPU、I/Oを記録します。
-6. 更新を短時間停止するか、移行用更新logで差分を追い付かせます。
+6. standaloneへの更新を停止し、停止時点以降の入力をクラスタ用の新しい更新契約へ切り替えます。
 7. 最初の`cluster_epoch`を公開し、外部ロードバランサーをクラスタfrontへ切り替えます。
-8. rollback期間中はstandaloneを読み取り専用で保持し、クラスタ更新を戻す手順も用意します。
-9. 完了判定後に旧索引を通常の保存期間と回収手順に従って削除します。
+8. 旧standalone索引は監査と比較のため読み取り専用で保持しますが、クラスタ更新を旧形式へ逆変換しません。
+9. 切り替え後に重大な問題が見つかった場合は、新しい入力をcanonical NDJSONへ退避し、修正版の新クラスタを
+   再構築します。旧standaloneへオンラインで戻しません。
+10. 完了判定後に旧索引を通常の保存期間と回収手順に従って削除します。
 
-クラスタ用内部protocolとcatalog形式は新しい契約として導入します。standaloneモードは明示的に廃止する判断が
-ない限り残し、クラスタ機能の開発中も小規模利用、品質の参照実装、障害調査に使用します。
+standalone実装はクラスタ開発中の比較用fixtureとして利用できますが、公開互換性の対象にはしません。
+クラスタ公開後に残すか削除するかは、クラスタの機能を制約しない独立した判断とします。
 
 ## backupとdisaster recovery
 
@@ -784,7 +794,7 @@ restoreは元クラスタへ直接上書きせず、新しいcluster IDと保存
 - 正常系、境界値、process障害、disk障害、network障害の試験表
 - 検索品質dataset、正解集合、standalone baseline、許容条件
 - 同一機材で比較できる負荷試験手順とreport template
-- 配備、drain、rolling upgrade、backup、restore、rollbackの運用手順
+- 配備、drain、全role一括更新、新クラスタ切り替え、backup、restore、再構築の運用手順
 
 性能測定で決める値と、意味論として固定する値を分けます。worker数、候補oversampling、shard目標容量、
 compaction並列数は測定で決めます。一方、batchの不可分性、同一世代検索、部分結果を成功にしないこと、
@@ -802,8 +812,9 @@ compaction並列数は測定で決めます。一方、batchの不可分性、�
 - BM25FとRRFの意味がshard配置に依存せず、ANN品質が定めた基準を満たします。
 - 過負荷、shard欠損、stale epoch、control plane障害を、空結果や正常応答として隠しません。
 - CPU、メモリー、ディスク、ネットワーク、fan-out、replica lag、transaction、品質を運用者が確認できます。
-- 配備、拡張、縮小、保守、rolling upgrade、backup、restore、rollbackを文書だけで再現できます。
-- standaloneからclusterへ移行し、問題発生時に定めた期間内でrollbackできる受け入れ試験があります。
+- 配備、拡張、縮小、保守、全role一括更新、新クラスタ切り替え、backup、restore、再構築を文書だけで再現できます。
+- standaloneの旧契約を読み取らずにclusterを新規構築し、切り替え後の障害時にはcanonical入力から修正版clusterを
+  定めた時間内に再構築できる受け入れ試験があります。
 
 ## 関連文書
 
