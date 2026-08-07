@@ -71,6 +71,10 @@ flowchart LR
 公開HTTPと内部HTTPの正確なmethod、path、header、状態コードは
 [frontとcoreの通信仕様](yappod-core-protocol.md)を参照してください。
 
+現在の構成を複数front、複数core、水平シャード、レプリカへ拡張する将来設計は
+[クラスタ構成計画](cluster-architecture-plan.md)に分離しています。同文書の機能は未実装であり、
+現在の動作を説明するものではありません。
+
 ## 内部ライブラリと依存方向
 
 内部実装は7個のstatic libraryに分かれます。次の図は左の下位責務から右の上位責務を構成する
