@@ -94,7 +94,7 @@ static int teardown_tiny_memory_limit(void **state) {
 }
 
 static int setup_single_worker(void **state) {
-  policy_source = "[daemon]\nworker_threads=1\n";
+  policy_source = "[daemon]\nfront_io_threads=1\ncore_io_threads=1\ncore_search_threads=1\n";
   return setup(state);
 }
 

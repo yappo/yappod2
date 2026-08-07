@@ -31,7 +31,9 @@ static const char valid[] =
   "[vector]\nenabled=false\n"
   "[metadata]\nfilterable_fields=['language','source']\n"
   "[daemon]\nrun_directory='./run'\ncore_host='127.0.0.1'\ncore_port=18401\n"
-  "front_host='127.0.0.1'\nfront_port=18400\nworker_threads=3\nmax_inflight=8\n"
+  "front_host='127.0.0.1'\nfront_port=18400\nmax_inflight=8\n"
+  "front_io_threads=4\ncore_io_threads=5\ncore_search_threads=6\n"
+  "core_writer_queue_capacity=7\n"
   "max_inflight_bytes=8192\nrequest_timeout_ms=2500\n"
   "ingest_max_body_bytes=33554432\ningest_timeout_ms=120000\n"
   "auto_compact_enabled=false\nauto_compact_check_interval_ms=5000\n"
@@ -50,7 +52,10 @@ static void test_loads_shared_config_and_resolves_paths(void **state) {
   assert_non_null(strstr(config.index_directory, "/index"));
   assert_null(strstr(config.index_directory, "/../"));
   assert_non_null(strstr(config.run_directory, "/run"));
-  assert_int_equal(config.runtime_policy.worker_threads, 3U);
+  assert_int_equal(config.front_io_threads, 4U);
+  assert_int_equal(config.core_io_threads, 5U);
+  assert_int_equal(config.core_search_threads, 6U);
+  assert_int_equal(config.core_writer_queue_capacity, 7U);
   assert_int_equal(config.runtime_policy.max_inflight, 8U);
   assert_int_equal(config.runtime_policy.request_timeout_ms, 2500U);
   assert_int_equal(config.runtime_policy.ingest_max_body_bytes, 33554432U);
@@ -123,32 +128,48 @@ static void test_rejects_invalid_ranges_and_removed_schema_version(void **state)
   unlink(invalid); free(invalid);
 }
 
-static void test_worker_threads_default_and_range(void **state) {
+static void test_execution_threads_defaults_and_ranges(void **state) {
   char source[4096];
-  const char *configured = strstr(valid, "worker_threads=3");
-  const char *after;
   char *path;
   YAP_APPLICATION_CONFIG config;
   (void)state;
-  assert_non_null(configured);
   YAP_application_config_init(&config);
-  assert_int_equal(config.runtime_policy.worker_threads, YAP_V2_DEFAULT_WORKER_THREADS);
+  assert_int_equal(config.front_io_threads, YAP_APPLICATION_DEFAULT_IO_THREADS);
+  assert_int_equal(config.core_io_threads, YAP_APPLICATION_DEFAULT_IO_THREADS);
+  assert_int_equal(config.core_search_threads, YAP_APPLICATION_DEFAULT_SEARCH_THREADS);
+  assert_int_equal(config.core_writer_queue_capacity, 1U);
 
   assert_true(snprintf(source, sizeof(source), "%s", valid) > 0);
   {
-    char *value = strstr(source, "worker_threads=3");
+    char *value = strstr(source, "core_search_threads=6");
     assert_non_null(value);
-    value[strlen("worker_threads=")] = '0';
+    value[strlen("core_search_threads=")] = '0';
   }
   path = write_config(source);
   assert_int_equal(YAP_application_config_load(path, &config, NULL, 0U), YAP_V2_OUT_OF_RANGE);
   unlink(path); free(path);
 
-  after = configured + strlen("worker_threads=3");
-  assert_true(snprintf(source, sizeof(source), "%.*sworker_threads=1025%s",
-                       (int)(configured - valid), valid, after) > 0);
+  assert_true(snprintf(source, sizeof(source), "%s", valid) > 0);
+  {
+    char *value = strstr(source, "core_search_threads=6");
+    const char *replacement = "core_search_threads=1025";
+    size_t old_bytes = strlen("core_search_threads=6");
+    size_t new_bytes = strlen(replacement);
+    assert_non_null(value);
+    memmove(value + new_bytes, value + old_bytes, strlen(value + old_bytes) + 1U);
+    memcpy(value, replacement, new_bytes);
+  }
   path = write_config(source);
   assert_int_equal(YAP_application_config_load(path, &config, NULL, 0U), YAP_V2_OUT_OF_RANGE);
+  unlink(path); free(path);
+
+  path = write_config(
+    "format_version=2\n[index]\ndirectory='./x'\n[tokenizer]\n[chunking]\n"
+    "[vector]\nenabled=false\n[daemon]\nrun_directory='./run'\n"
+    "core_host='127.0.0.1'\ncore_port=1\nfront_host='127.0.0.1'\nfront_port=2\n"
+    "worker_threads=16\n");
+  assert_int_equal(YAP_application_config_load(path, &config, NULL, 0U),
+                   YAP_V2_INVALID_FORMAT);
   unlink(path); free(path);
 }
 
@@ -193,7 +214,7 @@ int main(void) {
     cmocka_unit_test(test_rejects_missing_required_table_and_unknown_key),
     cmocka_unit_test(test_daemon_fields_do_not_change_index_fingerprint),
     cmocka_unit_test(test_rejects_invalid_ranges_and_removed_schema_version),
-    cmocka_unit_test(test_worker_threads_default_and_range),
+    cmocka_unit_test(test_execution_threads_defaults_and_ranges),
     cmocka_unit_test(test_automatic_compaction_defaults_and_ranges),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);

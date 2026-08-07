@@ -120,8 +120,11 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2コマンドではなし | Yappod2サーバーでは必須 | frontからcoreへ検索や更新を依頼する内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 | `front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2コマンドではなし | Yappod2サーバーでは必須 | frontの待ち受け先であり、search-webサーバーの接続先です。アプリケーションTOMLを使わず`--index`だけでfrontを起動した場合は待ち受けホストを指定できません。 |
 | `front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2コマンドではなし | Yappod2サーバーでは必須 | frontのHTTPポートです。 |
-| `worker_threads` | 整数 | 1〜1024 | `16` | 任意 | coreとfrontが、それぞれ接続の受け付けと処理に使用するワーカースレッド数です。両プロセスへ同じ値を適用します。 |
-| `max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreが、それぞれ同時に処理中として保持する検索、取得、本文断片準備の件数上限です。どちらかで上限に達すると`503 overloaded`になります。ヘルスチェック、メトリクス、文書更新はこの処理枠の対象外です。 |
+| `front_io_threads` | 整数 | 1〜1024 | `16` | 任意 | frontが公開接続の受付、要求の読み書き、coreへの転送に使用するI/Oスレッド数です。 |
+| `core_io_threads` | 整数 | 1〜1024 | `16` | 任意 | coreが内部接続の受付と要求の読み書きに使用するI/Oスレッド数です。検索計算数とは独立しています。 |
+| `core_search_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの上限付き検索queueを処理するcompute worker数です。検索、取得、本文断片準備を実行します。 |
+| `core_writer_queue_capacity` | 整数 | 1〜1024 | `1` | 任意 | coreの単一writer threadが処理中の更新とは別に、待機させる更新要求数です。満杯の場合は`503 overloaded`を返します。 |
+| `max_inflight` | 整数 | 1〜1024 | `16` | 任意 | frontとcoreが、それぞれ同時に処理中として保持する検索、取得、本文断片準備の件数上限です。どちらかで上限に達すると`503 overloaded`になります。ヘルスチェック、メトリクス、文書更新はこの処理枠の対象外です。 |
 | `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreが処理中として保持する検索、取得、本文断片準備の本文合計バイト数です。1件の大きさが残量を超える場合も`503 overloaded`になります。 |
 | `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備について、frontが受理したクライアントソケット、frontからcoreへの内部HTTP要求、coreが受理したソケットへ適用する期限です。 |
 | `ingest_max_body_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | `POST /v2/documents:batch`の本文上限です。frontとcoreの両方で適用します。検索、取得、本文断片準備の本文上限は1 MiBのままです。 |
@@ -132,9 +135,10 @@ Yappod2コマンドの共通アプリケーション設定ではセクション�
 | `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 自動コンパクションを開始する、マニフェスト上で隣接した小セグメント数です。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | `POST /v2/documents:batch`をBearer認証します。省略時は更新APIを認証なしで受け付けます。外部API用の`authorization_token_env`とは別の機能です。 |
 
-文書更新はfrontとcoreでそれぞれ専用の1件分の処理枠を使います。更新が進行中でも、検索用の
-`max_inflight`と`max_inflight_bytes`は消費しません。別の更新が同時に到着した場合は
-`503 overloaded`を返します。
+文書更新は検索用の`max_inflight`と`max_inflight_bytes`を消費しません。coreでは更新を単一writer
+threadへ直列化し、処理中の1件に加えて`core_writer_queue_capacity`件まで待機できます。frontは現在、
+更新の転送を1件へ制限しているため、通常のfront経由では2件目を`503 overloaded`として拒否します。
+writer queueの容量はcore内部接続を直接使用する運用と、今後のfront非同期I/O実装のための境界です。
 
 自動コンパクションはcore内の独立した保守スレッドで実行します。検索用ワーカースレッドと
 マニフェスト再読み込みスレッドを占有しません。コンパクション自体は手動実行と同じ

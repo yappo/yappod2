@@ -23,11 +23,26 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 
 同じ端末内の同じ索引を複数coreへ読み込ませる構成は、単一端末の性能改善手段として採用しません。
 
+## 実装状態
+
+| 項目 | 状態 |
+|---|---|
+| front接続I/O、core接続I/O、core検索computeの設定分離 | 実装済みです。 |
+| 容量固定の検索executorと単一writer executor | 実装済みです。 |
+| libeventによる非blocking接続とkeep-alive | 未実装です。現在のI/Oスレッドは接続単位で同期的に待機します。 |
+| 検索要求単位のsnapshot参照保持と短時間の公開交換 | 未実装です。 |
+| 負荷budget付きmaintenance scheduler | 未実装です。 |
+| WAL、更新buffer、refresh、tiered merge | 未実装です。 |
+
+正式な現在動作は[アーキテクチャ](architecture.md)と[設定リファレンス](configuration.md)を優先します。
+この表は各実装段階の完了時に更新します。
+
 ## 現在の実装
 
-現在の`yappod_core`は、設定した`worker_threads`個のpthreadが同じlisten socketで`accept`します。
-一つのworkerが一つの接続について、要求の読み込み、HTTP検証、JSON処理、検索または更新、応答の
-書き出し、切断までを同期的に処理します。内部HTTPは1要求ごとに`Connection: close`を使います。
+現在の`yappod_core`は、設定した`core_io_threads`個のpthreadが同じlisten socketで`accept`します。
+一つのI/Oスレッドが要求を同期的に読み込み、検索は`core_search_threads`個のcompute worker、更新は
+単一writer threadへ渡して完了を待ち、応答を書き出して切断します。内部HTTPは1要求ごとに
+`Connection: close`を使います。
 
 検索componentのうち語彙索引とベクトルは`mmap`で開きます。通常検索の読み出しはOSのページ
 キャッシュを通りますが、未常駐ページのpage faultは検索を実行しているworkerを停止させます。
@@ -170,8 +185,8 @@ flush後のセグメントはbyte数によるtierへ分類します。各tierに
 | writer queue | 更新件数、operation数、本文byte、WAL未反映byte | `503 overloaded`を返します。 |
 | maintenance | 同時job数、読み書きbyte/s | 新規jobを延期します。 |
 
-frontが受理する公開要求数とcoreが実行する検索数も別の値にします。同じ`worker_threads`をfrontの接続処理、
-coreの接続処理、検索計算へ共用しません。
+frontが受理する公開要求数とcoreが実行する検索数も別の値にします。`front_io_threads`、
+`core_io_threads`、`core_search_threads`を独立して設定します。
 
 ## snapshotの排他と世代
 

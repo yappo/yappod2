@@ -1,0 +1,73 @@
+#include <setjmp.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#include <cmocka.h>
+#include <pthread.h>
+
+#include "common/yappo_types_v2.h"
+#include "server/yappo_executor_v2.h"
+
+typedef struct {
+  pthread_mutex_t lock;
+  pthread_cond_t release;
+  size_t entered;
+  size_t finished;
+  int blocked;
+} JOB_STATE;
+
+static void run_job(void *opaque) {
+  JOB_STATE *state = opaque;
+  pthread_mutex_lock(&state->lock);
+  state->entered++;
+  while (state->blocked) pthread_cond_wait(&state->release, &state->lock);
+  state->finished++;
+  pthread_mutex_unlock(&state->lock);
+}
+
+static void test_bounded_executor_drains_and_rejects_overflow(void **unused) {
+  YAP_V2_EXECUTOR executor;
+  YAP_V2_EXECUTOR_STATE snapshot;
+  JOB_STATE state;
+  (void)unused;
+  YAP_V2_executor_init(&executor);
+  state.entered = 0U;
+  state.finished = 0U;
+  state.blocked = 1;
+  assert_int_equal(pthread_mutex_init(&state.lock, NULL), 0);
+  assert_int_equal(pthread_cond_init(&state.release, NULL), 0);
+  assert_int_equal(YAP_V2_executor_open(&executor, 1U, 1U), YAP_V2_OK);
+  assert_int_equal(YAP_V2_executor_try_submit(&executor, run_job, &state), YAP_V2_OK);
+  for (;;) {
+    pthread_mutex_lock(&state.lock);
+    if (state.entered == 1U) {
+      pthread_mutex_unlock(&state.lock);
+      break;
+    }
+    pthread_mutex_unlock(&state.lock);
+  }
+  assert_int_equal(YAP_V2_executor_try_submit(&executor, run_job, &state), YAP_V2_OK);
+  assert_int_equal(YAP_V2_executor_try_submit(&executor, run_job, &state),
+                   YAP_V2_EXECUTOR_FULL);
+  assert_int_equal(YAP_V2_executor_snapshot(&executor, &snapshot), YAP_V2_OK);
+  assert_int_equal(snapshot.active, 1U);
+  assert_int_equal(snapshot.queued, 1U);
+  assert_int_equal(snapshot.rejected, 1U);
+  pthread_mutex_lock(&state.lock);
+  state.blocked = 0;
+  pthread_cond_broadcast(&state.release);
+  pthread_mutex_unlock(&state.lock);
+  YAP_V2_executor_close(&executor);
+  assert_int_equal(state.finished, 2U);
+  assert_int_equal(pthread_cond_destroy(&state.release), 0);
+  assert_int_equal(pthread_mutex_destroy(&state.lock), 0);
+}
+
+int main(void) {
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_bounded_executor_drains_and_rejects_overflow),
+  };
+  return cmocka_run_group_tests(tests, NULL, NULL);
+}

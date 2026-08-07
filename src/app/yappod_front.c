@@ -638,7 +638,7 @@ int main(int argc, char **argv) {
   sigset_t shutdown_signals;
   pthread_t *threads = NULL;
   worker_t *workers = NULL;
-  size_t started = 0U, worker_threads;
+  size_t started = 0U, io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
   int foreground = 0, have_port = 0, have_core_port = 0;
   YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
@@ -684,6 +684,7 @@ int main(int argc, char **argv) {
     listen_host = application.front_host;
     port = application.front_port;
     runtime_policy = application.runtime_policy;
+    io_threads = application.front_io_threads;
     compaction_policy = application.compaction_policy;
     if (!foreground && set_run_paths(application.run_directory) != 0) {
       fprintf(stderr, "Cannot create run directory: %s\n", strerror(errno));
@@ -700,9 +701,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Invalid v2 index: %s\n", probe_error);
     return EXIT_FAILURE;
   }
-  worker_threads = runtime_policy.worker_threads;
-  threads = calloc(worker_threads, sizeof(*threads));
-  workers = calloc(worker_threads, sizeof(*workers));
+  threads = calloc(io_threads, sizeof(*threads));
+  workers = calloc(io_threads, sizeof(*workers));
   if (threads == NULL || workers == NULL) {
     fputs("Cannot allocate worker state\n", stderr);
     free(threads); free(workers);
@@ -752,7 +752,7 @@ int main(int argc, char **argv) {
     free(threads); free(workers);
     return EXIT_FAILURE;
   }
-  for (started = 0U; started < worker_threads; started++) {
+  for (started = 0U; started < io_threads; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
     workers[started].index_dir = index_dir;
@@ -760,7 +760,7 @@ int main(int argc, char **argv) {
     workers[started].core_port = core_port;
     if (pthread_create(&threads[started], NULL, run_worker, &workers[started]) != 0) break;
   }
-  if (started != worker_threads) {
+  if (started != io_threads) {
     request_shutdown(SIGTERM);
   } else {
     int signal_number;
@@ -773,5 +773,5 @@ int main(int argc, char **argv) {
   YAP_V2_runtime_limiter_close(&ingest_limiter);
   YAP_V2_runtime_limiter_close(&runtime_limiter);
   free(threads); free(workers);
-  return started == worker_threads ? EXIT_SUCCESS : EXIT_FAILURE;
+  return started == io_threads ? EXIT_SUCCESS : EXIT_FAILURE;
 }

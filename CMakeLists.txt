@@ -129,6 +129,7 @@ set(YAPPOD_INDEXING_SOURCES
 set(YAPPOD_SERVER_SOURCES
   ${SRC_DIR}/server/yappo_observability_v2.c
   ${SRC_DIR}/server/yappo_core_http_v2.c
+  ${SRC_DIR}/server/yappo_executor_v2.c
   ${SRC_DIR}/server/yappo_http_v2.c
 )
 
@@ -519,6 +520,12 @@ if(YAPPOD_TESTS_NODAEMON)
   add_yappod_cmocka_test(
     core_http_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/core_http_v2_test.c
+    LABEL standalone
+    LIBRARIES yappod_server
+  )
+  add_yappod_cmocka_test(
+    executor_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/executor_v2_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )

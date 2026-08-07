@@ -19,7 +19,10 @@ export interface DaemonConfig {
   corePort: number;
   frontHost: string;
   frontPort: number;
-  workerThreads: number;
+  frontIoThreads: number;
+  coreIoThreads: number;
+  coreSearchThreads: number;
+  coreWriterQueueCapacity: number;
   maxInflight: number;
   maxInflightBytes: number;
   requestTimeoutMs: number;
@@ -192,7 +195,8 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
   const daemon = optionalTable(value, "daemon");
   onlyKeys(daemon, [
     "run_directory", "core_host", "core_port", "front_host", "front_port", "max_inflight",
-    "worker_threads", "max_inflight_bytes", "request_timeout_ms", "ingest_max_body_bytes",
+    "front_io_threads", "core_io_threads", "core_search_threads",
+    "core_writer_queue_capacity", "max_inflight_bytes", "request_timeout_ms", "ingest_max_body_bytes",
     "ingest_timeout_ms", "write_token", "auto_compact_enabled",
     "auto_compact_check_interval_ms", "auto_compact_small_segment_bytes",
     "auto_compact_min_small_segments",
@@ -207,8 +211,13 @@ function daemonConfig(value: unknown, configDir: string): DaemonConfig {
     corePort: integer(daemon.core_port, 18401, 1, 65535, "daemon.core_port"),
     frontHost: optionalString(daemon.front_host, "daemon.front_host") ?? "127.0.0.1",
     frontPort: integer(daemon.front_port, 18400, 1, 65535, "daemon.front_port"),
-    workerThreads: integer(daemon.worker_threads, 16, 1, 1024, "daemon.worker_threads"),
-    maxInflight: integer(daemon.max_inflight, 4, 1, 1024, "daemon.max_inflight"),
+    frontIoThreads: integer(daemon.front_io_threads, 16, 1, 1024, "daemon.front_io_threads"),
+    coreIoThreads: integer(daemon.core_io_threads, 16, 1, 1024, "daemon.core_io_threads"),
+    coreSearchThreads: integer(daemon.core_search_threads, 16, 1, 1024,
+                               "daemon.core_search_threads"),
+    coreWriterQueueCapacity: integer(daemon.core_writer_queue_capacity, 1, 1, 1024,
+                                     "daemon.core_writer_queue_capacity"),
+    maxInflight: integer(daemon.max_inflight, 16, 1, 1024, "daemon.max_inflight"),
     maxInflightBytes: integer(daemon.max_inflight_bytes, 4194304, 1, 1073741824, "daemon.max_inflight_bytes"),
     requestTimeoutMs: integer(daemon.request_timeout_ms, 5000, 1, 60000, "daemon.request_timeout_ms"),
     ingestMaxBodyBytes: integer(daemon.ingest_max_body_bytes, 67108864, 1, 268435456,
