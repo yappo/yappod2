@@ -9,6 +9,12 @@ front、複数のcore、文書の水平シャード、レプリカ、必要に�
 [設定リファレンス](configuration.md)、[frontとcoreの通信仕様](yappod-core-protocol.md)を
 一次資料とします。
 
+クラスタ化の前に、一つのcoreプロセス内でネットワークI/O、検索計算、更新、保守を分離します。
+この単一端末の実装順序と負荷試験は
+[単一端末runtimeの並列実行設計](single-node-runtime-design.md)を一次資料とします。同じ索引を開く
+複数coreプロセスは単一端末のCPU使用率を上げる手段にせず、複数プロセスは水平シャードまたは異なる
+障害ドメインのレプリカを所有する段階で導入します。
+
 ## 目標
 
 クラスタ化では、次の状態を目指します。
@@ -664,19 +670,19 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
 
 各段階は独立した設計、実装、テスト、運用文書、負荷試験を持ち、完了条件を満たしてから次へ進みます。
 
-### 第1段階: クラスタ内部契約の土台
+### 第1段階: 単一端末runtimeの並列実行
+
+- 一つのcoreプロセス内でI/O、検索compute、writer、maintenanceの実行枠を分離します。
+- 非同期接続、上限付きqueue、snapshotの短時間公開、正常終了を実装します。
+- 高頻度更新をWAL、更新buffer、refreshへ分離し、API要求数と物理セグメント数を切り離します。
+- CPU、RSS、page fault、ディスクI/O、queue待ち時間を含む負荷試験で一台の上限を測定します。
+
+### 第2段階: クラスタ内部契約の土台
 
 - cluster、node、shard、replica、role、epoch、transactionの型と責務を追加します。
 - standaloneのruntimeを、一つのshard runtimeとして呼び出せる境界へ整理します。
 - 現在の公開APIとstandalone索引形式を変えず、依存方向と所有関係をテストします。
 - クラスタ用protocol RFC、上限、エラー、version negotiationを確定します。
-
-### 第2段階: 静的read replica
-
-- frontへ同一索引を持つ複数core endpointを設定します。
-- readiness、local generation、manifest checksumが一致するcoreだけを選びます。
-- round-robin、least-inflight、障害時の一回再試行、drainを実装します。
-- この段階では全coreが同じ索引を持ち、水平分割しません。
 
 ### 第3段階: controllerとクラスタカタログ
 
