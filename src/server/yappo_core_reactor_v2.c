@@ -655,10 +655,13 @@ failed:
 static void stop_reactor(reactor_t *reactor) {
   unsigned char notification = 1U;
   message_t *messages;
+  ssize_t notification_bytes;
   if (!reactor->started) return;
   reactor->stopping = 1;
-  (void)write(reactor->notification_sockets[1], &notification,
-              sizeof(notification));
+  do {
+    notification_bytes = write(reactor->notification_sockets[1], &notification,
+                               sizeof(notification));
+  } while (notification_bytes < 0 && errno == EINTR);
   (void)pthread_join(reactor->thread, NULL);
   reactor->started = 0;
   pthread_mutex_lock(&reactor->mailbox_lock);
