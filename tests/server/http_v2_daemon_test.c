@@ -412,12 +412,19 @@ static void test_writer_bytes_rejects_from_headers(void **state) {
 
 static void test_core_automatically_compacts_small_segments(void **state) {
   context_t *ctx = *state;
+  const char partial_update[] =
+    "POST /v2/documents:batch HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{";
   char *response = NULL;
   char path[PATH_MAX], body[512];
+  int partial_descriptor = connect_core(ctx->stack.core_port);
   int attempt;
   size_t i;
   uint64_t generation = 0U;
   size_t segments = 0U;
+  assert_true(partial_descriptor >= 0);
+  assert_int_equal(send_all(partial_descriptor, partial_update,
+                            sizeof(partial_update) - 1U), 0);
   for (i = 0U; i < 3U; i++) {
     assert_true(snprintf(
       body, sizeof(body),
@@ -430,6 +437,16 @@ static void test_core_automatically_compacts_small_segments(void **state) {
   }
   assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
                                    "manifest.yap2"), 0);
+  usleep(1500000);
+  {
+    YAP_V2_MANIFEST manifest;
+    YAP_V2_manifest_init(&manifest);
+    assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+    assert_int_equal(manifest.generation, 4U);
+    assert_int_equal(manifest.segment_count, 4U);
+    YAP_V2_manifest_free(&manifest);
+  }
+  close(partial_descriptor);
   for (attempt = 0; attempt < 100; attempt++) {
     YAP_V2_MANIFEST manifest;
     YAP_V2_manifest_init(&manifest);

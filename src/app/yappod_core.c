@@ -18,11 +18,18 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <pthread/qos.h>
+#endif
 
 #define DEFAULT_CORE_PORT 18401
+#define MAINTENANCE_POLL_INTERVAL_MS 250U
+#define MAINTENANCE_IDLE_SAMPLES 2U
 typedef struct {
   const char *index_dir;
   YAP_V2_HTTP_RUNTIME *http_runtime;
+  YAP_V2_RUNTIME_LIMITER *search_limiter;
+  YAP_V2_RUNTIME_LIMITER *writer_limiter;
   YAP_V2_COMPACTION_POLICY policy;
 } maintenance_t;
 
@@ -149,10 +156,7 @@ static void *run_reloader(void *opaque) {
   while (!shutdown_requested) {
     while (nanosleep(&interval, &interval) != 0 && errno == EINTR && !shutdown_requested) {}
     interval.tv_sec = 1; interval.tv_nsec = 0;
-    if (!shutdown_requested) {
-      (void)YAP_V2_http_runtime_reload(http_runtime);
-      (void)YAP_V2_http_runtime_maintain_ann(http_runtime);
-    }
+    if (!shutdown_requested) (void)YAP_V2_http_runtime_reload(http_runtime);
   }
   return NULL;
 }
@@ -170,15 +174,53 @@ static void sleep_maintenance_interval(uint32_t interval_ms) {
   }
 }
 
+static int maintenance_has_foreground_work(maintenance_t *maintenance) {
+  size_t search_inflight = 0U, search_bytes = 0U;
+  size_t writer_inflight = 0U, writer_bytes = 0U;
+  size_t ignored_count = 0U, ignored_bytes = 0U;
+  if (YAP_V2_runtime_limiter_snapshot(
+        maintenance->search_limiter, &search_inflight, &search_bytes,
+        &ignored_count, &ignored_bytes) != YAP_V2_OK ||
+      YAP_V2_runtime_limiter_snapshot(
+        maintenance->writer_limiter, &writer_inflight, &writer_bytes,
+        &ignored_count, &ignored_bytes) != YAP_V2_OK)
+    return 1;
+  return search_inflight != 0U || search_bytes != 0U ||
+         writer_inflight != 0U || writer_bytes != 0U;
+}
+
+static uint64_t monotonic_milliseconds(void) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+  return (uint64_t)now.tv_sec * 1000U + (uint64_t)now.tv_nsec / 1000000U;
+}
+
 static void *run_maintenance(void *opaque) {
   maintenance_t *maintenance = opaque;
+  uint64_t next_compaction = monotonic_milliseconds() +
+                             maintenance->policy.check_interval_ms;
+  unsigned int idle_samples = 0U;
+#ifdef __APPLE__
+  (void)pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#endif
   while (!shutdown_requested) {
     int compacted = 0;
     size_t small_segments = 0U;
     char error[256] = {0};
     YAP_V2_COMPACTION_RESULT result;
-    sleep_maintenance_interval(maintenance->policy.check_interval_ms);
+    uint64_t now;
+    sleep_maintenance_interval(MAINTENANCE_POLL_INTERVAL_MS);
     if (shutdown_requested) break;
+    if (maintenance_has_foreground_work(maintenance)) {
+      idle_samples = 0U;
+      continue;
+    }
+    if (++idle_samples < MAINTENANCE_IDLE_SAMPLES) continue;
+    idle_samples = 0U;
+    (void)YAP_V2_http_runtime_maintain_ann(maintenance->http_runtime);
+    now = monotonic_milliseconds();
+    if (!maintenance->policy.enabled || now < next_compaction) continue;
+    next_compaction = now + maintenance->policy.check_interval_ms;
     YAP_V2_compaction_result_init(&result);
     if (YAP_V2_compact_if_needed(
           maintenance->index_dir, &maintenance->policy, &result,
@@ -357,16 +399,17 @@ int main(int argc, char **argv) {
     request_shutdown(SIGTERM);
   maintenance.index_dir = index_dir;
   maintenance.http_runtime = &http_runtime;
+  maintenance.search_limiter = &runtime_limiter;
+  maintenance.writer_limiter = &writer_limiter;
   maintenance.policy = compaction_policy;
-  if (!shutdown_requested && compaction_policy.enabled) {
+  if (!shutdown_requested) {
     if (pthread_create(&maintenance_thread, NULL, run_maintenance,
                        &maintenance) == 0)
       maintenance_started = 1;
     else
       request_shutdown(SIGTERM);
   }
-  if (!reloader_started ||
-      (compaction_policy.enabled && !maintenance_started)) {
+  if (!reloader_started || !maintenance_started) {
     request_shutdown(SIGTERM);
   } else {
     int signal_number;
@@ -384,6 +427,6 @@ int main(int argc, char **argv) {
   YAP_V2_runtime_limiter_close(&writer_limiter);
   YAP_V2_http_runtime_close(&http_runtime);
   return reloader_started &&
-    (!compaction_policy.enabled || maintenance_started) ?
+    maintenance_started ?
     EXIT_SUCCESS : EXIT_FAILURE;
 }
