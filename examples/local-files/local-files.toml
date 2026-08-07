@@ -67,6 +67,7 @@ front_io_threads = 16
 core_io_threads = 16
 core_search_threads = 16
 core_writer_queue_capacity = 1
+core_writer_queue_bytes = 134217728
 max_inflight = 16
 max_inflight_bytes = 4194304
 request_timeout_ms = 5000

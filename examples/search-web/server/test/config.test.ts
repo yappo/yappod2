@@ -40,6 +40,7 @@ describe("web config", () => {
         coreIoThreads: 16,
         coreSearchThreads: 16,
         coreWriterQueueCapacity: 1,
+        coreWriterQueueBytes: 134217728,
         ingestMaxBodyBytes: 67108864,
         ingestTimeoutMs: 60000,
         autoCompactEnabled: true,

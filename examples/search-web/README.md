@@ -81,6 +81,7 @@ search-webは1つのアプリケーションTOMLをYappod2サーバー、索引�
 | `core_io_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの接続I/Oスレッド数です。 |
 | `core_search_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの検索compute worker数です。 |
 | `core_writer_queue_capacity` | 整数 | 1〜1024 | `1` | 任意 | coreで処理中とは別に待機できる更新数です。 |
+| `core_writer_queue_bytes` | 整数 | 1〜1073741824 | `134217728` | 任意 | coreが処理中または待機中として予約する更新本文の合計バイト上限です。 |
 | `max_inflight` | 整数 | 1〜1024 | `16` | 任意 | frontとcoreが、それぞれ処理中として受理する検索、取得、本文断片準備の件数上限です。 |
 | `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreが処理中として保持する検索、取得、本文断片準備の本文合計バイト数です。 |
 | `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |

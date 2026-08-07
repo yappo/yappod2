@@ -29,7 +29,8 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 |---|---|
 | front接続I/O、core接続I/O、core検索computeの設定分離 | 実装済みです。 |
 | 容量固定の検索executorと単一writer executor | 実装済みです。 |
-| libeventによる非blocking接続とkeep-alive | 未実装です。現在のI/Oスレッドは接続単位で同期的に待機します。 |
+| libeventによる非blocking接続 | 実装済みです。1本のacceptorが複数reactorへ接続を分配し、executor完了はmailboxで元のreactorへ戻します。 |
+| front/core間のpersistent connection | 未実装です。現在は1接続1要求で応答後に閉じます。 |
 | 検索要求単位のsnapshot参照保持と短時間の公開交換 | 未実装です。 |
 | 負荷budget付きmaintenance scheduler | 未実装です。 |
 | WAL、更新buffer、refresh、tiered merge | 未実装です。 |
@@ -226,14 +227,15 @@ queue待ち時間、`503`数を記録します。warm cache、cold cache、検�
 
 ## 実装順序と完了条件
 
-1. front/coreのI/O枠とcoreの検索compute枠を独立した設定にします。
-2. coreへ上限付き検索queueとcompute poolを追加し、接続処理から検索計算を分離します。
-3. libeventによる非同期接続、keep-alive、deadline、完了通知へ移行します。
-4. 更新をwriter queueへ移し、検索queueと独立して負荷制御します。
-5. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。
-6. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。
-7. WAL、更新buffer、refresh条件、durable/searchable待機を実装します。
-8. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
+1. front/coreのI/O枠とcoreの検索compute枠を独立した設定にします。実装済みです。
+2. coreへ上限付き検索queueとcompute poolを追加し、接続処理から検索計算を分離します。実装済みです。
+3. libeventによる非同期接続、endpoint別deadline、完了通知へ移行します。実装済みです。
+4. 更新をwriter queueへ移し、件数と本文合計byteで検索queueとは独立に負荷制御します。実装済みです。
+5. front/core間のpersistent connectionを追加し、接続確立コストを測定します。
+6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。
+7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。
+8. WAL、更新buffer、refresh条件、durable/searchable待機を実装します。
+9. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
 
 各段階では、現在のCLI、TOML、canonical NDJSON、公開HTTP API、front/core通信、メトリクス、v2索引形式を
 変更する場合に、対応する正式文書と受け入れテストを同時に更新します。途中段階を最終構成として記載せず、
