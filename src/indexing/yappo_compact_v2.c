@@ -5,6 +5,7 @@
 #include "config/yappo_config_v2.h"
 #include "storage/yappo_manifest_v2.h"
 #include "indexing/yappo_segment_planner_v2.h"
+#include "indexing/yappo_update_v2.h"
 #include "components/yappo_vector_v2.h"
 #include "storage/yappo_writer_lock_v2.h"
 
@@ -19,6 +20,8 @@
 
 #define YAP_V2_COMPACTION_MAX_SOURCE_SEGMENTS 8U
 #define YAP_V2_COMPACTION_MAX_SOURCE_BYTES (512U * 1024U * 1024U)
+#define YAP_V2_COMPACTION_TIER_WIDTH 4U
+#define YAP_V2_COMPACTION_FLOOR_DIVISOR 64U
 
 static void set_error(char *error, size_t capacity, const char *message) {
   if (error != NULL && capacity > 0U) (void)snprintf(error, capacity, "%s", message);
@@ -179,18 +182,41 @@ static size_t segment_storage_bytes(
   return total;
 }
 
-static int select_range(const YAP_V2_MANIFEST *manifest, size_t *first,
-                        size_t *count) {
+static size_t segment_size_tier(const YAP_V2_COMPACTION_POLICY *policy,
+                                size_t bytes) {
+  size_t floor = policy == NULL ? 1024U * 1024U :
+                 policy->small_segment_bytes /
+                   YAP_V2_COMPACTION_FLOOR_DIVISOR;
+  size_t upper;
+  size_t tier = 0U;
+  if (floor == 0U) floor = 1U;
+  if (bytes < floor) bytes = floor;
+  upper = floor;
+  while (upper <= SIZE_MAX / YAP_V2_COMPACTION_TIER_WIDTH &&
+         bytes >= upper * YAP_V2_COMPACTION_TIER_WIDTH) {
+    upper *= YAP_V2_COMPACTION_TIER_WIDTH;
+    tier++;
+  }
+  return tier;
+}
+
+static int select_range(const YAP_V2_MANIFEST *manifest,
+                        const YAP_V2_COMPACTION_POLICY *policy,
+                        size_t *first, size_t *count) {
   size_t best_first = 0U, best_count = 0U, best_bytes = SIZE_MAX;
+  size_t minimum = policy == NULL ? 2U : policy->min_small_segments;
   size_t start;
   if (manifest->segment_count == 0U) return YAP_V2_NOT_FOUND;
   for (start = 0U; start < manifest->segment_count; start++) {
     size_t total = 0U;
     size_t selected = 0U;
+    size_t tier = segment_size_tier(
+      policy, segment_storage_bytes(&manifest->segments[start]));
     while (start + selected < manifest->segment_count &&
            selected < YAP_V2_COMPACTION_MAX_SOURCE_SEGMENTS) {
       size_t bytes = segment_storage_bytes(
         &manifest->segments[start + selected]);
+      if (segment_size_tier(policy, bytes) != tier) break;
       if (selected > 0U &&
           (total >= YAP_V2_COMPACTION_MAX_SOURCE_BYTES ||
            bytes > YAP_V2_COMPACTION_MAX_SOURCE_BYTES - total))
@@ -199,17 +225,19 @@ static int select_range(const YAP_V2_MANIFEST *manifest, size_t *first,
       total += bytes;
       selected++;
     }
-    if (selected > best_count ||
-        (selected == best_count && total < best_bytes)) {
+    if (selected >= minimum &&
+        (selected > best_count ||
+         (selected == best_count && total < best_bytes))) {
       best_first = start;
       best_count = selected;
       best_bytes = total;
     }
   }
-  if (best_count == 0U) {
+  if (best_count == 0U && policy == NULL) {
     best_first = 0U;
     best_count = 1U;
   }
+  if (best_count == 0U) return YAP_V2_NOT_FOUND;
   *first = best_first;
   *count = best_count;
   return YAP_V2_OK;
@@ -506,7 +534,8 @@ int YAP_V2_manifest_needs_compaction(
     const YAP_V2_MANIFEST *manifest,
     const YAP_V2_COMPACTION_POLICY *policy, int *needed,
     size_t *small_segment_count) {
-  size_t i, count = 0U, longest = 0U;
+  size_t i, count = 0U, longest = 0U, first = 0U, selected = 0U;
+  int selection_status;
   if (manifest == NULL || policy == NULL || needed == NULL ||
       YAP_V2_compaction_policy_validate(policy) != YAP_V2_OK)
     return YAP_V2_INVALID_ARGUMENT;
@@ -519,8 +548,10 @@ int YAP_V2_manifest_needs_compaction(
       count = 0U;
     }
   }
-  *needed = policy->enabled &&
-    longest >= policy->min_small_segments;
+  selection_status = select_range(manifest, policy, &first, &selected);
+  if (selection_status != YAP_V2_OK && selection_status != YAP_V2_NOT_FOUND)
+    return selection_status;
+  *needed = policy->enabled && selection_status == YAP_V2_OK;
   if (small_segment_count != NULL) *small_segment_count = longest;
   return YAP_V2_OK;
 }
@@ -613,6 +644,17 @@ static int compact_internal(
     set_error(error, error_size, "cannot acquire index writer lock");
     goto done;
   }
+  while (YAP_V2_update_wal_exists(index_dir)) {
+    YAP_V2_writer_lock_release(&writer_lock);
+    status = YAP_V2_update_recover(index_dir, error, error_size);
+    if (status != YAP_V2_OK) goto done;
+    status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
+    if (status != YAP_V2_OK) {
+      set_error(error, error_size,
+                "cannot reacquire index writer lock after WAL recovery");
+      goto done;
+    }
+  }
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
   if (status != YAP_V2_OK) { set_error(error, error_size, config_error); goto done; }
   status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
@@ -639,7 +681,7 @@ static int compact_internal(
     set_error(error, error_size, "orphan segment cleanup failed");
     goto done;
   }
-  status = select_range(&manifest, &range_first, &range_count);
+  status = select_range(&manifest, policy, &range_first, &range_count);
   if (status != YAP_V2_OK) {
     set_error(error, error_size, "no segment is available for compaction");
     goto done;

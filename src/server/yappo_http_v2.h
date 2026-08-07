@@ -20,6 +20,15 @@ typedef struct {
   void *state;
 } YAP_V2_HTTP_RUNTIME;
 
+typedef struct {
+  const unsigned char *body;
+  size_t body_bytes;
+  int http_status;
+  char *response;
+  size_t response_bytes;
+  int result;
+} YAP_V2_HTTP_INGEST_ITEM;
+
 void YAP_V2_http_runtime_init(YAP_V2_HTTP_RUNTIME *runtime);
 int YAP_V2_http_runtime_open(YAP_V2_HTTP_RUNTIME *runtime, const char *index_dir);
 void YAP_V2_http_runtime_close(YAP_V2_HTTP_RUNTIME *runtime);
@@ -31,6 +40,12 @@ int YAP_V2_http_runtime_execute(YAP_V2_HTTP_RUNTIME *runtime,
 int YAP_V2_http_runtime_state(YAP_V2_HTTP_RUNTIME *runtime,
                               YAP_V2_OPERATIONAL_STATE *state);
 int YAP_V2_http_runtime_reload(YAP_V2_HTTP_RUNTIME *runtime);
+int YAP_V2_http_runtime_maintain_ann(YAP_V2_HTTP_RUNTIME *runtime);
+void YAP_V2_http_runtime_record_maintenance_deferral(
+  YAP_V2_HTTP_RUNTIME *runtime);
+int YAP_V2_http_runtime_execute_ingest_batch(
+  YAP_V2_HTTP_RUNTIME *runtime, YAP_V2_HTTP_INGEST_ITEM *items,
+  size_t item_count);
 
 /* Executes a request against one validated v2 snapshot. The returned UTF-8 JSON
  * buffer is owned by the caller and must be freed. */

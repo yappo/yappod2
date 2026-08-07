@@ -1,7 +1,7 @@
 #ifndef YAPPO_QUERY_V2_H
 #define YAPPO_QUERY_V2_H
 
-#include "components/yappo_ann_v2.h"
+#include "query/yappo_ann_corpus_v2.h"
 #include "query/yappo_filter_v2.h"
 #include "query/yappo_hybrid.h"
 #include "query/yappo_lexical_search_v2.h"
@@ -54,6 +54,14 @@ typedef struct {
   double fused_score;
 } YAP_V2_QUERY_HIT;
 
+typedef struct {
+  uint64_t base_search_calls;
+  uint64_t delta_search_calls;
+  uint64_t retry_search_calls;
+  uint64_t candidates_examined;
+  uint64_t candidates_rejected;
+} YAP_V2_QUERY_STATS;
+
 void YAP_V2_query_request_init(YAP_V2_QUERY_REQUEST *request);
 int YAP_V2_query_corpus_stats_build(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                                     const YAP_V2_QUERY_SEGMENT *segments,
@@ -64,5 +72,14 @@ int YAP_V2_query_execute(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
                          const YAP_V2_QUERY_CORPUS_STATS *stats,
                          const YAP_V2_QUERY_REQUEST *request, YAP_V2_QUERY_HIT *hits,
                          size_t hit_capacity, size_t *hit_count);
+int YAP_V2_query_execute_with_ann(const YAP_V2_SEARCH_SNAPSHOT *snapshot,
+                                  const YAP_V2_QUERY_SEGMENT *segments,
+                                  size_t segment_count,
+                                  const YAP_V2_QUERY_CORPUS_STATS *stats,
+                                  const YAP_V2_ANN_CORPUS *ann_corpus,
+                                  const YAP_V2_ANN_QUERY_PLAN *ann_plan,
+                                  const YAP_V2_QUERY_REQUEST *request,
+                                  YAP_V2_QUERY_HIT *hits, size_t hit_capacity,
+                                  size_t *hit_count, YAP_V2_QUERY_STATS *query_stats);
 
 #endif

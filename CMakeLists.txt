@@ -108,6 +108,7 @@ set(YAPPOD_COMPONENTS_SOURCES
 
 set(YAPPOD_QUERY_SOURCES
   ${SRC_DIR}/query/yappo_bm25.c
+  ${SRC_DIR}/query/yappo_ann_corpus_v2.c
   ${SRC_DIR}/query/yappo_filter_v2.c
   ${SRC_DIR}/query/yappo_snippet_v2.c
   ${SRC_DIR}/query/yappo_lexical_search_v2.c
@@ -121,6 +122,7 @@ set(YAPPOD_INDEXING_SOURCES
   ${SRC_DIR}/indexing/yappo_ingest.c
   ${SRC_DIR}/indexing/yappo_build_v2.c
   ${SRC_DIR}/indexing/yappo_update_v2.c
+  ${SRC_DIR}/indexing/yappo_update_wal_v2.c
   ${SRC_DIR}/indexing/yappo_segment_planner_v2.c
   ${SRC_DIR}/indexing/yappo_compact_v2.c
 )
@@ -128,6 +130,8 @@ set(YAPPOD_INDEXING_SOURCES
 set(YAPPOD_SERVER_SOURCES
   ${SRC_DIR}/server/yappo_observability_v2.c
   ${SRC_DIR}/server/yappo_core_http_v2.c
+  ${SRC_DIR}/server/yappo_core_reactor_v2.c
+  ${SRC_DIR}/server/yappo_executor_v2.c
   ${SRC_DIR}/server/yappo_http_v2.c
 )
 
@@ -169,7 +173,7 @@ add_library(yappod_server STATIC ${YAPPOD_SERVER_SOURCES})
 add_library(yappod::server ALIAS yappod_server)
 target_include_directories(yappod_server PUBLIC ${SRC_DIR})
 target_link_libraries(yappod_server PRIVATE yappod_query yappod_indexing
-  yappod::yyjson CURL::libcurl Threads::Threads)
+  yappod::yyjson CURL::libcurl Libevent::core Threads::Threads)
 
 set(YAPPOD_INTERNAL_LIBRARIES
   yappod_common
@@ -504,6 +508,12 @@ if(YAPPOD_TESTS_NODAEMON)
     LIBRARIES yappod_query
   )
   add_yappod_cmocka_test(
+    ann_corpus_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/ann_corpus_v2_test.c
+    LABEL standalone
+    LIBRARIES yappod_query
+  )
+  add_yappod_cmocka_test(
     retrieve_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/query/retrieve_v2_test.c
     LABEL standalone
@@ -512,6 +522,12 @@ if(YAPPOD_TESTS_NODAEMON)
   add_yappod_cmocka_test(
     core_http_v2
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/core_http_v2_test.c
+    LABEL standalone
+    LIBRARIES yappod_server
+  )
+  add_yappod_cmocka_test(
+    executor_v2
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/server/executor_v2_test.c
     LABEL standalone
     LIBRARIES yappod_server
   )
@@ -578,6 +594,12 @@ if(YAPPOD_TESTS_NODAEMON)
   target_include_directories(v2_load_probe PRIVATE ${TEST_COMMON_DIR})
   target_link_libraries(v2_load_probe PRIVATE yappod_test_support yappod::yyjson Threads::Threads)
 
+  add_executable(v2_mixed_load_probe ${QUALITY_TEST_DIR}/v2_mixed_load_probe.c)
+  yappod_enable_warnings(v2_mixed_load_probe)
+  target_include_directories(v2_mixed_load_probe PRIVATE ${TEST_COMMON_DIR})
+  target_link_libraries(v2_mixed_load_probe PRIVATE
+    yappod_test_support yappod::yyjson Threads::Threads)
+
   add_executable(v2_segment_search_benchmark
     ${QUALITY_TEST_DIR}/v2_segment_search_benchmark.c
     ${QUALITY_TEST_DIR}/search_quality_metrics.c
@@ -587,6 +609,13 @@ if(YAPPOD_TESTS_NODAEMON)
     ${TEST_COMMON_DIR} ${QUALITY_TEST_DIR})
   target_link_libraries(v2_segment_search_benchmark PRIVATE
     yappod_server yappod_components yappod_test_support)
+
+  add_executable(v2_ann_segment_benchmark
+    ${QUALITY_TEST_DIR}/v2_ann_segment_benchmark.c
+  )
+  yappod_enable_warnings(v2_ann_segment_benchmark)
+  target_link_libraries(v2_ann_segment_benchmark PRIVATE
+    yappod_components m)
 
   add_yappod_cmocka_test(
     v2_search_quality

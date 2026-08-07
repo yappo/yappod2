@@ -10,6 +10,11 @@
 
 #define YAP_APPLICATION_PATH_BYTES 4096U
 #define YAP_APPLICATION_HOST_BYTES 256U
+#define YAP_APPLICATION_DEFAULT_IO_THREADS 16U
+#define YAP_APPLICATION_DEFAULT_SEARCH_THREADS 16U
+#define YAP_APPLICATION_MAX_EXECUTION_THREADS 1024U
+#define YAP_APPLICATION_DEFAULT_WRITER_QUEUE_BYTES (128U * 1024U * 1024U)
+#define YAP_APPLICATION_MAX_WRITER_QUEUE_BYTES (1024U * 1024U * 1024U)
 
 typedef struct {
   YAP_V2_CONFIG index_config;
@@ -20,6 +25,11 @@ typedef struct {
   char front_host[YAP_APPLICATION_HOST_BYTES];
   uint16_t front_port;
   YAP_V2_RUNTIME_POLICY runtime_policy;
+  size_t front_io_threads;
+  size_t core_io_threads;
+  size_t core_search_threads;
+  size_t core_writer_queue_capacity;
+  size_t core_writer_queue_bytes;
   YAP_V2_COMPACTION_POLICY compaction_policy;
 } YAP_APPLICATION_CONFIG;
 

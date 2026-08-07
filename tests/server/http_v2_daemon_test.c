@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <signal.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +21,21 @@
 #include "storage/yappo_manifest_v2.h"
 #include "components/yappo_metadata_v2.h"
 #include "components/yappo_vector_v2.h"
+#include "server/yappo_core_http_v2.h"
 
 typedef struct { ytest_env_t env; ytest_daemon_stack_t stack; char run[PATH_MAX]; char policy[PATH_MAX]; } context_t;
+typedef struct {
+  pthread_mutex_t lock;
+  pthread_cond_t ready;
+  size_t waiting;
+  int start;
+} ingest_batch_gate_t;
+typedef struct {
+  context_t *context;
+  ingest_batch_gate_t *gate;
+  size_t id;
+  char *response;
+} ingest_batch_worker_t;
 static const char *policy_source = NULL;
 static YAP_V2_BYTES_VIEW view(const char *s) { YAP_V2_BYTES_VIEW v={(const unsigned char *)s,strlen(s)}; return v; }
 static void add(YAP_V2_SEGMENT_DESCRIPTOR *s,const YAP_V2_COMPONENT_DESCRIPTOR *c){assert_int_equal(YAP_V2_segment_descriptor_add_component(s,c),YAP_V2_OK);}
@@ -93,12 +108,32 @@ static int teardown_tiny_memory_limit(void **state) {
   return teardown(state);
 }
 
+static int setup_tiny_writer_limit(void **state) {
+  policy_source = "[daemon]\ncore_writer_queue_bytes=1\n";
+  return setup(state);
+}
+
+static int teardown_tiny_writer_limit(void **state) {
+  return teardown(state);
+}
+
 static int setup_single_worker(void **state) {
-  policy_source = "[daemon]\nworker_threads=1\n";
+  policy_source = "[daemon]\nfront_io_threads=1\ncore_io_threads=1\ncore_search_threads=1\n";
   return setup(state);
 }
 
 static int teardown_single_worker(void **state) {
+  return teardown(state);
+}
+
+static int setup_ingest_batch(void **state) {
+  policy_source =
+    "[daemon]\ncore_writer_queue_capacity=8\n"
+    "auto_compact_enabled=false\n";
+  return setup(state);
+}
+
+static int teardown_ingest_batch(void **state) {
   return teardown(state);
 }
 
@@ -131,6 +166,74 @@ static char *query_port(int port, const char *endpoint, const char *body) {
 
 static char *query(context_t *ctx, const char *endpoint, const char *body) {
   return query_port(ctx->stack.front_port, endpoint, body);
+}
+
+static int connect_core(int port) {
+  struct sockaddr_in address;
+  struct timeval timeout = {2, 0};
+  int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor < 0) return -1;
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons((uint16_t)port);
+  if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1 ||
+      setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                 sizeof(timeout)) != 0 ||
+      connect(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0) {
+    close(descriptor);
+    return -1;
+  }
+  return descriptor;
+}
+
+static int send_all(int descriptor, const char *data, size_t bytes) {
+  size_t sent = 0U;
+  while (sent < bytes) {
+    ssize_t written = send(descriptor, data + sent, bytes - sent, 0);
+    if (written <= 0) return -1;
+    sent += (size_t)written;
+  }
+  return 0;
+}
+
+static char *receive_http_response(int descriptor) {
+  size_t capacity = 4096U, used = 0U, required = 0U;
+  char *response = malloc(capacity);
+  if (response == NULL) return NULL;
+  for (;;) {
+    char *header_end;
+    ssize_t received;
+    if (used + 1U == capacity) {
+      char *larger;
+      if (capacity >= YAP_V2_CORE_HTTP_MAX_RESPONSE_BYTES +
+                      YAP_V2_CORE_HTTP_MAX_HEADER_BYTES) {
+        free(response);
+        return NULL;
+      }
+      capacity *= 2U;
+      larger = realloc(response, capacity);
+      if (larger == NULL) { free(response); return NULL; }
+      response = larger;
+    }
+    received = recv(descriptor, response + used, capacity - used - 1U, 0);
+    if (received <= 0) { free(response); return NULL; }
+    used += (size_t)received;
+    response[used] = '\0';
+    header_end = strstr(response, "\r\n\r\n");
+    if (header_end != NULL && required == 0U) {
+      char *length = strstr(response, "Content-Length: ");
+      unsigned long long body_bytes;
+      if (length == NULL) { free(response); return NULL; }
+      body_bytes = strtoull(length + sizeof("Content-Length: ") - 1U,
+                            NULL, 10);
+      if (body_bytes > YAP_V2_CORE_HTTP_MAX_RESPONSE_BYTES) {
+        free(response);
+        return NULL;
+      }
+      required = (size_t)(header_end + 4U - response) + (size_t)body_bytes;
+    }
+    if (required != 0U && used >= required) return response;
+  }
 }
 
 static char *get(context_t *ctx, const char *endpoint) {
@@ -171,7 +274,6 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: QUERY"));assert_non_null(strstr(response,"Accept-Query: application/json"));free(response);response=NULL;
   assert_true(snprintf(request,sizeof(request),"GET /health/ready HTTP/1.1\r\nHost: localhost\r\n\r\n")>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"service\":\"yappod_core\""));free(response);response=NULL;
-  assert_int_equal(ytest_http_send_text(ctx->stack.core_port,"YAP2 legacy frame",&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   response=get(ctx,"/healthz");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
@@ -190,6 +292,29 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
   assert_non_null(strstr(response,"yappod_v2_compaction_state{state=\"idle\"} 1"));
   free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
+
+static void test_core_keeps_connection_for_sequential_requests(void **state) {
+  context_t *ctx = *state;
+  const char request[] =
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\n"
+    "Connection: keep-alive\r\n\r\n";
+  char *response;
+  int descriptor = connect_core(ctx->stack.core_port);
+  assert_true(descriptor >= 0);
+  assert_int_equal(send_all(descriptor, request, sizeof(request) - 1U), 0);
+  response = receive_http_response(descriptor);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "Connection: keep-alive"));
+  free(response);
+  assert_int_equal(send_all(descriptor, request, sizeof(request) - 1U), 0);
+  response = receive_http_response(descriptor);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "Connection: keep-alive"));
+  free(response);
+  close(descriptor);
+}
 
 static void test_liveness_survives_readiness_failure(void **state) {
   context_t *ctx=*state; char path[PATH_MAX]; char *response;
@@ -223,6 +348,82 @@ static void test_front_core_atomic_nrt_updates(void **state) {
   assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"generation\":4"));free(response);
   response=post(ctx,"/v2/search","{\"query\":\"banana\",\"mode\":\"lexical\",\"scope\":\"documents\",\"limit\":10}");
   assert_null(strstr(response,"\"id\":\"doc-live\""));free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));
+}
+
+static void *run_ingest_batch_worker(void *opaque) {
+  ingest_batch_worker_t *worker = opaque;
+  char body[512];
+  pthread_mutex_lock(&worker->gate->lock);
+  worker->gate->waiting++;
+  pthread_cond_broadcast(&worker->gate->ready);
+  while (!worker->gate->start)
+    pthread_cond_wait(&worker->gate->ready, &worker->gate->lock);
+  pthread_mutex_unlock(&worker->gate->lock);
+  if (snprintf(
+    body, sizeof(body),
+    "{\"operations\":[{\"operation\":\"upsert\","
+    "\"id\":\"batch-%zu\",\"body\":\"micro batch %zu\","
+    "\"vectors\":[[1,0]]}]}", worker->id, worker->id) <= 0)
+    return NULL;
+  worker->response = post(worker->context, "/v2/documents:batch", body);
+  return NULL;
+}
+
+static void test_concurrent_ingest_uses_one_generation(void **state) {
+  enum { WORKERS = 4 };
+  context_t *ctx = *state;
+  ingest_batch_gate_t gate;
+  ingest_batch_worker_t workers[WORKERS];
+  pthread_t threads[WORKERS];
+  YAP_V2_MANIFEST manifest;
+  char path[PATH_MAX];
+  size_t i;
+  memset(&gate, 0, sizeof(gate));
+  memset(workers, 0, sizeof(workers));
+  assert_int_equal(pthread_mutex_init(&gate.lock, NULL), 0);
+  assert_int_equal(pthread_cond_init(&gate.ready, NULL), 0);
+  for (i = 0U; i < WORKERS; i++) {
+    workers[i].context = ctx;
+    workers[i].gate = &gate;
+    workers[i].id = i;
+    assert_int_equal(pthread_create(&threads[i], NULL,
+                                    run_ingest_batch_worker,
+                                    &workers[i]), 0);
+  }
+  pthread_mutex_lock(&gate.lock);
+  while (gate.waiting != WORKERS)
+    pthread_cond_wait(&gate.ready, &gate.lock);
+  gate.start = 1;
+  pthread_cond_broadcast(&gate.ready);
+  pthread_mutex_unlock(&gate.lock);
+  for (i = 0U; i < WORKERS; i++) {
+    assert_int_equal(pthread_join(threads[i], NULL), 0);
+    assert_non_null(workers[i].response);
+    assert_non_null(strstr(workers[i].response, "200 OK"));
+    assert_non_null(strstr(workers[i].response, "\"generation\":2"));
+    free(workers[i].response);
+  }
+  assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
+                                   "manifest.yap2"), 0);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.generation, 2U);
+  assert_int_equal(manifest.segment_count, 2U);
+  YAP_V2_manifest_free(&manifest);
+  {
+    char *response = get(ctx, "/metrics");
+    assert_non_null(strstr(response, "yappod_v2_ingest_microbatches_total 1"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_requests_total 4"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_operations_total 4"));
+    assert_non_null(strstr(
+      response, "yappod_v2_ingest_published_generations_total 1"));
+    assert_non_null(strstr(
+      response, "yappod_v2_ingest_generations_saved_total 3"));
+    assert_non_null(strstr(response, "yappod_v2_ingest_max_batch_requests 4"));
+    free(response);
+  }
+  assert_int_equal(pthread_cond_destroy(&gate.ready), 0);
+  assert_int_equal(pthread_mutex_destroy(&gate.lock), 0);
 }
 
 static void test_write_token_protects_daemon_ingest(void **state) {
@@ -267,14 +468,62 @@ static void test_configured_single_worker_serves_requests(void **state) {
   assert_true(ytest_daemon_stack_alive(&ctx->stack));
 }
 
+static void test_single_reactor_is_not_blocked_by_partial_request(void **state) {
+  context_t *ctx = *state;
+  struct sockaddr_in address;
+  struct timespec start, end;
+  const char partial[] =
+    "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 100\r\n";
+  const char health[] =
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+  char *response = NULL;
+  int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  assert_true(descriptor >= 0);
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons((uint16_t)ctx->stack.core_port);
+  assert_int_equal(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr), 1);
+  assert_int_equal(connect(descriptor, (struct sockaddr *)&address,
+                           sizeof(address)), 0);
+  assert_int_equal(send(descriptor, partial, sizeof(partial) - 1U, 0),
+                   sizeof(partial) - 1U);
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port, health, &response), 0);
+  assert_int_equal(clock_gettime(CLOCK_MONOTONIC, &end), 0);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_true(elapsed_seconds(start, end) < 1.0);
+  free(response);
+  close(descriptor);
+}
+
+static void test_writer_bytes_rejects_from_headers(void **state) {
+  context_t *ctx = *state;
+  const char request[] =
+    "POST /v2/documents:batch HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 2\r\n\r\n";
+  char *response = NULL;
+  assert_int_equal(ytest_http_send_text(ctx->stack.core_port, request, &response), 0);
+  assert_non_null(strstr(response, "503 Service Unavailable"));
+  assert_non_null(strstr(response, "\"code\":\"overloaded\""));
+  free(response);
+}
+
 static void test_core_automatically_compacts_small_segments(void **state) {
   context_t *ctx = *state;
+  const char partial_update[] =
+    "POST /v2/documents:batch HTTP/1.1\r\nHost: localhost\r\n"
+    "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{";
   char *response = NULL;
   char path[PATH_MAX], body[512];
+  int partial_descriptor = connect_core(ctx->stack.core_port);
   int attempt;
   size_t i;
   uint64_t generation = 0U;
   size_t segments = 0U;
+  assert_true(partial_descriptor >= 0);
+  assert_int_equal(send_all(partial_descriptor, partial_update,
+                            sizeof(partial_update) - 1U), 0);
   for (i = 0U; i < 3U; i++) {
     assert_true(snprintf(
       body, sizeof(body),
@@ -287,6 +536,16 @@ static void test_core_automatically_compacts_small_segments(void **state) {
   }
   assert_int_equal(ytest_path_join(path, sizeof(path), ctx->env.tmp_root,
                                    "manifest.yap2"), 0);
+  usleep(1500000);
+  {
+    YAP_V2_MANIFEST manifest;
+    YAP_V2_manifest_init(&manifest);
+    assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+    assert_int_equal(manifest.generation, 4U);
+    assert_int_equal(manifest.segment_count, 4U);
+    YAP_V2_manifest_free(&manifest);
+  }
+  close(partial_descriptor);
   for (attempt = 0; attempt < 100; attempt++) {
     YAP_V2_MANIFEST manifest;
     YAP_V2_manifest_init(&manifest);
@@ -398,11 +657,15 @@ static void test_foreground_process_lifecycle(void **state) {
 
 int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_core_keeps_connection_for_sequential_requests,setup,teardown),
   cmocka_unit_test_setup_teardown(test_liveness_survives_readiness_failure,setup,teardown),
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_concurrent_ingest_uses_one_generation,setup_ingest_batch,teardown_ingest_batch),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),
   cmocka_unit_test_setup_teardown(test_memory_limit_rejects_before_body_allocation,setup_tiny_memory_limit,teardown_tiny_memory_limit),
   cmocka_unit_test_setup_teardown(test_configured_single_worker_serves_requests,setup_single_worker,teardown_single_worker),
+  cmocka_unit_test_setup_teardown(test_single_reactor_is_not_blocked_by_partial_request,setup_single_worker,teardown_single_worker),
+  cmocka_unit_test_setup_teardown(test_writer_bytes_rejects_from_headers,setup_tiny_writer_limit,teardown_tiny_writer_limit),
   cmocka_unit_test_setup_teardown(test_core_automatically_compacts_small_segments,setup_automatic_compaction,teardown_automatic_compaction),
   cmocka_unit_test_setup_teardown(test_foreground_process_lifecycle,setup_index_only,teardown_index_only)
 };return cmocka_run_group_tests(tests,NULL,NULL);}

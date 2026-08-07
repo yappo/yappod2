@@ -11,6 +11,7 @@
 | コマンドの引数を調べます | [コマンドリファレンス](command-reference.md) |
 | 入力NDJSONと索引作成を理解します | [索引作成](indexing.md) |
 | 検索方式とRAG向け取得を理解します | [検索](search.md) |
+| ANN検索のセグメント数依存、更新差分、性能測定を確認します | [ANN検索の基底スナップショットと更新差分](ann-search.md) |
 | セグメント、世代、検索中の更新反映を理解します | [セグメント、世代、検索スナップショット](segments-and-generations.md) |
 | 保存形式を確認します | [索引形式](index-format.md) |
 | 更新、検証、コンパクションを運用します | [索引の更新と保守](index-lifecycle.md) |
@@ -21,6 +22,7 @@
 | ビルド、テスト、品質確認を行います | [開発](development.md) |
 | 大規模な字句検索の性能測定結果を確認します | [100万文書索引のserver/client並列負荷ベンチマーク](large-dictionary-benchmark-report-2026-08-01.md) |
 | 内部構造と変更箇所を把握します | [アーキテクチャ](architecture.md) |
+| 複数front、水平シャード、レプリカ、分散更新の将来計画を確認します | [クラスタ構成計画](cluster-architecture-plan.md) |
 | 会話、Issue、PRでタスクを運用します | [タスク票と開発作業の運用](task-workflow.md) |
 
 サンプルの選び方は[サンプル一覧](../examples/README.md)、サンプル固有の問題は

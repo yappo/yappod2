@@ -77,16 +77,20 @@ search-webは1つのアプリケーションTOMLをYappod2サーバー、索引�
 | `core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontからcoreへ検索や更新を依頼する内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 | `front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontの待ち受け先であり、search-webサーバーの接続先です。 |
 | `front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2サーバーではなし | Yappod2サーバーを起動する場合は必須 | frontのHTTPポートです。 |
-| `worker_threads` | 整数 | 1〜1024 | `16` | 任意 | coreとfrontが、それぞれ接続処理に使用するワーカースレッド数です。 |
-| `max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreが、それぞれ処理中として受理する検索、取得、本文断片準備の件数上限です。 |
+| `front_io_threads` | 整数 | 1〜1024 | `16` | 任意 | frontの接続I/Oスレッド数です。 |
+| `core_io_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの接続I/Oスレッド数です。 |
+| `core_search_threads` | 整数 | 1〜1024 | `16` | 任意 | coreの検索compute worker数です。 |
+| `core_writer_queue_capacity` | 整数 | 1〜1024 | `1` | 任意 | coreで処理中とは別に待機できる更新数です。 |
+| `core_writer_queue_bytes` | 整数 | 1〜1073741824 | `134217728` | 任意 | coreが処理中または待機中として予約する更新本文の合計バイト上限です。 |
+| `max_inflight` | 整数 | 1〜1024 | `16` | 任意 | frontとcoreが、それぞれ処理中として受理する検索、取得、本文断片準備の件数上限です。 |
 | `max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreが処理中として保持する検索、取得、本文断片準備の本文合計バイト数です。 |
 | `request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
 | `ingest_max_body_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | 文書更新の本文上限です。 |
 | `ingest_timeout_ms` | 整数 | 1〜600000 | `60000` | 任意 | 文書更新に適用するソケットと内部HTTPの期限です。 |
-| `auto_compact_enabled` | 真偽値 | `true`、`false` | `true` | 任意 | coreによる小セグメントの自動コンパクションを有効にします。 |
+| `auto_compact_enabled` | 真偽値 | `true`、`false` | `true` | 任意 | coreによるサイズ階層型の自動コンパクションを有効にします。 |
 | `auto_compact_check_interval_ms` | 整数 | 1000〜3600000 | `30000` | 任意 | coreが自動コンパクションの要否を確認する間隔です。 |
-| `auto_compact_small_segment_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | 小セグメントとみなす全コンポーネントファイル合計の境界です。 |
-| `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 自動コンパクションを開始する隣接小セグメント数です。 |
+| `auto_compact_small_segment_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | サイズ階層の基準値です。この値の1/64を下限に4倍幅で分けます。 |
+| `auto_compact_min_small_segments` | 整数 | 2〜8 | `4` | 任意 | 同じサイズ階層で自動コンパクションを開始する隣接セグメント数です。 |
 | `write_token` | 文字列 | 16〜255バイト。空白文字と制御文字は不可 | なし | 任意 | 文書登録APIをBearer認証します。 |
 
 ### `[web]`

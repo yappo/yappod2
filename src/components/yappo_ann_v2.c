@@ -13,14 +13,27 @@ static usearch_metric_kind_t metric_kind(YAP_V2_VECTOR_METRIC metric) {
   return usearch_metric_unknown_k;
 }
 
+static usearch_index_t create_index_for_config(YAP_V2_VECTOR_METRIC metric, size_t dimensions,
+                                               size_t connectivity, size_t expansion_add,
+                                               size_t expansion_search,
+                                               usearch_error_t *error);
+
 static usearch_index_t create_index(const YAP_V2_VECTOR_SEGMENT *vectors, size_t connectivity,
                                     size_t expansion_add, size_t expansion_search,
                                     usearch_error_t *error) {
+  return create_index_for_config(vectors->metric, vectors->dimensions, connectivity,
+                                 expansion_add, expansion_search, error);
+}
+
+static usearch_index_t create_index_for_config(YAP_V2_VECTOR_METRIC metric, size_t dimensions,
+                                               size_t connectivity, size_t expansion_add,
+                                               size_t expansion_search,
+                                               usearch_error_t *error) {
   usearch_init_options_t options;
   memset(&options, 0, sizeof(options));
-  options.metric_kind = metric_kind(vectors->metric);
+  options.metric_kind = metric_kind(metric);
   options.quantization = usearch_scalar_f32_k;
-  options.dimensions = vectors->dimensions;
+  options.dimensions = dimensions;
   options.connectivity = connectivity;
   options.expansion_add = expansion_add;
   options.expansion_search = expansion_search;
@@ -61,6 +74,126 @@ void YAP_V2_ann_segment_close(YAP_V2_ANN_SEGMENT *segment) {
   if (segment == NULL) return;
   if (segment->index != NULL) usearch_free(segment->index, &error);
   memset(segment, 0, sizeof(*segment));
+}
+
+void YAP_V2_ann_index_init(YAP_V2_ANN_INDEX *index) {
+  if (index != NULL) memset(index, 0, sizeof(*index));
+}
+
+void YAP_V2_ann_index_close(YAP_V2_ANN_INDEX *index) {
+  usearch_error_t error = NULL;
+  if (index == NULL) return;
+  if (index->index != NULL) usearch_free(index->index, &error);
+  memset(index, 0, sizeof(*index));
+}
+
+int YAP_V2_ann_index_create(YAP_V2_VECTOR_METRIC metric, size_t dimensions,
+                            size_t capacity, size_t connectivity,
+                            size_t expansion_add, size_t expansion_search,
+                            YAP_V2_ANN_INDEX *index) {
+  usearch_error_t error = NULL;
+  usearch_index_t created;
+  if (index == NULL || index->index != NULL || dimensions == 0U || capacity == 0U ||
+      metric_kind(metric) == usearch_metric_unknown_k || connectivity == 0U ||
+      expansion_add == 0U || expansion_search == 0U)
+    return YAP_ANN_INVALID_ARGUMENT;
+  created = create_index_for_config(metric, dimensions, connectivity, expansion_add,
+                                    expansion_search, &error);
+  if (created == NULL || error != NULL) return YAP_ANN_BACKEND_ERROR;
+  usearch_reserve(created, capacity, &error);
+  if (error != NULL) {
+    usearch_free(created, &error);
+    return YAP_ANN_ALLOCATION_FAILED;
+  }
+  index->index = created;
+  index->metric = metric;
+  index->dimensions = dimensions;
+  return YAP_ANN_OK;
+}
+
+int YAP_V2_ann_index_add(YAP_V2_ANN_INDEX *index, uint64_t key, const float *vector) {
+  usearch_error_t error = NULL;
+  if (index == NULL || index->index == NULL || vector == NULL)
+    return YAP_ANN_INVALID_ARGUMENT;
+  usearch_add(index->index, (usearch_key_t)key, vector, usearch_scalar_f32_k, &error);
+  if (error != NULL) return YAP_ANN_BACKEND_ERROR;
+  index->entry_count++;
+  return YAP_ANN_OK;
+}
+
+int YAP_V2_ann_index_save(const YAP_V2_ANN_INDEX *index, const char *path) {
+  usearch_error_t error = NULL;
+  if (index == NULL || index->index == NULL || path == NULL || index->entry_count == 0U)
+    return YAP_ANN_INVALID_ARGUMENT;
+  usearch_save(index->index, path, &error);
+  return error == NULL ? YAP_ANN_OK : YAP_ANN_IO_ERROR;
+}
+
+int YAP_V2_ann_index_view(const char *path, YAP_V2_VECTOR_METRIC metric,
+                          size_t dimensions, size_t expected_count,
+                          size_t expansion_search, YAP_V2_ANN_INDEX *index) {
+  usearch_error_t error = NULL;
+  usearch_init_options_t metadata;
+  usearch_index_t viewed;
+  size_t actual_dimensions, actual_count;
+  if (path == NULL || index == NULL || index->index != NULL || dimensions == 0U ||
+      expected_count == 0U || expansion_search == 0U ||
+      metric_kind(metric) == usearch_metric_unknown_k)
+    return YAP_ANN_INVALID_ARGUMENT;
+  memset(&metadata, 0, sizeof(metadata));
+  usearch_metadata(path, &metadata, &error);
+  if (error != NULL) return YAP_ANN_IO_ERROR;
+  if (metadata.metric_kind != metric_kind(metric) ||
+      metadata.quantization != usearch_scalar_f32_k || metadata.dimensions != dimensions)
+    return YAP_ANN_CONFLICT;
+  viewed = create_index_for_config(metric, dimensions, 0U, 0U, expansion_search, &error);
+  if (viewed == NULL || error != NULL) return YAP_ANN_BACKEND_ERROR;
+  usearch_view(viewed, path, &error);
+  if (error != NULL) {
+    usearch_free(viewed, &error);
+    return YAP_ANN_IO_ERROR;
+  }
+  actual_dimensions = usearch_dimensions(viewed, &error);
+  actual_count = usearch_size(viewed, &error);
+  if (error != NULL || actual_dimensions != dimensions || actual_count != expected_count) {
+    usearch_free(viewed, &error);
+    return YAP_ANN_CONFLICT;
+  }
+  usearch_change_expansion_search(viewed, expansion_search, &error);
+  if (error != NULL) {
+    usearch_free(viewed, &error);
+    return YAP_ANN_BACKEND_ERROR;
+  }
+  index->index = viewed;
+  index->metric = metric;
+  index->dimensions = dimensions;
+  index->entry_count = expected_count;
+  return YAP_ANN_OK;
+}
+
+int YAP_V2_ann_index_search(const YAP_V2_ANN_INDEX *index, const float *query,
+                            size_t dimensions, size_t top_k, uint64_t *keys,
+                            size_t key_capacity, size_t *key_count) {
+  usearch_key_t *backend_keys;
+  usearch_distance_t *distances;
+  usearch_error_t error = NULL;
+  size_t found, i;
+  if (index == NULL || index->index == NULL || query == NULL || keys == NULL ||
+      key_count == NULL || dimensions != index->dimensions || top_k == 0U ||
+      key_capacity < top_k)
+    return key_capacity < top_k ? YAP_VECTOR_BUFFER_TOO_SMALL : YAP_VECTOR_INVALID_ARGUMENT;
+  backend_keys = malloc(sizeof(*backend_keys) * top_k);
+  distances = malloc(sizeof(*distances) * top_k);
+  if (backend_keys == NULL || distances == NULL) {
+    free(backend_keys); free(distances); return YAP_VECTOR_ALLOCATION_FAILED;
+  }
+  found = usearch_search(index->index, query, usearch_scalar_f32_k, top_k,
+                         backend_keys, distances, &error);
+  free(distances);
+  if (error != NULL) { free(backend_keys); return YAP_VECTOR_INVALID_ARGUMENT; }
+  for (i = 0U; i < found; i++) keys[i] = (uint64_t)backend_keys[i];
+  free(backend_keys); *key_count = found;
+  return YAP_VECTOR_OK;
 }
 
 int YAP_V2_ann_build_save(const char *path, const YAP_V2_VECTOR_SEGMENT *vectors,

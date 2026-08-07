@@ -105,25 +105,48 @@ Yappod2サーバーはログファイルを追記モードで開きます。フ�
 
 ## 同時処理とタイムアウト
 
-coreとfrontは、`[daemon].worker_threads`で指定した数のワーカースレッドをそれぞれ作ります。
-デフォルトは16です。両プロセスへ同じ値を適用し、接続を受け付けた一つのworkerが一つのHTTP要求を
-処理します。`[daemon]`の関連する設定は次の意味です。
+frontは`[daemon].front_io_threads`本の接続I/Oスレッドを作ります。coreは1本のacceptorと
+`core_io_threads`個のlibevent reactorを作り、接続をround-robinで割り当てます。reactorは増分受信、
+本文上限、送受信だけを担当し、検索中や更新中に待機しません。coreは別に`core_search_threads`本の
+検索compute workerと単一writer threadを作ります。I/O reactorと検索compute workerの既定値は
+それぞれ16です。`[daemon]`の関連する設定は次の意味です。
+
+frontの各I/Oスレッドは専用のcore HTTPクライアントを持ち、HTTP/1.1接続を順次再利用します。したがって、
+定常時のfrontからcoreへの接続数は最大で概ね`front_io_threads`本です。coreが接続を閉じた場合は次の
+要求時に再接続します。
 
 | キー | 制限する対象 |
 |---|---|
-| `worker_threads` | coreとfrontがそれぞれ作成するワーカースレッド数です。 |
+| `front_io_threads` | frontが作成する接続I/Oスレッド数です。 |
+| `core_io_threads` | coreが作成する接続I/Oスレッド数です。 |
+| `core_search_threads` | coreが作成する検索compute worker数です。 |
+| `core_writer_queue_capacity` | frontとcoreで、writer処理中とは別に待機できる更新数です。 |
+| `core_writer_queue_bytes` | coreが処理中または待機中として予約できる更新本文の合計バイト数です。 |
 | `max_inflight` | 同時に受理する検索、取得、本文断片準備の件数です。 |
 | `max_inflight_bytes` | 処理中の検索、取得、本文断片準備の本文合計バイト数です。 |
 | `request_timeout_ms` | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
 | `ingest_max_body_bytes` | 文書更新1件の本文上限です。デフォルト64 MiB、最大256 MiBです。 |
 | `ingest_timeout_ms` | 文書更新に適用するソケットと内部HTTPの期限です。デフォルト60000ミリ秒です。 |
 
-実際に同時処理できる通常要求数は、ワーカースレッド数と`max_inflight`の小さい方を超えません。
+実際に同時検索計算できる要求数は、coreの検索compute worker数と`max_inflight`のうち小さい値を
+超えません。coreのreactor数は接続数ではなく、同時に進めるソケットI/O callbackの分散数です。
 `max_inflight`または`max_inflight_bytes`を超えた処理は`503 overloaded`になります。
-文書更新は通常要求と別の1件分の処理枠を使うため、更新待ちが検索用の処理枠を占有しません。
-同時に2件目の更新が到着した場合は`503 overloaded`です。要求本文1件の上限は、検索、取得、
-本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
+文書更新は検索executorと別のwriter executorを使うため、更新待ちが検索用の処理枠を占有しません。
+frontとcoreは処理中の1件とは別に`core_writer_queue_capacity`件まで待機させます。単一writerは最初の要求から
+最大10ミリ秒待ち、合計10000操作までを同じセグメント集合とmanifest世代へまとめます。同じ文書IDを含む
+要求どうしは入力順を変えないよう別の世代へ分けます。ただし処理中と待機中の更新本文合計は
+`core_writer_queue_bytes`を超えられず、本文確保前に予約できなければ拒否します。要求本文1件の上限は、検索、
+取得、本文断片準備では1 MiB、文書更新では`ingest_max_body_bytes`です。
 coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限とします。
+
+ANN再構築と自動コンパクションは一つの保守スレッドで直列実行します。検索または更新が処理中なら新しい
+保守jobの開始を延期し、250ミリ秒間隔で2回連続して処理枠が空いた後に開始します。macOSでは保守スレッドを
+utility QoSで実行します。開始済みの保守jobは途中停止しないため、非常に大きなANN再構築やコンパクションが
+検索と重なった場合は、そのjobが終わるまでCPU、メモリー、ディスクI/Oを共有します。
+
+`SIGTERM`または`SIGINT`を受けたcoreは新しい接続の受付を止め、writer executorが受理済みの更新を
+microbatch単位でdrainしてから検索executorとreactorを閉じます。queueへ入る前に過負荷拒否した要求は対象外です。
+強制終了でdrainできなかった場合でも、同期済み`update.wal`は次回起動時に回復します。
 
 タイムアウト値を増やす前に、coreへの接続、索引の大きさ、同時実行数、クライアント切断、ディスクI/Oを確認します。search-webの`yappod_timeout_ms`、起動待ちの`startup_timeout_ms`、LLMや埋め込みのタイムアウトは別の待ち時間です。
 
@@ -131,7 +154,7 @@ coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限としま�
 
 `yappo_makeindex update`または`POST /v2/documents:batch`が新しい世代を公開すると、coreは最大約1秒後の定期確認で読み替えます。HTTP更新の場合は更新直後にも再読み込みを試みます。更新成功レスポンスの世代と`/health/ready`または`/metrics`の世代を比較すると、検索側への反映を確認できます。
 
-再読み込み前に開始した検索は旧世代を使い続けます。これは異常ではありません。新しい世代を読み込めない場合、coreは旧スナップショットを維持し、HTTP更新では`503 reload_failed`を返す場合があります。この応答は「更新が公開されていない」という意味ではないため、マニフェストと`verify`を確認してください。
+再読み込み前に開始した検索は旧世代を使い続けます。候補runtimeは検索と並行して構築され、公開時には現在runtimeへのポインタだけを短時間で交換します。旧世代の資源は実行中の検索が参照を解放した後に閉じます。新しい世代を読み込めない場合、coreは旧スナップショットを維持し、HTTP更新では`503 reload_failed`を返す場合があります。この応答は「更新が公開されていない」という意味ではないため、マニフェストと`verify`を確認してください。
 
 再読み込みは、セグメントの追記だけでなく、コンパクションによる削除、置換、並べ替えにも対応します。新旧マニフェストをセグメントIDの索引で照合し、descriptorが完全に一致するセグメントの検索用ハンドルだけを再利用します。新しいセグメントだけを開き、旧世代だけに残るセグメントは切り替え成功後に閉じるため、照合回数はセグメント数に比例します。
 
@@ -139,10 +162,10 @@ coreからfrontが受け取る内部HTTP応答本文は16 MiBを上限としま�
 
 コンパクションは`compaction.lock`で別のコンパクションと直列化し、対象範囲の確定時と公開時だけ更新と同じ`writer.lock`を使います。セグメント構築中も更新は実行できますが、CPU、メモリー、ディスク入出力は共有します。実行前に空き容量を確認してください。新しいセグメントを作ってから旧セグメントを回収するため、処理中は選択範囲と再構築分の両方を置ける容量が必要です。
 
-coreは既定で30秒ごとにマニフェストを確認します。全コンポーネントファイルの合計が64 MiB未満の
-小セグメントが隣接して4個以上になると、検索処理や毎秒のマニフェスト再読み込みとは別の保守スレッドで
-1回コンパクションを実行します。正常な大きさのセグメントだけなら世代を増やしません。次回確認
-でも小セグメントが閾値以上残っていれば、最大8個ずつ段階的に処理します。判定値は
+coreは既定で30秒ごとにマニフェストを確認します。全コンポーネントファイルの合計を1 MiB以上の4倍幅で
+サイズ階層へ分け、同じ階層のセグメントが隣接して4個以上になると、保守スレッドで1回コンパクションを
+実行します。一回に最大8個、合計512 MiBまでを選ぶため、小さい更新をまずまとめ、その出力が同じ階層に
+蓄積すれば次の大きさへ段階的にまとめます。異なる階層をまたぐ範囲は選びません。判定値は
 `[daemon].auto_compact_*`で変更でき、計画保守中は`auto_compact_enabled = false`で停止できます。
 
 ```sh
@@ -152,7 +175,8 @@ coreは既定で30秒ごとにマニフェストを確認します。全コン�
 `/metrics`の`yappod_v2_compaction_state`と`yappod_v2_compaction_generation`で状態を確認できます。`interrupted`や`failed`の場合は、索引とログを保存してから`verify`を実行します。詳細は[索引の更新と保守](index-lifecycle.md)を参照してください。
 
 断片化の確認には、世代数ではなく`yappod_v2_manifest_segments`、
-`yappod_v2_small_segment_run`、`yappod_v2_auto_compaction_needed`を使います。
+`yappod_v2_small_segment_run`、`yappod_v2_auto_compaction_needed`を使います。`small_segment_run`は
+基準値未満だけの診断値であり、中間サイズ階層が満杯の場合は0でも`auto_compaction_needed`が1になります。
 `auto_compaction_needed`が1のまま次の確認間隔を複数回過ぎた場合は、`compaction_state`、coreの
 エラーログ、空き容量を確認します。文書記録数には古い版が含まれるため、利用者から見える文書数と
 同じ値として扱わないでください。

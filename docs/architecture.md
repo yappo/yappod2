@@ -33,6 +33,11 @@
 [frontとcoreの通信仕様](yappod-core-protocol.md)、
 [監視とメトリクス](observability.md)です。
 
+将来のクラスタ化は、この互換性境界を維持する変更ではありません。クラスタ用の公開API、設定、
+内部protocol、catalog、索引形式は新しい契約として一括して導入し、現在のstandalone形式を読むfallback、
+旧APIのalias、新旧nodeの混在運転は実装しません。切り替え方針は
+[クラスタ構成計画](cluster-architecture-plan.md)を参照してください。
+
 ### 変更可能なC契約
 
 すべてのCヘッダー、型、構造体の形、関数、シンボル、ソース互換性、ABIは内部契約です。
@@ -64,12 +69,28 @@ flowchart LR
   新しいsegment群へ置き換えます。
 - `yappod_front`は公開HTTP、認証、処理上限、運用endpointを担当します。検索、取得、登録は
   `yappod_core`へ転送します。
-- `yappod_core`は内部HTTPを検証し、索引runtimeへ検索、取得、更新を依頼します。
-  独立した保守スレッドはマニフェストdescriptorから小セグメント数を定期確認し、設定した閾値を
-  超えた場合だけ範囲コンパクションとruntime再読み込みを実行します。
+- `yappod_core`は内部HTTPを検証し、1本のacceptorから複数のlibevent reactorへ接続を分配します。
+  reactorは非blockingの増分送受信だけを行い、容量固定の検索executorまたは単一writer executorへ
+  処理を渡します。writerは同時到着したHTTP更新を最大10ミリ秒、合計10000操作まで一つの公開世代へ
+  集約します。reactor数、検索compute worker数、更新待ち件数と本文byte数は独立して設定できます。
+  検索は不変runtimeを要求単位で参照し、更新後は変更のないsegment資源を共有した候補runtimeを構築して、
+  短時間のポインタ交換で新世代を公開します。
+  一つの保守schedulerはforegroundの検索・更新がないことを確認してANN再構築とcompactionを直列実行します。
+  マニフェストdescriptorを4倍幅のサイズ階層へ分け、同じ階層の隣接セグメント数が閾値を超えた場合だけ
+  範囲コンパクションとruntime再読み込みを実行します。frontの各I/O workerは専用の
+  libcurlハンドルを持ち、coreとのHTTP/1.1接続を要求間で再利用します。後続状態は
+  [単一端末runtimeの並列実行設計](single-node-runtime-design.md)で管理します。
 
 公開HTTPと内部HTTPの正確なmethod、path、header、状態コードは
 [frontとcoreの通信仕様](yappod-core-protocol.md)を参照してください。
+
+現在の構成を複数front、複数core、水平シャード、レプリカへ拡張する将来設計は
+[クラスタ構成計画](cluster-architecture-plan.md)に分離しています。同文書の機能は未実装であり、
+現在の動作を説明するものではありません。
+
+水平シャードの前に、一台の端末でI/O待ち、検索計算、更新、保守処理を分離する実行構成は
+[単一端末runtimeの並列実行設計](single-node-runtime-design.md)にまとめています。単一シャードの既定は
+一つのcoreプロセスと複数スレッドであり、同じ索引を開くcoreプロセスをCPU使用率のために増やしません。
 
 ## 内部ライブラリと依存方向
 
@@ -136,9 +157,11 @@ flowchart LR
 ```
 
 `server`は要求を内部の検索条件へ変換し、現在のsnapshotと各segmentのcomponentを`query`へ
-渡します。`query`は検索方式ごとの候補を作り、可視性、filter、score、hybrid統合を適用します。
+渡します。ベクトル検索では、runtimeが所有する基底ANNを1回検索し、基底作成後の更新差分だけを
+segment単位で追加検索します。`query`は検索方式ごとの候補を作り、可視性、filter、score、hybrid統合を適用します。
 `server`が文書情報、snippet、cursorを応答JSONへ整形します。検索意味論は
-[検索](search.md)を参照してください。
+[検索](search.md)、基底ANNの所有と再構築は
+[ANN検索の基底スナップショットと更新差分](ann-search.md)を参照してください。
 
 ### retrieve
 

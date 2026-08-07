@@ -24,19 +24,23 @@ afterEach(async () => {
 describe("web config", () => {
   it("loads the Web startup timeout independently from the yappod request timeout", async () => {
     const path = await configFile(
-      "[daemon]\nworker_threads=3\n[web]\nyappod_timeout_ms=5000\nstartup_timeout_ms=30000\n",
+      "[daemon]\ncore_search_threads=3\n[web]\nyappod_timeout_ms=5000\nstartup_timeout_ms=30000\n",
     );
     await expect(loadWebConfig(path)).resolves.toMatchObject({
-      daemon: { workerThreads: 3 },
+      daemon: { coreSearchThreads: 3 },
       web: { yappodTimeoutMs: 5000, startupTimeoutMs: 30000 },
     });
   });
 
-  it("defaults and validates the daemon worker count", async () => {
+  it("defaults and validates the daemon execution counts", async () => {
     const defaults = await configFile("[daemon]\n");
     await expect(loadWebConfig(defaults)).resolves.toMatchObject({
       daemon: {
-        workerThreads: 16,
+        frontIoThreads: 16,
+        coreIoThreads: 16,
+        coreSearchThreads: 16,
+        coreWriterQueueCapacity: 1,
+        coreWriterQueueBytes: 134217728,
         ingestMaxBodyBytes: 67108864,
         ingestTimeoutMs: 60000,
         autoCompactEnabled: true,
@@ -45,9 +49,9 @@ describe("web config", () => {
         autoCompactMinSmallSegments: 4,
       },
     });
-    const invalid = await configFile("[daemon]\nworker_threads=1025\n");
+    const invalid = await configFile("[daemon]\ncore_search_threads=1025\n");
     await expect(loadWebConfig(invalid)).rejects.toThrow(
-      "daemon.worker_threads must be an integer from 1 to 1024",
+      "daemon.core_search_threads must be an integer from 1 to 1024",
     );
   });
 

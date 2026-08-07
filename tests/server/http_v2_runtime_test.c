@@ -128,6 +128,29 @@ static void assert_runtime_search_id(YAP_V2_HTTP_RUNTIME *runtime,
   yyjson_doc_free(document);
 }
 
+static void assert_runtime_vector_id(YAP_V2_HTTP_RUNTIME *runtime,
+                                     float first, float second,
+                                     const char *filter,
+                                     const char *expected_id,
+                                     uint64_t expected_generation) {
+  char request[768];
+  yyjson_doc *document;
+  yyjson_val *root, *result;
+  assert_true(snprintf(
+    request, sizeof(request),
+    "{\"vector\":[%.3f,%.3f],\"mode\":\"vector\",\"scope\":\"documents\","
+    "\"limit\":1%s%s}", first, second, filter == NULL ? "" : ",\"filter\":",
+    filter == NULL ? "" : filter) > 0);
+  document = runtime_execute(runtime, YAP_V2_HTTP_SEARCH, request, 200);
+  root = yyjson_doc_get_root(document);
+  assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "generation")),
+                   expected_generation);
+  result = yyjson_arr_get_first(yyjson_obj_get(root, "results"));
+  assert_non_null(result);
+  assert_string_equal(yyjson_get_str(yyjson_obj_get(result, "id")), expected_id);
+  yyjson_doc_free(document);
+}
+
 static void copy_json_string(char *output, size_t capacity, yyjson_val *value) {
   const char *text;
   size_t length;
@@ -295,10 +318,162 @@ static void test_runtime_reload_reuses_reorders_and_replaces_segments(void **sta
   ytest_env_destroy(&env);
 }
 
+static void test_ann_base_delta_update_delete_and_rebuild(void **state) {
+  ytest_env_t env;
+  YAP_V2_HTTP_RUNTIME runtime;
+  YAP_V2_OPERATIONAL_STATE operational;
+  char request[768];
+  size_t i;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_http_runtime_init(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_open(&runtime, env.tmp_root), YAP_V2_OK);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_base_generation, 1U);
+  assert_int_equal(operational.ann_delta_segments, 0U);
+
+  for (i = 0U; i < 9U; i++) {
+    yyjson_doc *document;
+    assert_true(snprintf(
+      request, sizeof(request),
+      "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-live\","
+      "\"url\":\"https://e.test/live\",\"title\":\"Live %zu\","
+      "\"body\":\"live version %zu\",\"metadata\":{\"category\":\"fruit\"},"
+      "\"vectors\":[[0.6,0.8]]}]}", i, i) > 0);
+    document = runtime_execute(&runtime, YAP_V2_HTTP_INGEST, request, 200);
+    yyjson_doc_free(document);
+  }
+  assert_runtime_vector_id(
+    &runtime, 0.6f, 0.8f,
+    "{\"eq\":{\"field\":\"category\",\"value\":\"fruit\"}}",
+    "doc-live", 10U);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_base_generation, 1U);
+  assert_int_equal(operational.ann_delta_segments, 9U);
+  assert_int_equal(operational.ann_base_search_calls, 1U);
+  assert_int_equal(operational.ann_delta_search_calls, 9U);
+  assert_int_equal(YAP_V2_http_runtime_maintain_ann(&runtime), YAP_V2_OK);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_base_generation, 10U);
+  assert_int_equal(operational.ann_base_vectors, 3U);
+  assert_int_equal(operational.ann_delta_segments, 0U);
+  assert_true(operational.ann_rebuilds >= 2U);
+  assert_runtime_vector_id(&runtime, 0.6f, 0.8f, NULL, "doc-live", 10U);
+
+  {
+    yyjson_doc *document = runtime_execute(
+      &runtime, YAP_V2_HTTP_INGEST,
+      "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-live\","
+      "\"url\":\"https://e.test/live\",\"title\":\"Live tech\","
+      "\"body\":\"latest live version\",\"metadata\":{\"category\":\"tech\"},"
+      "\"vectors\":[[0.8,0.6]]}]}", 200);
+    yyjson_doc_free(document);
+  }
+  assert_runtime_vector_id(&runtime, 0.8f, 0.6f, NULL, "doc-live", 11U);
+  assert_runtime_vector_id(
+    &runtime, 0.8f, 0.6f,
+    "{\"eq\":{\"field\":\"category\",\"value\":\"fruit\"}}",
+    "doc-fruit", 11U);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_delta_segments, 1U);
+  assert_true(operational.ann_candidates_rejected > 0U);
+
+  {
+    yyjson_doc *document = runtime_execute(
+      &runtime, YAP_V2_HTTP_INGEST,
+      "{\"operations\":[{\"operation\":\"delete\",\"id\":\"doc-live\"}]}",
+      200);
+    yyjson_doc_free(document);
+  }
+  assert_runtime_vector_id(&runtime, 0.8f, 0.6f, NULL, "doc-fruit", 12U);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_delta_segments, 2U);
+  assert_true(operational.ann_candidates_rejected > 0U);
+
+  YAP_V2_http_runtime_close(&runtime);
+  YAP_V2_http_runtime_init(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_open(&runtime, env.tmp_root), YAP_V2_OK);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational), YAP_V2_OK);
+  assert_int_equal(operational.ann_base_generation, 10U);
+  assert_int_equal(operational.ann_delta_segments, 2U);
+  assert_int_equal(operational.ann_rebuilds, 0U);
+  assert_runtime_vector_id(&runtime, 0.8f, 0.6f, NULL, "doc-fruit", 12U);
+  YAP_V2_http_runtime_close(&runtime);
+  ytest_env_destroy(&env);
+}
+
+static void test_ingest_batch_publishes_one_generation(void **state) {
+  static const char first[] =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-batch-a\","
+    "\"body\":\"batch alpha\",\"vectors\":[[1,0]]}]}";
+  static const char second[] =
+    "{\"operations\":[{\"operation\":\"upsert\",\"id\":\"doc-batch-b\","
+    "\"body\":\"batch beta\",\"vectors\":[[0,1]]}]}";
+  ytest_env_t env;
+  YAP_V2_HTTP_RUNTIME runtime;
+  YAP_V2_HTTP_INGEST_ITEM items[2];
+  YAP_V2_OPERATIONAL_STATE operational;
+  YAP_V2_MANIFEST manifest;
+  char path[PATH_MAX];
+  size_t i;
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_http_runtime_init(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_open(&runtime, env.tmp_root), YAP_V2_OK);
+  memset(items, 0, sizeof(items));
+  items[0].body = (const unsigned char *)first;
+  items[0].body_bytes = sizeof(first) - 1U;
+  items[1].body = (const unsigned char *)second;
+  items[1].body_bytes = sizeof(second) - 1U;
+  assert_int_equal(YAP_V2_http_runtime_execute_ingest_batch(
+    &runtime, items, 2U), YAP_V2_OK);
+  for (i = 0U; i < 2U; i++) {
+    yyjson_doc *document;
+    yyjson_val *root;
+    assert_int_equal(items[i].result, 0);
+    assert_int_equal(items[i].http_status, 200);
+    document = yyjson_read(items[i].response, items[i].response_bytes, 0U);
+    assert_non_null(document);
+    root = yyjson_doc_get_root(document);
+    assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "generation")), 2U);
+    assert_int_equal(yyjson_get_uint(yyjson_obj_get(root, "accepted")), 1U);
+    yyjson_doc_free(document);
+    free(items[i].response);
+  }
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root,
+                                   "manifest.yap2"), 0);
+  YAP_V2_manifest_init(&manifest);
+  assert_int_equal(YAP_V2_manifest_load(path, &manifest), YAP_V2_OK);
+  assert_int_equal(manifest.generation, 2U);
+  assert_int_equal(manifest.segment_count, 2U);
+  YAP_V2_manifest_free(&manifest);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational),
+                   YAP_V2_OK);
+  assert_int_equal(operational.ingest_microbatches, 1U);
+  assert_int_equal(operational.ingest_requests, 2U);
+  assert_int_equal(operational.ingest_operations, 2U);
+  assert_int_equal(operational.ingest_published_generations, 1U);
+  assert_int_equal(operational.ingest_generations_saved, 1U);
+  assert_int_equal(operational.ingest_max_batch_requests, 2U);
+  assert_int_equal(operational.ingest_max_batch_operations, 2U);
+  YAP_V2_http_runtime_record_maintenance_deferral(&runtime);
+  assert_int_equal(YAP_V2_http_runtime_state(&runtime, &operational),
+                   YAP_V2_OK);
+  assert_int_equal(operational.maintenance_foreground_deferrals, 1U);
+  assert_runtime_search_id(&runtime, "alpha", "doc-batch-a", 2U);
+  assert_runtime_search_id(&runtime, "beta", "doc-batch-b", 2U);
+  YAP_V2_http_runtime_close(&runtime);
+  ytest_env_destroy(&env);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_real_search_and_retrieve_runtime),
-    cmocka_unit_test(test_runtime_reload_reuses_reorders_and_replaces_segments)
+    cmocka_unit_test(test_runtime_reload_reuses_reorders_and_replaces_segments),
+    cmocka_unit_test(test_ingest_batch_publishes_one_generation),
+    cmocka_unit_test(test_ann_base_delta_update_delete_and_rebuild)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

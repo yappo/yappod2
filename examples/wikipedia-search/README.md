@@ -75,7 +75,7 @@ cp examples/wikipedia-search/wikipedia-search.example.toml \
 | `daemon.core_port` | 整数 | 1〜65535 | search-webでは`18401`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontからcoreへ接続する内部HTTP/1.1ポートです。外部クライアントには公開しません。 |
 | `daemon.front_host` | 文字列 | 1〜255バイトのホスト名またはIPアドレス | search-webでは`127.0.0.1`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontの待ち受け先と、search-webサーバーからの接続先です。 |
 | `daemon.front_port` | 整数 | 1〜65535 | search-webでは`18400`。Yappod2サーバーではなし | Yappod2サーバーでは必須 | frontのHTTPポートです。 |
-| `daemon.max_inflight` | 整数 | 1〜1024 | `4` | 任意 | frontとcoreがそれぞれ保持する検索、取得、本文断片準備の処理中件数上限です。 |
+| `daemon.max_inflight` | 整数 | 1〜1024 | `16` | 任意 | frontとcoreがそれぞれ保持する検索、取得、本文断片準備の処理中件数上限です。 |
 | `daemon.max_inflight_bytes` | 整数 | 1〜1073741824 | `4194304` | 任意 | frontとcoreがそれぞれ保持する検索、取得、本文断片準備の処理中データ量上限です。 |
 | `daemon.request_timeout_ms` | 整数 | 1〜60000 | `5000` | 任意 | 検索、取得、本文断片準備に適用するソケットと内部HTTPの期限です。 |
 | `daemon.ingest_max_body_bytes` | 整数 | 1〜268435456 | `67108864` | 任意 | 文書更新の本文上限です。 |

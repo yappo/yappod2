@@ -58,6 +58,30 @@ curl -fsS http://127.0.0.1:18400/health/ready
     "model_id": "",
     "dimensions": 0
   },
+  "ann": {
+    "base_generation": 3,
+    "base_vectors": 0,
+    "delta_segments": 0,
+    "missing_base_segments": 0,
+    "base_search_calls": 0,
+    "delta_search_calls": 0,
+    "retry_search_calls": 0,
+    "candidates_examined": 0,
+    "candidates_rejected": 0,
+    "rebuilds": 0,
+    "rebuild_failures": 0
+  },
+  "update_pipeline": {
+    "microbatches": 12,
+    "requests": 40,
+    "operations": 310,
+    "published_generations": 15,
+    "generations_saved": 25,
+    "max_batch_requests": 8,
+    "max_batch_operations": 96,
+    "wal_recoveries": 0,
+    "maintenance_foreground_deferrals": 18
+  },
   "compaction": {
     "state": "idle",
     "generation": 0,
@@ -81,12 +105,23 @@ curl -fsS http://127.0.0.1:18400/health/ready
 | `segment_health.largest_segment_bytes` | 1セグメント内のコンポーネントファイルサイズ合計の最大値です。 |
 | `segment_health.small_segment_run` | 設定したサイズ未満のセグメントがマニフェスト上で連続する最大個数です。 |
 | `segment_health.small_segment_threshold_bytes` | 小セグメント判定に使う`auto_compact_small_segment_bytes`です。 |
-| `segment_health.auto_compaction_trigger_segments` | 自動実行を開始する`auto_compact_min_small_segments`です。 |
+| `segment_health.auto_compaction_trigger_segments` | 同じサイズ階層で自動実行を開始する`auto_compact_min_small_segments`です。 |
 | `segment_health.auto_compaction_enabled` | coreの自動コンパクション設定が有効かを表します。 |
-| `segment_health.auto_compaction_needed` | 現在のdescriptor構造が設定した自動実行条件を満たすかを表します。実行中かどうかは`compaction.state`で確認します。 |
+| `segment_health.auto_compaction_needed` | 同じ4倍幅のサイズ階層に属する隣接セグメントが設定個数に達したかを表します。`small_segment_run`が0でも中間階層により1になる場合があります。実行中かどうかは`compaction.state`で確認します。 |
 | `embedding.state` | ベクトル対応索引なら`precomputed_ready`、語彙索引なら`disabled`です。外部埋め込みサーバーの稼働状態ではありません。 |
 | `embedding.model_id` | 索引`config.toml`に保存されたベクトルモデルの識別子です。 |
 | `embedding.dimensions` | 索引に保存されたベクトルの次元数です。 |
+| `ann.base_generation` | 基底ANNを作ったマニフェスト世代です。ベクトル無効時は0です。 |
+| `ann.base_vectors` | 基底ANNが保持する、その基底世代で可視だった本文断片ベクトル数です。 |
+| `ann.delta_segments` | 基底に含まれず、セグメント単位で追加検索する現行セグメント数です。 |
+| `ann.missing_base_segments` | 基底にはあるものの、現行マニフェストから外れたセグメント数です。 |
+| `ann.base_search_calls` | core起動後に基底ANNを検索した累計回数です。再試行分も含みます。 |
+| `ann.delta_search_calls` | core起動後に更新差分セグメントのANNを検索した累計回数です。 |
+| `ann.retry_search_calls` | 可視性または絞り込みで候補が不足し、取得数を増やした累計回数です。 |
+| `ann.candidates_examined` | ANN候補を現行スナップショットへ照合した累計件数です。 |
+| `ann.candidates_rejected` | 古い版、削除、絞り込みなどで除外したANN候補の累計件数です。 |
+| `ann.rebuilds` | 起動時のキャッシュ再生成を含む、基底ANN構築の成功回数です。 |
+| `ann.rebuild_failures` | 基底ANN再構築の失敗回数です。 |
 | `compaction.state` | `idle`、`running`、`succeeded`、`failed`、`interrupted`、`unknown`のいずれかです。 |
 | `compaction.generation` | `compaction.state`が指す世代です。 |
 | `compaction.updated_at_unix` | 状態ファイルを更新したUnix秒です。 |
@@ -214,13 +249,31 @@ frontがディスク上のマニフェストから読んだ現在の世代です
 | `yappod_v2_largest_segment_bytes` | セグメント単位の記録サイズ合計の最大値です。 |
 | `yappod_v2_small_segment_run` | 小セグメントが隣接する最大個数です。 |
 | `yappod_v2_small_segment_threshold_bytes` | 小セグメント判定のサイズ境界です。 |
-| `yappod_v2_auto_compaction_trigger_segments` | 自動コンパクションを開始する連続個数です。 |
+| `yappod_v2_auto_compaction_trigger_segments` | 同じサイズ階層で自動コンパクションを開始する連続個数です。 |
 | `yappod_v2_auto_compaction_enabled` | 自動コンパクションが有効なら1、無効なら0です。 |
 | `yappod_v2_auto_compaction_needed` | 現在の構造が自動実行条件を満たすなら1です。 |
 
 世代数だけでは断片化を判断できません。更新直後に世代が増えるのは正常です。
-`yappod_v2_manifest_segments`と`yappod_v2_small_segment_run`が自動実行後も下がらない場合に、
+`yappod_v2_manifest_segments`と`yappod_v2_auto_compaction_needed`が自動実行後も下がらない場合に、
 コンパクション状態、空き容量、coreのエラーログを確認してください。
+
+### 更新pipeline
+
+| メトリクス | 意味 |
+|---|---|
+| `yappod_v2_ingest_microbatches_total` | coreのwriterが処理したmicrobatch数です。 |
+| `yappod_v2_ingest_requests_total` | microbatchへ入ったHTTP更新要求数です。 |
+| `yappod_v2_ingest_operations_total` | 構文検証に成功してmicrobatchへ入った更新操作数です。 |
+| `yappod_v2_ingest_published_generations_total` | writerが公開したmanifest世代数です。 |
+| `yappod_v2_ingest_generations_saved_total` | microbatchにより「要求ごとに一世代」の場合より減らせた世代数です。 |
+| `yappod_v2_ingest_max_batch_requests` | 起動後に観測した一microbatchの最大要求数です。 |
+| `yappod_v2_ingest_max_batch_operations` | 起動後に観測した一microbatchの最大操作数です。 |
+| `yappod_v2_update_wal_recoveries_total` | core起動時に検出し、再実行または完了確認したWAL数です。 |
+| `yappod_v2_maintenance_foreground_deferrals_total` | 検索または更新の処理枠が使用中だったため、保守開始判定を延期した回数です。 |
+
+`ingest_requests_total - ingest_published_generations_total`では、入力不正や同一IDによる世代分割も混ざります。
+microbatchだけの効果は`ingest_generations_saved_total`を使用してください。これらはcoreプロセス起動後の累積値で、
+frontはcoreの準備完了応答から取得して公開します。
 
 ### `yappod_v2_inflight_requests`
 
@@ -251,6 +304,26 @@ yappod_v2_inflight_request_bytes / yappod_v2_inflight_byte_limit
 ### `yappod_v2_embedding_configured`
 
 索引`config.toml`でベクトルが有効なら`1`、無効なら`0`です。名前に`embedding`を含みますが、外部の埋め込みAPIへ接続確認は行いません。search-webの`[embedding]`が正しいか、サーバーが稼働しているかはこの値から判断できません。
+
+### ANN検索のゲージとカウンター
+
+| メトリクス | 種類 | 意味 |
+|---|---|---|
+| `yappod_v2_ann_base_generation` | gauge | 現在の基底ANNを作った世代です。 |
+| `yappod_v2_ann_base_vectors` | gauge | 基底ANNの可視ベクトル数です。 |
+| `yappod_v2_ann_delta_segments` | gauge | セグメント単位で追加検索する更新差分数です。通常は再構築後に8以下へ戻ります。 |
+| `yappod_v2_ann_missing_base_segments` | gauge | 現行マニフェストから外れた基底セグメント数です。 |
+| `yappod_v2_ann_search_calls_total{kind="base"}` | counter | 基底ANNの検索回数です。 |
+| `yappod_v2_ann_search_calls_total{kind="delta"}` | counter | 更新差分セグメントのANN検索回数です。 |
+| `yappod_v2_ann_retry_search_calls_total` | counter | 候補取得数を増やして再試行した回数です。 |
+| `yappod_v2_ann_candidates_total{result="examined"}` | counter | 現行スナップショットへ照合した候補数です。 |
+| `yappod_v2_ann_candidates_total{result="rejected"}` | counter | 古い版、削除、絞り込みなどで除外した候補数です。 |
+| `yappod_v2_ann_rebuilds_total{result="success"}` | counter | 基底ANN構築の成功回数です。 |
+| `yappod_v2_ann_rebuilds_total{result="failure"}` | counter | 基底ANN再構築の失敗回数です。 |
+
+`delta_segments`または`missing_base_segments`が次の保守周期後も減らず、`result="failure"`が増える
+場合は、coreのログ、メモリー余裕、索引ファイルの検証結果を確認してください。構造と再構築条件は
+[ANN検索の基底スナップショットと更新差分](ann-search.md)を参照してください。
 
 ### `yappod_v2_compaction_state{state="..."}`
 
