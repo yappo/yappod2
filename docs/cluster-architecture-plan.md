@@ -672,9 +672,12 @@ replicaを増やす判断には、データ容量ではなく検索RPS、可用�
 
 ### 第1段階: 単一端末runtimeの並列実行
 
-- 一つのcoreプロセス内でI/O、検索compute、writer、maintenanceの実行枠を分離します。
-- 非同期接続、上限付きqueue、snapshotの短時間公開、正常終了を実装します。
-- 高頻度更新をWAL、更新buffer、refreshへ分離し、API要求数と物理セグメント数を切り離します。
+- 一つのcoreプロセス内でI/O、検索compute、writer、maintenanceの実行枠を分離しました。
+- 非同期接続、上限付きqueue、snapshotの短時間公開、正常終了を実装しました。
+- 高頻度HTTP更新を最大10ミリ秒・合計10000操作のmicrobatchへまとめ、バイナリWAL、refresh、
+  size-tiered mergeによりAPI要求数と物理セグメント数を切り離しました。
+- durable応答をsearchable応答より先に返す契約と、WAL同期済み操作列を複数refreshへまたいで保持する
+  長時間bufferは実装していません。現在は検索runtimeへ公開してから成功を返します。
 - CPU、RSS、page fault、ディスクI/O、queue待ち時間を含む負荷試験で一台の上限を測定します。
 
 ### 第2段階: クラスタ内部契約の土台
