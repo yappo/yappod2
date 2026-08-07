@@ -32,7 +32,7 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 | libeventによる非blocking接続 | 実装済みです。1本のacceptorが複数reactorへ接続を分配し、executor完了はmailboxで元のreactorへ戻します。 |
 | front/core間のpersistent connection | 実装済みです。frontの各I/O workerが専用接続キャッシュを持ちます。 |
 | 検索要求単位のsnapshot参照保持と短時間の公開交換 | 実装済みです。変更のないsegment資源も新旧世代で共有します。 |
-| 負荷budget付きmaintenance scheduler | 未実装です。 |
+| 負荷budget付きmaintenance scheduler | 実装済みです。ANNとcompactionを直列化し、foreground処理中は開始を延期します。 |
 | WAL、更新buffer、refresh、tiered merge | 未実装です。 |
 
 正式な現在動作は[アーキテクチャ](architecture.md)と[設定リファレンス](configuration.md)を優先します。
@@ -55,8 +55,10 @@ reactorはHTTPを増分解析し、検索は`core_search_threads`個のcompute w
 共有します。新しい世代の公開時に保持するmutexは現在runtimeへのポインタ交換だけです。旧runtimeと
 旧世代だけの資源は、それを使用している検索がすべて終了してから解放します。
 
-コンパクションとANN保守には独立スレッドがありますが、検索と同じディスク、CPU、メモリー帯域を使う
-負荷の調整機構はありません。
+ANN再構築とコンパクションは一つの保守schedulerで直列に実行します。検索または更新の処理枠が使用中なら
+重いjobを開始せず、250ミリ秒間隔で2回連続してforeground処理がないことを確認してから開始します。
+macOSでは保守スレッドをutility QoSで実行し、foreground処理へCPUとI/Oの優先度を譲ります。索引公開の
+原子性を守るため開始済みjobは途中停止せず、新しいjobのadmissionで負荷を制御します。
 
 ## 目標構成
 
@@ -238,7 +240,7 @@ queue待ち時間、`503`数を記録します。warm cache、cold cache、検�
 4. 更新をwriter queueへ移し、件数と本文合計byteで検索queueとは独立に負荷制御します。実装済みです。
 5. front/core間のpersistent connectionを追加します。実装済みです。接続確立コストは負荷試験で測定します。
 6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。実装済みです。
-7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。
+7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。実装済みです。
 8. WAL、更新buffer、refresh条件、durable/searchable待機を実装します。
 9. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
 
