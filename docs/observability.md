@@ -94,9 +94,9 @@ curl -fsS http://127.0.0.1:18400/health/ready
 | `segment_health.largest_segment_bytes` | 1セグメント内のコンポーネントファイルサイズ合計の最大値です。 |
 | `segment_health.small_segment_run` | 設定したサイズ未満のセグメントがマニフェスト上で連続する最大個数です。 |
 | `segment_health.small_segment_threshold_bytes` | 小セグメント判定に使う`auto_compact_small_segment_bytes`です。 |
-| `segment_health.auto_compaction_trigger_segments` | 自動実行を開始する`auto_compact_min_small_segments`です。 |
+| `segment_health.auto_compaction_trigger_segments` | 同じサイズ階層で自動実行を開始する`auto_compact_min_small_segments`です。 |
 | `segment_health.auto_compaction_enabled` | coreの自動コンパクション設定が有効かを表します。 |
-| `segment_health.auto_compaction_needed` | 現在のdescriptor構造が設定した自動実行条件を満たすかを表します。実行中かどうかは`compaction.state`で確認します。 |
+| `segment_health.auto_compaction_needed` | 同じ4倍幅のサイズ階層に属する隣接セグメントが設定個数に達したかを表します。`small_segment_run`が0でも中間階層により1になる場合があります。実行中かどうかは`compaction.state`で確認します。 |
 | `embedding.state` | ベクトル対応索引なら`precomputed_ready`、語彙索引なら`disabled`です。外部埋め込みサーバーの稼働状態ではありません。 |
 | `embedding.model_id` | 索引`config.toml`に保存されたベクトルモデルの識別子です。 |
 | `embedding.dimensions` | 索引に保存されたベクトルの次元数です。 |
@@ -238,12 +238,12 @@ frontがディスク上のマニフェストから読んだ現在の世代です
 | `yappod_v2_largest_segment_bytes` | セグメント単位の記録サイズ合計の最大値です。 |
 | `yappod_v2_small_segment_run` | 小セグメントが隣接する最大個数です。 |
 | `yappod_v2_small_segment_threshold_bytes` | 小セグメント判定のサイズ境界です。 |
-| `yappod_v2_auto_compaction_trigger_segments` | 自動コンパクションを開始する連続個数です。 |
+| `yappod_v2_auto_compaction_trigger_segments` | 同じサイズ階層で自動コンパクションを開始する連続個数です。 |
 | `yappod_v2_auto_compaction_enabled` | 自動コンパクションが有効なら1、無効なら0です。 |
 | `yappod_v2_auto_compaction_needed` | 現在の構造が自動実行条件を満たすなら1です。 |
 
 世代数だけでは断片化を判断できません。更新直後に世代が増えるのは正常です。
-`yappod_v2_manifest_segments`と`yappod_v2_small_segment_run`が自動実行後も下がらない場合に、
+`yappod_v2_manifest_segments`と`yappod_v2_auto_compaction_needed`が自動実行後も下がらない場合に、
 コンパクション状態、空き容量、coreのエラーログを確認してください。
 
 ### `yappod_v2_inflight_requests`

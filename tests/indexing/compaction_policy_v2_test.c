@@ -75,7 +75,7 @@ static void test_ignores_healthy_and_disabled_segments(void **state) {
   add_segment(&manifest, "seg-1", policy.small_segment_bytes);
   add_segment(&manifest, "seg-2", policy.small_segment_bytes + 1U);
   add_segment(&manifest, "seg-3", policy.small_segment_bytes * 2U);
-  add_segment(&manifest, "seg-4", policy.small_segment_bytes * 3U);
+  add_segment(&manifest, "seg-4", policy.small_segment_bytes * 8U);
   assert_int_equal(YAP_V2_manifest_needs_compaction(
                      &manifest, &policy, &needed, &small), YAP_V2_OK);
   assert_false(needed);
@@ -85,7 +85,49 @@ static void test_ignores_healthy_and_disabled_segments(void **state) {
   assert_int_equal(YAP_V2_manifest_needs_compaction(
                      &manifest, &policy, &needed, &small), YAP_V2_OK);
   assert_false(needed);
-  assert_int_equal(small, 4U);
+  assert_int_equal(small, 3U);
+  YAP_V2_manifest_free(&manifest);
+}
+
+static void test_triggers_for_a_full_non_small_size_tier(void **state) {
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_COMPACTION_POLICY policy;
+  int needed = -1;
+  size_t small = 99U;
+  (void)state;
+  YAP_V2_manifest_init(&manifest);
+  YAP_V2_compaction_policy_init(&policy);
+  add_segment(&manifest, "seg-1", policy.small_segment_bytes);
+  add_segment(&manifest, "seg-2", policy.small_segment_bytes + 1024U);
+  add_segment(&manifest, "seg-3", policy.small_segment_bytes * 2U);
+  add_segment(&manifest, "seg-4", policy.small_segment_bytes * 3U);
+  assert_int_equal(YAP_V2_manifest_needs_compaction(
+                     &manifest, &policy, &needed, &small), YAP_V2_OK);
+  assert_true(needed);
+  assert_int_equal(small, 0U);
+  YAP_V2_manifest_free(&manifest);
+}
+
+static void test_does_not_merge_across_size_tiers(void **state) {
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_COMPACTION_POLICY policy;
+  int needed = -1;
+  size_t small = 0U;
+  (void)state;
+  YAP_V2_manifest_init(&manifest);
+  YAP_V2_compaction_policy_init(&policy);
+  add_segment(&manifest, "tiny-1", 1024U);
+  add_segment(&manifest, "large-1", policy.small_segment_bytes);
+  add_segment(&manifest, "tiny-2", 1024U);
+  add_segment(&manifest, "large-2", policy.small_segment_bytes);
+  add_segment(&manifest, "tiny-3", 1024U);
+  add_segment(&manifest, "large-3", policy.small_segment_bytes);
+  add_segment(&manifest, "tiny-4", 1024U);
+  add_segment(&manifest, "large-4", policy.small_segment_bytes);
+  assert_int_equal(YAP_V2_manifest_needs_compaction(
+                     &manifest, &policy, &needed, &small), YAP_V2_OK);
+  assert_false(needed);
+  assert_int_equal(small, 1U);
   YAP_V2_manifest_free(&manifest);
 }
 
@@ -93,6 +135,8 @@ int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_triggers_only_at_small_segment_threshold),
     cmocka_unit_test(test_ignores_healthy_and_disabled_segments),
+    cmocka_unit_test(test_triggers_for_a_full_non_small_size_tier),
+    cmocka_unit_test(test_does_not_merge_across_size_tiers),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

@@ -1,6 +1,7 @@
 #include "server/yappo_observability_v2.h"
 
 #include "config/yappo_config_v2.h"
+#include "indexing/yappo_compact_v2.h"
 #include "storage/yappo_manifest_v2.h"
 
 #include <errno.h>
@@ -136,8 +137,12 @@ int YAP_V2_operational_probe_index_with_policy(
       run = 0U;
     }
   }
-  state->auto_compaction_needed = policy->enabled &&
-    state->small_segment_run >= policy->min_small_segments;
+  status = YAP_V2_manifest_needs_compaction(
+    &manifest, policy, &state->auto_compaction_needed, NULL);
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "automatic compaction policy is invalid");
+    goto done;
+  }
   state->embedding_configured = config.vector_metric != YAP_V2_VECTOR_DISABLED;
   state->embedding_dimensions = config.vector_dimensions;
   memcpy(state->embedding_model_id, config.vector_model_id, strlen(config.vector_model_id) + 1U);
