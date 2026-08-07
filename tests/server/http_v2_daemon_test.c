@@ -21,6 +21,7 @@
 #include "storage/yappo_manifest_v2.h"
 #include "components/yappo_metadata_v2.h"
 #include "components/yappo_vector_v2.h"
+#include "server/yappo_core_http_v2.h"
 
 typedef struct { ytest_env_t env; ytest_daemon_stack_t stack; char run[PATH_MAX]; char policy[PATH_MAX]; } context_t;
 static const char *policy_source = NULL;
@@ -144,6 +145,74 @@ static char *query(context_t *ctx, const char *endpoint, const char *body) {
   return query_port(ctx->stack.front_port, endpoint, body);
 }
 
+static int connect_core(int port) {
+  struct sockaddr_in address;
+  struct timeval timeout = {2, 0};
+  int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor < 0) return -1;
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons((uint16_t)port);
+  if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1 ||
+      setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                 sizeof(timeout)) != 0 ||
+      connect(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0) {
+    close(descriptor);
+    return -1;
+  }
+  return descriptor;
+}
+
+static int send_all(int descriptor, const char *data, size_t bytes) {
+  size_t sent = 0U;
+  while (sent < bytes) {
+    ssize_t written = send(descriptor, data + sent, bytes - sent, 0);
+    if (written <= 0) return -1;
+    sent += (size_t)written;
+  }
+  return 0;
+}
+
+static char *receive_http_response(int descriptor) {
+  size_t capacity = 4096U, used = 0U, required = 0U;
+  char *response = malloc(capacity);
+  if (response == NULL) return NULL;
+  for (;;) {
+    char *header_end;
+    ssize_t received;
+    if (used + 1U == capacity) {
+      char *larger;
+      if (capacity >= YAP_V2_CORE_HTTP_MAX_RESPONSE_BYTES +
+                      YAP_V2_CORE_HTTP_MAX_HEADER_BYTES) {
+        free(response);
+        return NULL;
+      }
+      capacity *= 2U;
+      larger = realloc(response, capacity);
+      if (larger == NULL) { free(response); return NULL; }
+      response = larger;
+    }
+    received = recv(descriptor, response + used, capacity - used - 1U, 0);
+    if (received <= 0) { free(response); return NULL; }
+    used += (size_t)received;
+    response[used] = '\0';
+    header_end = strstr(response, "\r\n\r\n");
+    if (header_end != NULL && required == 0U) {
+      char *length = strstr(response, "Content-Length: ");
+      unsigned long long body_bytes;
+      if (length == NULL) { free(response); return NULL; }
+      body_bytes = strtoull(length + sizeof("Content-Length: ") - 1U,
+                            NULL, 10);
+      if (body_bytes > YAP_V2_CORE_HTTP_MAX_RESPONSE_BYTES) {
+        free(response);
+        return NULL;
+      }
+      required = (size_t)(header_end + 4U - response) + (size_t)body_bytes;
+    }
+    if (required != 0U && used >= required) return response;
+  }
+}
+
 static char *get(context_t *ctx, const char *endpoint) {
   char request[1024]; char *response = NULL;
   assert_true(snprintf(request,sizeof(request),"GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",endpoint)>0);
@@ -182,7 +251,6 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"405 Method Not Allowed"));assert_non_null(strstr(response,"Allow: QUERY"));assert_non_null(strstr(response,"Accept-Query: application/json"));free(response);response=NULL;
   assert_true(snprintf(request,sizeof(request),"GET /health/ready HTTP/1.1\r\nHost: localhost\r\n\r\n")>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.core_port,request,&response),0);assert_non_null(strstr(response,"200 OK"));assert_non_null(strstr(response,"\"service\":\"yappod_core\""));free(response);response=NULL;
-  assert_int_equal(ytest_http_send_text(ctx->stack.core_port,"YAP2 legacy frame",&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   body="{";assert_true(snprintf(request,sizeof(request),"POST /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n%s",strlen(body),body)>0);
   assert_int_equal(ytest_http_send_text(ctx->stack.front_port,request,&response),0);assert_non_null(strstr(response,"400 Bad Request"));free(response);response=NULL;
   response=get(ctx,"/healthz");assert_non_null(strstr(response,"404 Not Found"));free(response);response=NULL;
@@ -201,6 +269,29 @@ static void test_front_core_v2_roundtrip(void **state){context_t *ctx=*state;cha
   assert_non_null(strstr(response,"yappod_v2_requests_total{operation=\"search\",status_class=\"4xx\"} 1"));
   assert_non_null(strstr(response,"yappod_v2_compaction_state{state=\"idle\"} 1"));
   free(response);assert_true(ytest_daemon_stack_alive(&ctx->stack));}
+
+static void test_core_keeps_connection_for_sequential_requests(void **state) {
+  context_t *ctx = *state;
+  const char request[] =
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\n"
+    "Connection: keep-alive\r\n\r\n";
+  char *response;
+  int descriptor = connect_core(ctx->stack.core_port);
+  assert_true(descriptor >= 0);
+  assert_int_equal(send_all(descriptor, request, sizeof(request) - 1U), 0);
+  response = receive_http_response(descriptor);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "Connection: keep-alive"));
+  free(response);
+  assert_int_equal(send_all(descriptor, request, sizeof(request) - 1U), 0);
+  response = receive_http_response(descriptor);
+  assert_non_null(response);
+  assert_non_null(strstr(response, "200 OK"));
+  assert_non_null(strstr(response, "Connection: keep-alive"));
+  free(response);
+  close(descriptor);
+}
 
 static void test_liveness_survives_readiness_failure(void **state) {
   context_t *ctx=*state; char path[PATH_MAX]; char *response;
@@ -450,6 +541,7 @@ static void test_foreground_process_lifecycle(void **state) {
 
 int main(void){const struct CMUnitTest tests[]={
   cmocka_unit_test_setup_teardown(test_front_core_v2_roundtrip,setup,teardown),
+  cmocka_unit_test_setup_teardown(test_core_keeps_connection_for_sequential_requests,setup,teardown),
   cmocka_unit_test_setup_teardown(test_liveness_survives_readiness_failure,setup,teardown),
   cmocka_unit_test_setup_teardown(test_front_core_atomic_nrt_updates,setup,teardown),
   cmocka_unit_test_setup_teardown(test_write_token_protects_daemon_ingest,setup_write_token,teardown_write_token),

@@ -28,6 +28,7 @@ static void test_parse_query_head(void **state) {
   assert_true(request.have_content_length);
   assert_int_equal(request.content_length, 2U);
   assert_true(request.json_content_type);
+  assert_true(request.close_connection);
   assert_string_equal(request.authorization, "Bearer test-token");
   YAP_V2_core_http_request_free(&request);
 }
@@ -47,8 +48,11 @@ static void test_parse_rejects_invalid_heads(void **state) {
     "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\nContent-Length: +2\r\n\r\n";
   static const char invalid_header_name[] =
     "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\nBad Header: value\r\n\r\n";
+  static const char duplicate_connection[] =
+    "QUERY /v2/search HTTP/1.1\r\nHost: localhost\r\n"
+    "Connection: close\r\nConnection: keep-alive\r\n\r\n";
   const char *cases[] = {missing_host, old_version, transfer_encoding, duplicate_length,
-                         signed_length, invalid_header_name};
+                         signed_length, invalid_header_name, duplicate_connection};
   size_t i;
   YAP_V2_CORE_HTTP_REQUEST request;
   (void)state;
@@ -58,6 +62,20 @@ static void test_parse_rejects_invalid_heads(void **state) {
       (const unsigned char *)cases[i], strlen(cases[i]), &request),
       YAP_V2_CORE_HTTP_INVALID);
   }
+  YAP_V2_core_http_request_free(&request);
+}
+
+static void test_parse_explicit_keep_alive(void **state) {
+  static const char head[] =
+    "GET /health/ready HTTP/1.1\r\nHost: localhost\r\n"
+    "Connection: keep-alive\r\n\r\n";
+  YAP_V2_CORE_HTTP_REQUEST request;
+  (void)state;
+  YAP_V2_core_http_request_init(&request);
+  assert_int_equal(YAP_V2_core_http_parse_head(
+    (const unsigned char *)head, sizeof(head) - 1U, &request),
+    YAP_V2_CORE_HTTP_OK);
+  assert_false(request.close_connection);
   YAP_V2_core_http_request_free(&request);
 }
 
@@ -158,6 +176,7 @@ int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_parse_query_head),
     cmocka_unit_test(test_parse_rejects_invalid_heads),
+    cmocka_unit_test(test_parse_explicit_keep_alive),
     cmocka_unit_test(test_parse_preserves_unsupported_media_type),
     cmocka_unit_test(test_stream_read_and_body_limit),
     cmocka_unit_test(test_stream_rejects_truncated_body),

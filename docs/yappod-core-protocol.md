@@ -17,8 +17,9 @@ coreのポートは内部ネットワークだけから接続できるように�
 `CURLOPT_CUSTOMREQUEST`に`QUERY`を指定し、HTTPの版を1.1へ固定します。libcurlは既存のビルド依存関係であり、
 利用者がTOMLで有効化したり接続先ライブラリを選択したりする機能ではありません。
 
-`yappod_core`は境界付きの内部HTTP parserで要求行とヘッダーを検証し、1本のTCP接続につき1要求を処理します。
-応答後は接続を閉じます。HTTP/2、HTTP/3、chunked transfer coding、接続の再利用には対応しません。
+`yappod_core`は境界付きの内部HTTP parserで要求行とヘッダーを検証します。frontの各I/O workerは
+専用のlibcurlハンドルを持ち、1本のTCP接続で要求を順番に処理します。一つの接続で同時に実行する要求は
+1件であり、HTTP pipeliningは行いません。HTTP/2、HTTP/3、chunked transfer codingには対応しません。
 
 ## 接続先と経路
 
@@ -44,7 +45,7 @@ coreの待ち受け先は`[daemon].core_host`と`core_port`です。frontは同�
 Content-Type: application/json
 Accept: application/json
 Content-Length: <JSONの正確なバイト数>
-Connection: close
+Connection: keep-alive
 ```
 
 `Host`もHTTP/1.1の必須ヘッダーとして検証します。`Content-Type`がない場合またはJSON以外の場合は415、
@@ -52,7 +53,9 @@ Connection: close
 文書更新は`ingest_max_body_bytes`を使い、デフォルト64 MiB、最大256 MiBです。上限超過は413となります。
 
 要求行1行の上限は8192バイト、要求ヘッダー全体の上限は65536バイトです。重複した`Host`、`Content-Type`、
-`Content-Length`、`Authorization`、`Transfer-Encoding`、HTTP/1.1以外の要求は受理しません。
+`Content-Length`、`Authorization`、`Connection`、`Transfer-Encoding`、HTTP/1.1以外の要求は受理しません。
+`Connection: keep-alive`を指定した接続だけを応答後も再利用します。`Connection: close`またはヘッダー省略時は
+応答後に閉じます。frontは常に`keep-alive`を明示します。
 
 検索と取得のJSONは公開APIと同じです。front/core間通信用のJSONエンベロープは追加しません。
 
@@ -64,7 +67,7 @@ Host: 127.0.0.1:18401
 Content-Type: application/json
 Accept: application/json
 Content-Length: 73
-Connection: close
+Connection: keep-alive
 
 {"query":"modern search","mode":"lexical","scope":"documents","limit":10}
 ```
@@ -77,7 +80,7 @@ Host: 127.0.0.1:18401
 Content-Type: application/json
 Accept: application/json
 Content-Length: 79
-Connection: close
+Connection: keep-alive
 
 {"query":"modern search","mode":"lexical","limit":10,"max_context_bytes":16384}
 ```
@@ -101,7 +104,7 @@ Server: Yappo Search Core/2.0
 Content-Type: application/json; charset=utf-8
 Content-Length: 58
 Cache-Control: no-store
-Connection: close
+Connection: keep-alive
 Accept-Query: application/json
 
 {"generation":7,"total":1,"results":[],"next_cursor":null}
@@ -123,7 +126,7 @@ frontは公開`GET /health/ready`を処理するとき、coreへ次を送りま�
 GET /health/ready HTTP/1.1
 Host: 127.0.0.1:18401
 Accept: application/json
-Connection: close
+Connection: keep-alive
 ```
 
 coreは保持中のスナップショットとディスク上の運用状態を調べます。利用可能なら200、利用できなければ503を返します。
@@ -144,6 +147,10 @@ HTTPヘッダーの`Content-Length`を確認した時点で予約できなけれ
 `ingest_max_body_bytes`を使い、デフォルト64 MiB、設定可能な最大値256 MiBです。
 通常要求には`request_timeout_ms`、文書更新には`ingest_timeout_ms`を適用します。
 デフォルトはそれぞれ5000ミリ秒と60000ミリ秒です。自動再試行は行いません。
+
+接続再利用中にcoreが先に接続を閉じた場合、libcurlは次の要求で新しい接続を確立します。frontの各I/O
+workerが一つの接続キャッシュを所有するため、定常時のfrontからcoreへの接続数は最大で概ね
+`front_io_threads`本です。要求間でlibcurlハンドルを共有しないため、クライアント側の排他は不要です。
 
 ## 移行と互換性
 

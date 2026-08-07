@@ -57,6 +57,7 @@ typedef struct {
   const char *index_dir;
   const char *core_host;
   int core_port;
+  YAP_V2_CORE_HTTP_CLIENT core_client;
 } worker_t;
 
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -389,7 +390,7 @@ static int discard_request_body(FILE *stream, size_t body_bytes) {
   return 0;
 }
 
-static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
+static int core_roundtrip(worker_t *worker, endpoint_t endpoint,
                           const unsigned char *body, size_t body_bytes,
                           const char *authorization,
                           core_result_t *result) {
@@ -400,7 +401,8 @@ static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
   YAP_V2_CORE_HTTP_RESPONSE response;
   memset(result, 0, sizeof(*result));
   YAP_V2_core_http_response_init(&response);
-  if (YAP_V2_core_http_client_request(worker->core_host, worker->core_port,
+  if (YAP_V2_core_http_client_request(&worker->core_client,
+                                      worker->core_host, worker->core_port,
                                       endpoint == ENDPOINT_INGEST ?
                                       runtime_policy.ingest_timeout_ms :
                                       runtime_policy.request_timeout_ms,
@@ -416,11 +418,12 @@ static int core_roundtrip(const worker_t *worker, endpoint_t endpoint,
   return 0;
 }
 
-static int core_ready(const worker_t *worker, YAP_V2_OPERATIONAL_STATE *state) {
+static int core_ready(worker_t *worker, YAP_V2_OPERATIONAL_STATE *state) {
   int ready = 0;
   YAP_V2_CORE_HTTP_RESPONSE response;
   YAP_V2_core_http_response_init(&response);
-  if (YAP_V2_core_http_client_request(worker->core_host, worker->core_port,
+  if (YAP_V2_core_http_client_request(&worker->core_client,
+                                      worker->core_host, worker->core_port,
                                       runtime_policy.request_timeout_ms,
                                       "GET", "/health/ready", NULL, NULL, 0U,
                                       &response) == YAP_V2_CORE_HTTP_OK &&
@@ -433,7 +436,7 @@ static int core_ready(const worker_t *worker, YAP_V2_OPERATIONAL_STATE *state) {
   return ready;
 }
 
-static int handle_operational(FILE *stream, const worker_t *worker, endpoint_t endpoint) {
+static int handle_operational(FILE *stream, worker_t *worker, endpoint_t endpoint) {
   static const char live[] = "{\"status\":\"live\",\"service\":\"yappod_front\"}";
   YAP_V2_OPERATIONAL_STATE state;
   char error[256] = {0}, *body = NULL;
@@ -493,7 +496,7 @@ static int send_endpoint_error(FILE *stream, endpoint_t endpoint, int status,
                                  query_endpoint(endpoint));
 }
 
-static int handle_client(FILE *stream, const worker_t *worker) {
+static int handle_client(FILE *stream, worker_t *worker) {
   http_request_t request;
   char *line = NULL;
   unsigned char *body = NULL;
@@ -638,7 +641,8 @@ int main(int argc, char **argv) {
   sigset_t shutdown_signals;
   pthread_t *threads = NULL;
   worker_t *workers = NULL;
-  size_t started = 0U, io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
+  size_t started = 0U, clients_opened = 0U;
+  size_t io_threads = YAP_APPLICATION_DEFAULT_IO_THREADS;
   int foreground = 0, have_port = 0, have_core_port = 0;
   YAP_V2_compaction_policy_init(&compaction_policy);
   for (i = 1; i < argc; i++) {
@@ -752,6 +756,22 @@ int main(int argc, char **argv) {
     free(threads); free(workers);
     return EXIT_FAILURE;
   }
+  for (clients_opened = 0U; clients_opened < io_threads; clients_opened++) {
+    YAP_V2_core_http_client_init(&workers[clients_opened].core_client);
+    if (YAP_V2_core_http_client_open(
+          &workers[clients_opened].core_client) != YAP_V2_CORE_HTTP_OK)
+      break;
+  }
+  if (clients_opened != io_threads) {
+    for (i = 0; i < (int)clients_opened; i++)
+      YAP_V2_core_http_client_close(&workers[i].core_client);
+    (void)close(listen_socket); listen_socket = -1;
+    YAP_V2_metrics_close(&metrics);
+    YAP_V2_runtime_limiter_close(&ingest_limiter);
+    YAP_V2_runtime_limiter_close(&runtime_limiter);
+    free(threads); free(workers);
+    return EXIT_FAILURE;
+  }
   for (started = 0U; started < io_threads; started++) {
     workers[started].id = started;
     workers[started].listen_socket = listen_socket;
@@ -768,6 +788,8 @@ int main(int argc, char **argv) {
     request_shutdown(signal_number);
   }
   for (i = 0; i < (int)started; i++) (void)pthread_join(threads[i], NULL);
+  for (i = 0; i < (int)clients_opened; i++)
+    YAP_V2_core_http_client_close(&workers[i].core_client);
   if (listen_socket >= 0) (void)close(listen_socket);
   YAP_V2_metrics_close(&metrics);
   YAP_V2_runtime_limiter_close(&ingest_limiter);
