@@ -1432,9 +1432,13 @@ void YAP_V2_http_runtime_init(YAP_V2_HTTP_RUNTIME *runtime) {
 
 int YAP_V2_http_runtime_open(YAP_V2_HTTP_RUNTIME *runtime, const char *index_dir) {
   HTTP_RUNTIME_STATE *state;
+  char recovery_error[256] = {0};
   int status;
   if (runtime == NULL || runtime->state != NULL || index_dir == NULL)
     return YAP_V2_INVALID_ARGUMENT;
+  status = YAP_V2_update_recover(index_dir, recovery_error,
+                                 sizeof(recovery_error));
+  if (status != YAP_V2_OK) return status;
   state = calloc(1U, sizeof(*state));
   if (state == NULL) return YAP_V2_ALLOCATION_FAILED;
   if (pthread_mutex_init(&state->lock, NULL) != 0) { free(state); return YAP_V2_IO_ERROR; }

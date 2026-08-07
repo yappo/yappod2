@@ -590,6 +590,86 @@ static void test_compaction_crash_recovery_and_orphan_gc(void **state) {
   ytest_env_destroy(&env);
 }
 
+static void test_wal_replays_unpublished_update(void **state) {
+  ytest_env_t env;
+  yyjson_doc *document;
+  size_t segments;
+  char error[256] = {0};
+  const char *request = "{\"operations\":[{\"operation\":\"upsert\","
+    "\"id\":\"wal-doc\",\"title\":\"WAL\",\"body\":\"fresh\","
+    "\"metadata\":{\"category\":\"new\"},\"vectors\":[[1,0]]}]}";
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_update_set_failpoint_for_testing("after_wal_sync");
+  document = execute(&env, YAP_V2_HTTP_INGEST, request, 503);
+  yyjson_doc_free(document);
+  YAP_V2_update_set_failpoint_for_testing(NULL);
+  assert_true(YAP_V2_update_wal_exists(env.tmp_root));
+  assert_int_equal(manifest_generation(&env, &segments), 1U);
+  assert_int_equal(YAP_V2_update_recover(env.tmp_root, error, sizeof(error)),
+                   YAP_V2_OK);
+  assert_false(YAP_V2_update_wal_exists(env.tmp_root));
+  assert_int_equal(manifest_generation(&env, &segments), 2U);
+  assert_int_equal(search_count(&env, "fresh", "wal-doc"), 1U);
+  ytest_env_destroy(&env);
+}
+
+static void test_wal_clears_after_manifest_was_published(void **state) {
+  ytest_env_t env;
+  yyjson_doc *document;
+  size_t segments;
+  char error[256] = {0};
+  const char *request = "{\"operations\":[{\"operation\":\"delete\","
+    "\"id\":\"doc-b\"}]}";
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_update_set_failpoint_for_testing(
+    "after_manifest_publish_before_wal_clear");
+  document = execute(&env, YAP_V2_HTTP_INGEST, request, 503);
+  yyjson_doc_free(document);
+  YAP_V2_update_set_failpoint_for_testing(NULL);
+  assert_true(YAP_V2_update_wal_exists(env.tmp_root));
+  assert_int_equal(manifest_generation(&env, &segments), 2U);
+  assert_int_equal(YAP_V2_update_recover(env.tmp_root, error, sizeof(error)),
+                   YAP_V2_OK);
+  assert_false(YAP_V2_update_wal_exists(env.tmp_root));
+  assert_int_equal(manifest_generation(&env, &segments), 2U);
+  assert_int_equal(search_count(&env, "gone", NULL), 0U);
+  ytest_env_destroy(&env);
+}
+
+static void test_corrupt_wal_blocks_recovery(void **state) {
+  ytest_env_t env;
+  yyjson_doc *document;
+  char path[PATH_MAX], error[256] = {0};
+  char *contents = NULL;
+  size_t contents_bytes = 0U, segments;
+  const char *request = "{\"operations\":[{\"operation\":\"delete\","
+    "\"id\":\"doc-b\"}]}";
+  (void)state;
+  assert_int_equal(ytest_env_init(&env), 0);
+  create_index(&env);
+  YAP_V2_update_set_failpoint_for_testing("after_wal_sync");
+  document = execute(&env, YAP_V2_HTTP_INGEST, request, 503);
+  yyjson_doc_free(document);
+  YAP_V2_update_set_failpoint_for_testing(NULL);
+  assert_int_equal(ytest_path_join(path, sizeof(path), env.tmp_root,
+                                   "update.wal"), 0);
+  assert_int_equal(ytest_read_file(path, &contents, &contents_bytes), 0);
+  assert_true(contents_bytes > 64U);
+  contents[contents_bytes - 1U] ^= 1;
+  assert_int_equal(ytest_write_file(path, contents, contents_bytes), 0);
+  free(contents);
+  assert_int_equal(YAP_V2_update_recover(env.tmp_root, error, sizeof(error)),
+                   YAP_V2_INVALID_FORMAT);
+  assert_non_null(strstr(error, "WAL"));
+  assert_true(YAP_V2_update_wal_exists(env.tmp_root));
+  assert_int_equal(manifest_generation(&env, &segments), 1U);
+  ytest_env_destroy(&env);
+}
+
 int main(void) {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_http_atomic_update_latest_wins_and_delete),
@@ -604,7 +684,10 @@ int main(void) {
     cmocka_unit_test(test_incremental_compaction_keeps_boundary_tombstone),
     cmocka_unit_test(
       test_automatic_policy_compacts_small_segments_to_healthy_shape),
-    cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc)
+    cmocka_unit_test(test_compaction_crash_recovery_and_orphan_gc),
+    cmocka_unit_test(test_wal_replays_unpublished_update),
+    cmocka_unit_test(test_wal_clears_after_manifest_was_published),
+    cmocka_unit_test(test_corrupt_wal_blocks_recovery)
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

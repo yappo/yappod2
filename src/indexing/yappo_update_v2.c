@@ -4,6 +4,7 @@
 #include "config/yappo_config_v2.h"
 #include "storage/yappo_manifest_v2.h"
 #include "indexing/yappo_segment_planner_v2.h"
+#include "indexing/yappo_update_wal_v2.h"
 #include "common/yappo_unicode.h"
 #include "storage/yappo_writer_lock_v2.h"
 
@@ -108,7 +109,9 @@ static int apply_operations(const char *index_dir,
                             const YAP_V2_INGEST_OPERATION *operations,
                             size_t operation_count, size_t operation_limit,
                             YAP_V2_UPDATE_RESULT *result,
-                            char *error, size_t error_size) {
+                            char *error, size_t error_size,
+                            int writer_lock_held, int write_wal,
+                            uint64_t expected_target_generation) {
   YAP_V2_CONFIG config; YAP_V2_MANIFEST manifest;
   YAP_V2_DOCUMENT_VIEW *documents = NULL; YAP_V2_PASSAGE_VIEW *passages = NULL;
   YAP_V2_BYTES_VIEW *tombstones = NULL; OPERATION_CHUNKS *chunks = NULL;
@@ -120,7 +123,10 @@ static int apply_operations(const char *index_dir,
   size_t i, j, document_count = 0U, passage_count = 0U, tombstone_count = 0U;
   size_t document_index = 0U, passage_index = 0U, tombstone_index = 0U;
   size_t failed_slice = SIZE_MAX;
-  uint64_t next_generation; int status = YAP_V2_OK, published = 0;
+  uint64_t next_generation;
+  int status = YAP_V2_OK, published = 0, owns_writer_lock = 0;
+  int wal_active = expected_target_generation != 0U;
+  int preserve_wal = expected_target_generation != 0U;
   YAP_V2_WRITER_LOCK writer_lock;
   YAP_V2_manifest_init(&manifest); YAP_V2_segment_plan_init(&plan);
   YAP_V2_writer_lock_init(&writer_lock);
@@ -132,8 +138,14 @@ static int apply_operations(const char *index_dir,
       join_path(segments_path, sizeof(segments_path), index_dir, "segments") != 0) {
     set_error(error, error_size, "index path is too long"); return YAP_V2_OUT_OF_RANGE;
   }
-  status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
-  if (status != YAP_V2_OK) { set_error(error, error_size, "cannot acquire index writer lock"); goto done; }
+  if (!writer_lock_held) {
+    status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
+    if (status != YAP_V2_OK) {
+      set_error(error, error_size, "cannot acquire index writer lock");
+      goto done;
+    }
+    owns_writer_lock = 1;
+  }
   status = validate_unique_ids(operations, operation_count);
   if (status != YAP_V2_OK) { set_error(error, error_size, "batch contains duplicate document IDs"); goto done; }
   status = YAP_V2_config_load(config_path, &config, config_error, sizeof(config_error));
@@ -145,6 +157,12 @@ static int apply_operations(const char *index_dir,
     status = YAP_V2_OUT_OF_RANGE; set_error(error, error_size, "index generation or segment limit reached"); goto done;
   }
   next_generation = manifest.generation + 1U;
+  if (expected_target_generation != 0U &&
+      next_generation != expected_target_generation) {
+    status = YAP_V2_CONFLICT;
+    set_error(error, error_size, "WAL generation does not follow current manifest");
+    goto done;
+  }
   chunks = calloc(operation_count, sizeof(*chunks));
   if (chunks == NULL) { status = YAP_V2_ALLOCATION_FAILED; goto done; }
   for (i = 0U; i < operation_count; i++) {
@@ -223,6 +241,21 @@ static int apply_operations(const char *index_dir,
     goto done;
   }
   if (status != YAP_V2_OK) { set_error(error, error_size, "segment planning failed"); goto done; }
+  if (write_wal) {
+    status = YAP_V2_update_wal_write(index_dir, manifest.generation,
+                                     operations, operation_count);
+    if (status != YAP_V2_OK) {
+      set_error(error, error_size, "cannot persist update WAL");
+      goto done;
+    }
+    wal_active = 1;
+    if (failpoint("after_wal_sync")) {
+      preserve_wal = 1;
+      status = YAP_V2_IO_ERROR;
+      set_error(error, error_size, "injected failure after WAL sync");
+      goto done;
+    }
+  }
 write_segments:
   failed_slice = SIZE_MAX;
   if (YAP_V2_segment_count_validate(manifest.segment_count, plan.count) != YAP_V2_OK) {
@@ -282,16 +315,101 @@ write_segments:
                                           "segment publish failed");
     goto done;
   }
-  published = 1; result->generation = next_generation; result->accepted = operation_count;
+  published = 1;
+  if (failpoint("after_manifest_publish_before_wal_clear")) {
+    preserve_wal = 1;
+    status = YAP_V2_IO_ERROR;
+    set_error(error, error_size,
+              "injected failure after manifest publish before WAL clear");
+    goto done;
+  }
+  if (wal_active) {
+    status = YAP_V2_update_wal_clear(index_dir);
+    if (status != YAP_V2_OK) {
+      preserve_wal = 1;
+      set_error(error, error_size, "manifest published but WAL could not be cleared");
+      goto done;
+    }
+    wal_active = 0;
+  }
+  result->generation = next_generation; result->accepted = operation_count;
   result->upserts = document_count; result->deletes = tombstone_count;
 done:
   if (!published && segment_paths != NULL)
     for (i = 0U; i < plan.count; i++)
       if (segment_paths[i][0] != '\0') cleanup_segment_dir(segment_paths[i]);
+  if (wal_active && !published && !preserve_wal)
+    (void)YAP_V2_update_wal_clear(index_dir);
   if (status != YAP_V2_OK) YAP_V2_update_result_free(result);
   free(documents); free(passages); free(tombstones); free(vector_values);
   free(units); free(descriptors); free(segment_paths); YAP_V2_segment_plan_free(&plan);
   free_chunks(chunks, operation_count); YAP_V2_manifest_free(&manifest);
+  if (owns_writer_lock) YAP_V2_writer_lock_release(&writer_lock);
+  return status;
+}
+
+int YAP_V2_update_recover(const char *index_dir, char *error,
+                          size_t error_size) {
+  YAP_V2_UPDATE_WAL wal;
+  YAP_V2_UPDATE_RESULT result;
+  YAP_V2_CONFIG config;
+  YAP_V2_MANIFEST manifest;
+  YAP_V2_WRITER_LOCK writer_lock;
+  char config_path[4096], manifest_path[4096], config_error[256];
+  int status;
+  if (index_dir == NULL) return YAP_V2_INVALID_ARGUMENT;
+  if (!YAP_V2_update_wal_exists(index_dir)) return YAP_V2_OK;
+  YAP_V2_update_wal_init(&wal);
+  YAP_V2_update_result_init(&result);
+  YAP_V2_manifest_init(&manifest);
+  YAP_V2_writer_lock_init(&writer_lock);
+  if (join_path(config_path, sizeof(config_path), index_dir, "config.toml") != 0 ||
+      join_path(manifest_path, sizeof(manifest_path), index_dir,
+                "manifest.yap2") != 0) {
+    set_error(error, error_size, "index path is too long");
+    return YAP_V2_OUT_OF_RANGE;
+  }
+  status = YAP_V2_writer_lock_acquire(&writer_lock, index_dir);
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "cannot acquire index writer lock for WAL recovery");
+    return status;
+  }
+  status = YAP_V2_update_wal_load(index_dir, &wal);
+  if (status == YAP_V2_NOT_FOUND) status = YAP_V2_OK;
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "update WAL is invalid or unreadable");
+    goto done;
+  }
+  if (wal.operation_count == 0U) goto done;
+  status = YAP_V2_config_load(config_path, &config, config_error,
+                              sizeof(config_error));
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, config_error); goto done;
+  }
+  status = YAP_V2_manifest_load_for_config(manifest_path, &config, &manifest);
+  if (status != YAP_V2_OK) {
+    set_error(error, error_size, "current index snapshot is invalid during WAL recovery");
+    goto done;
+  }
+  if (manifest.generation == wal.target_generation) {
+    status = YAP_V2_update_wal_clear(index_dir);
+    if (status != YAP_V2_OK)
+      set_error(error, error_size, "published update WAL could not be cleared");
+    goto done;
+  }
+  if (manifest.generation != wal.base_generation) {
+    status = YAP_V2_CONFLICT;
+    set_error(error, error_size,
+              "update WAL generation conflicts with current manifest");
+    goto done;
+  }
+  status = apply_operations(index_dir, wal.operations, wal.operation_count,
+                            YAP_V2_UPDATE_MAX_OPERATIONS, &result, error,
+                            error_size, 1, 0, wal.target_generation);
+done:
+  YAP_V2_update_result_free(&result);
+  YAP_V2_manifest_free(&manifest);
+  YAP_V2_update_wal_free(&wal);
   YAP_V2_writer_lock_release(&writer_lock);
   return status;
 }
@@ -299,15 +417,19 @@ done:
 int YAP_V2_update_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
                         size_t operation_count, YAP_V2_UPDATE_RESULT *result,
                         char *error, size_t error_size) {
+  int status = YAP_V2_update_recover(index_dir, error, error_size);
+  if (status != YAP_V2_OK) return status;
   return apply_operations(index_dir, operations, operation_count,
-                          YAP_V2_UPDATE_MAX_OPERATIONS, result, error, error_size);
+                          YAP_V2_UPDATE_MAX_OPERATIONS, result, error,
+                          error_size, 0, 1, 0U);
 }
 
 int YAP_V2_build_apply(const char *index_dir, const YAP_V2_INGEST_OPERATION *operations,
                        size_t operation_count, YAP_V2_UPDATE_RESULT *result,
                        char *error, size_t error_size) {
   return apply_operations(index_dir, operations, operation_count,
-                          YAP_V2_BUILD_BATCH_OPERATIONS, result, error, error_size);
+                          YAP_V2_BUILD_BATCH_OPERATIONS, result, error,
+                          error_size, 0, 0, 0U);
 }
 
 void YAP_V2_update_operations_free(YAP_V2_INGEST_OPERATION *operations,

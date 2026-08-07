@@ -34,7 +34,8 @@ Cのpthreadは複数のCPUコアで同時に実行できるため、CPU使用率
 | 検索要求単位のsnapshot参照保持と短時間の公開交換 | 実装済みです。変更のないsegment資源も新旧世代で共有します。 |
 | 負荷budget付きmaintenance scheduler | 実装済みです。ANNとcompactionを直列化し、foreground処理中は開始を延期します。 |
 | 更新microbatchとrefresh | 実装済みです。HTTP更新を最大10ミリ秒、合計10000操作まで集約し、一つの世代として公開します。 |
-| WALとdurable/searchableの分離 | 未実装です。現在は検索runtimeの切り替え後にだけ成功を返します。 |
+| 更新WALと異常終了回復 | 実装済みです。操作列、更新前・公開予定世代、CRC32Cを同期し、core起動時に再実行または完了確認します。 |
+| durable/searchableの応答分離 | 未実装です。現在は検索runtimeの切り替え後にだけ成功を返します。 |
 | size-tiered merge | 未実装です。 |
 
 正式な現在動作は[アーキテクチャ](architecture.md)と[設定リファレンス](configuration.md)を優先します。
@@ -152,15 +153,15 @@ manifestの公開順序、文書IDの最新版、削除、耐久性を壊さな�
 置きません。
 
 `fsync`は成功応答の境界なので、単に非同期化して応答を先に返しません。I/O reactorからは切り離し、
-writer threadがセグメントとmanifestを同期し、検索runtimeを新世代へ切り替えた後で完了を通知します。
-WALの実装後は、公開APIで次の二つを区別できる設計にします。
+writer threadが操作列をバイナリWALへ同期してからセグメントとmanifestを同期し、検索runtimeを新世代へ
+切り替えた後で完了を通知します。将来は公開APIで次の二つを区別できる設計にします。
 
 - durable: 更新がWALへ永続化され、再起動後に再適用できます。
 - searchable: 指定した更新が含まれるsnapshotへ切り替わり、検索できます。
 
 現在のmicrobatchは、短時間に同時到着した要求を要求本文のまま上限付きqueueで保持し、時間または操作数の
-閾値でrefreshします。将来のWAL導入後は、WALへ同期済みの更新を世代付きbufferへ移し、推定component byte数も
-refresh条件へ加えます。一回のrefreshは複数の更新transactionを含められます。
+閾値で一つの操作列へまとめ、その操作列をWALへ同期してからrefreshします。将来はWALへ同期済みの複数の
+操作列をさらに長い時間保持できる世代付きbufferへ移し、推定component byte数もrefresh条件へ加えます。
 
 ```mermaid
 flowchart LR
@@ -174,8 +175,8 @@ flowchart LR
 ```
 
 queueの要求数または本文合計byte数が上限へ達した場合は更新を無制限に受理せず、`503 overloaded`を返します。
-WALをまだ持たないため、プロセス停止時に未処理queueだけから更新を復元することはできず、成功応答も
-検索runtimeへの公開完了前には返しません。
+WAL同期前の未処理queueはプロセス停止後に復元できません。WAL同期後の操作列は再起動時に再実行できますが、
+現在は検索runtimeへの公開完了前に成功応答を返しません。
 
 flush後のセグメントはbyte数によるtierへ分類します。各tierには許容セグメント数を設け、超過時はサイズの
 近いセグメントから、出力サイズ、削除回収量、世代の局所性、書き込み増幅を使ってmerge候補を評価します。
@@ -251,8 +252,8 @@ queue待ち時間、`503`数を記録します。warm cache、cold cache、検�
 5. front/core間のpersistent connectionを追加します。実装済みです。接続確立コストは負荷試験で測定します。
 6. snapshotを要求単位の参照保持と短時間のポインタ交換へ変更します。実装済みです。
 7. compactionとANNを負荷budget付きmaintenance schedulerへ統合します。実装済みです。
-8. 時間・操作数上限付きの更新microbatchとrefreshを実装します。実装済みです。WAL、byte数によるrefresh条件、
-   durable/searchable待機の分離は残っています。
+8. 時間・操作数上限付きの更新microbatch、バイナリWAL、異常終了回復、refreshを実装します。実装済みです。
+   byte数によるrefresh条件とdurable/searchable待機の分離は残っています。
 9. 単一端末の負荷試験で適正値と水平シャード移行条件を確定します。
 
 各段階で旧CLI、旧TOML、旧内部通信、旧索引形式との後方互換分岐は追加しません。契約を変更する場合は
